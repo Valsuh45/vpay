@@ -87,7 +87,22 @@ export function PaymentsTable({ rows }: PaymentsTableProps) {
           const status = asPaymentStatus(row.status);
           return (
             <TableRow key={row.id} data-payment-id={row.id}>
-              <TableCell>
+              {/*
+                `break-all` below `sm`, and it is what makes the other
+                columns reachable. Measured at 375px before this line: a
+                28-character monospace id held the first column open, the
+                table came to 487px inside a 311px box, and `Status` sat at
+                338–527 — off-screen, reachable only by swiping a table with
+                no affordance saying so. Wrapping the id onto a second line
+                costs a row of height and brings Amount and Status back into
+                view. `sm:break-normal` returns the single line from 640px
+                up, where there is room for it.
+
+                Wrapping rather than truncating, deliberately: an id is what
+                an operator copies into a support ticket, and half of one is
+                worse than a tall row.
+              */}
+              <TableCell className="break-all sm:break-normal">
                 <NextLink href={`/payments/${row.id}`}>
                   <Code>{row.id}</Code>
                 </NextLink>
