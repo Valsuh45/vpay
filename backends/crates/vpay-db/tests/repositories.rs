@@ -9920,6 +9920,8 @@ async fn the_per_kind_uniqueness_rules_fire() -> anyhow::Result<()> {
 #[tokio::test]
 async fn a_kind_spelled_here_is_a_kind_the_database_admits() -> anyhow::Result<()> {
     let (_container, repositories, _pool) = migrated_postgres().await?;
+    // Bound again so the raw-SQL case below reads as what it is: a shape
+    // `NewCredential` cannot express, because `counter` is not a field on it.
     let now = time::OffsetDateTime::now_utc();
 
     Staff::create(
@@ -9965,15 +9967,59 @@ async fn a_kind_spelled_here_is_a_kind_the_database_admits() -> anyhow::Result<(
         })?;
     }
 
-    // --- and the shapes the CHECK exists to refuse --------------------------
-
-    // A password with no material: a credential that verifies against
-    // nothing. THIS is what `material TEXT` (nullable) would otherwise admit.
-    let err = Credentials::create(
+    // --- and the shapes the CHECKs exist to refuse --------------------------
+    //
+    // ON THEIR OWN SUBJECT, and that is not tidiness. The first draft of this
+    // test put them on `stf_kinds`, which the loop above had just given one
+    // credential of every kind — so a second `hotp` collided with
+    // `credentials_one_singleton_kind_per_staff_member` and a second `oidc` at
+    // the same issuer collided with `credentials_one_federated_link_per_issuer`.
+    // Every `expect_err` below was satisfied by a UNIQUE INDEX, and the CHECK
+    // each one names was never consulted at all.
+    //
+    // Measured: replacing the whole of
+    // `credentials_federated_carries_identity_and_no_material` with `TRUE`
+    // left this test GREEN. That mutation is the reason for both halves of the
+    // fix — a fresh subject, and an assertion naming the constraint, so a case
+    // that starts passing for the wrong reason says so instead of staying
+    // quiet.
+    Staff::create(
         repositories.as_ref(),
+        NewStaff {
+            id: "stf_shapes".to_owned(),
+            merchant_id: "merchant_a".to_owned(),
+            email: "shapes@example.test".to_owned(),
+            display_name: "Grace".to_owned(),
+            is_admin: false,
+            now,
+        },
+    )
+    .await?;
+
+    let refused = async |new: NewCredential, constraint: &str| -> anyhow::Result<()> {
+        let id = new.id.clone();
+        let err = Credentials::create(repositories.as_ref(), new)
+            .await
+            .err()
+            .with_context(|| format!("{id} must be refused, and by {constraint}"))?;
+        let rendered = err.to_string();
+        eprintln!("observed rejection: {rendered}");
+        anyhow::ensure!(
+            rendered.contains(constraint),
+            "{id} was refused, but by something other than {constraint}: {rendered}. A case \
+             that passes for the wrong reason is worse than one that fails."
+        );
+        Ok(())
+    };
+
+    // A secret-bearing kind with NO material: a credential that verifies
+    // against nothing. THIS is what a nullable `material` column would
+    // otherwise admit, and it is the whole reason the CHECK is per-kind
+    // rather than the column being `NOT NULL`.
+    refused(
         NewCredential {
             id: "cred_hollow".to_owned(),
-            staff_member_id: Some("stf_kinds".to_owned()),
+            staff_member_id: Some("stf_shapes".to_owned()),
             kind: CredentialKind::Hotp,
             material: None,
             issuer: None,
@@ -9982,38 +10028,52 @@ async fn a_kind_spelled_here_is_a_kind_the_database_admits() -> anyhow::Result<(
             expires_at: None,
             now,
         },
+        "credentials_federated_carries_identity_and_no_material",
     )
-    .await
-    .expect_err("a secret-bearing kind with no material verifies against nothing");
-    eprintln!("observed rejection: {err}");
+    .await?;
 
-    // A federated credential with a secret: an issuer crammed in beside
+    // A federated credential WITH a secret: an issuer crammed in beside
     // material is exactly the confusion the split exists to prevent.
-    let err = Credentials::create(
-        repositories.as_ref(),
+    refused(
         NewCredential {
             id: "cred_confused".to_owned(),
-            staff_member_id: Some("stf_kinds".to_owned()),
+            staff_member_id: Some("stf_shapes".to_owned()),
             kind: CredentialKind::Oidc,
             material: Some("a-secret-a-federated-credential-should-not-have".to_owned()),
-            issuer: Some("https://idp.example.test".to_owned()),
+            issuer: Some("https://other-idp.example.test".to_owned()),
             subject: Some("someone".to_owned()),
             must_change: false,
             expires_at: None,
             now,
         },
+        "credentials_federated_carries_identity_and_no_material",
     )
-    .await
-    .expect_err("a federated identity is not a secret and must carry no material");
-    eprintln!("observed rejection: {err}");
+    .await?;
 
-    // A transient kind that never expires: a permanent bearer credential in
-    // an inbox.
-    let err = Credentials::create(
-        repositories.as_ref(),
+    // And the other direction: a federated credential with no identity at
+    // all, which would be a row that names nobody at no issuer.
+    refused(
+        NewCredential {
+            id: "cred_anonymous".to_owned(),
+            staff_member_id: Some("stf_shapes".to_owned()),
+            kind: CredentialKind::Oidc,
+            material: None,
+            issuer: None,
+            subject: None,
+            must_change: false,
+            expires_at: None,
+            now,
+        },
+        "credentials_federated_carries_identity_and_no_material",
+    )
+    .await?;
+
+    // A transient kind that never expires: a permanent bearer credential
+    // sitting in an inbox.
+    refused(
         NewCredential {
             id: "cred_forever".to_owned(),
-            staff_member_id: Some("stf_kinds".to_owned()),
+            staff_member_id: Some("stf_shapes".to_owned()),
             kind: CredentialKind::MagicLink,
             material: Some("a-link-digest".to_owned()),
             issuer: None,
@@ -10022,17 +10082,15 @@ async fn a_kind_spelled_here_is_a_kind_the_database_admits() -> anyhow::Result<(
             expires_at: None,
             now,
         },
+        "credentials_transient_kinds_expire",
     )
-    .await
-    .expect_err("a magic link with no expiry is a permanent bearer credential");
-    eprintln!("observed rejection: {err}");
+    .await?;
 
     // Only a password may demand replacement.
-    let err = Credentials::create(
-        repositories.as_ref(),
+    refused(
         NewCredential {
             id: "cred_mustchange".to_owned(),
-            staff_member_id: Some("stf_kinds".to_owned()),
+            staff_member_id: Some("stf_shapes".to_owned()),
             kind: CredentialKind::Webauthn,
             material: Some("a-public-key".to_owned()),
             issuer: None,
@@ -10041,10 +10099,26 @@ async fn a_kind_spelled_here_is_a_kind_the_database_admits() -> anyhow::Result<(
             expires_at: None,
             now,
         },
+        "credentials_only_a_password_may_require_change",
     )
+    .await?;
+
+    // A counter below the seed.
+    let err = sqlx::query(
+        "INSERT INTO credentials (id, staff_member_id, kind, material, issuer, subject,
+             counter, must_change, expires_at, created_at, updated_at)
+         VALUES ('cred_negative', 'stf_shapes', 'totp', 'x', NULL, NULL,
+             -1, FALSE, NULL, now(), now())",
+    )
+    .execute(&_pool)
     .await
-    .expect_err("`must_change` is a password's flag");
+    .expect_err("a step is never negative")
+    .to_string();
     eprintln!("observed rejection: {err}");
+    assert!(
+        err.contains("credentials_counter_is_not_negative"),
+        "refused by the wrong constraint: {err}"
+    );
 
     Ok(())
 }
