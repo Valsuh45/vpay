@@ -641,6 +641,33 @@ clippy:
 # tsconfig actually includes it, rather than assuming this paragraph's
 # reasoning still holds for a different directory.
 #
+# **Re-measured 2026-09-13, as that paragraph asked — the gap carries over
+# unchanged, and it is now `frontends/apps/checkout/.storybook/`.** The
+# restoration landed on 2026-09-12 and this is the answer to the question
+# left open above, measured rather than assumed.
+#
+# The app's tsconfig `include` is `**/*.ts`, which is broader than
+# `@vpay/ui`'s `[".storybook"]` was and still does not reach a
+# dot-directory: `tsc -p tsconfig.json --listFiles` lists **76** files under
+# `frontends/apps/checkout/` and **0** of them under `.storybook/`. The
+# decisive test, not a reading of the glob rules: append
+# `const x: number = "s";` to `.storybook/main.ts` and BOTH `tsc --noEmit`
+# and `eslint .storybook --max-warnings 0` exit **0**. `eslint.config.js`
+# already names `".storybook/**"` in `outsideTsconfig` with this reasoning
+# written out, so the two files are linted for syntax and style but have no
+# program behind them and the type-aware rules are absent by design, not by
+# accident.
+#
+# What this costs, stated rather than implied: nothing in `just ci` type-checks
+# the Storybook config. `just build-storybook` and `just test-storybook` are
+# what fail when it breaks, and neither is in `just ci` (the second needs a
+# ~115 MB Chromium). CI's `web` job runs both. `src/a11y-gate.test.ts` is the
+# piece that does run inside `just ci`, and it asserts the config's
+# load-bearing SETTINGS — the addon loaded, a violation failing rather than
+# warning, the document shell painted, the theme `@import` ordered first —
+# which is the property worth locking, since a config that type-checks and
+# configures the wrong thing is the failure this repository actually met.
+#
 # `no-console` is off in tests, Storybook stories, Cypress specs, `testing/`
 # helpers and the command-line examples (`examples/*/index.mjs`,
 # `checkout-browser`'s `mint.mjs`/`serve.mjs`, `sdks/nodejs/scripts/`) —
@@ -2046,7 +2073,26 @@ expected_ignored := "0"
 # would be measuring whatever that one left running. Two tests, one container
 # each, about 23 s together. Measured after adding it: `cargo nextest list
 # --workspace` gives **47** binaries, **1753** total, **0** ignored.
-expected_suites := "47"
+#
+# **47 -> 48 on 2026-09-13 (nav plan Lane C)**: one new binary,
+# `backends/tests/integration/tests/dashboard_procedure_transport.rs`, the end
+# of CrateStack's read-only procedure transport over HTTP. Its own file rather
+# than cases in `dashboard_read_surface.rs` because that suite is about
+# `/dash/v1`'s hand-written `GET` routes behind `require_dashboard_token`, and
+# this one is about the transport mounted beside them — a different middleware
+# (`require_dashboard_procedure_token`), a `POST` carrying a JSON body, and a
+# router assembled a different way.
+#
+# **This bump is the whole reason to run the gate rather than reason about
+# it.** The binary was added by the commit that mounted the transport
+# (`9d384d13`) and this number was not moved with it, so `just ci` on that
+# branch exits 1 at `verify-ignored` — which nothing noticed, because that
+# branch's `just ci` was never run. It is not a count anyone can bump
+# reflexively for the same reason: the recipe prints the listing when it
+# fails, so a binary that vanished and a binary that was added are told apart
+# by reading it. Measured after adding it: `cargo nextest list --workspace`
+# gives **48** binaries, **1772** total, **0** ignored.
+expected_suites := "48"
 # A floor, not a target — set a little under the measured 1059
 # rather than to it, so it is not a number people bump reflexively. Bump it in
 # the same commit that legitimately adds tests, never to make a red run green.

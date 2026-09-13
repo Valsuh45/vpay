@@ -2292,7 +2292,7 @@ type PaymentIntentListFilter {
 // `validate/procedure_handler_collisions.rs`.) Every model in this file
 // generates `handle_{list,create}_<plural>` and `handle_{get,update,
 // delete}_<singular>` whether or not anything routes them, so those five
-// stems are taken for all eighteen models — `getPaymentIntent`,
+// stems are taken for all nineteen models — `getPaymentIntent`,
 // `createCharge` and `deleteCustomer` are unavailable for the same reason.
 procedure searchPaymentIntents(page: PageInput, filter: PaymentIntentListFilter): Page<PaymentIntentSummary>
   @allow(auth() != null)

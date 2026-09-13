@@ -18,6 +18,7 @@ between the two on `docs/status.md` as it was:
 - [cratestack/2026-09-07-money-tables.md](cratestack/2026-09-07-money-tables.md) — migration 0037
 - [cratestack/2026-09-11-search-payment-intents.md](cratestack/2026-09-11-search-payment-intents.md) — the first `procedure`
 - [cratestack/2026-09-13-credentials.md](cratestack/2026-09-13-credentials.md) — migration 0044, `model Credential`
+- [cratestack/2026-09-13-dashboard-procedure-transport.md](cratestack/2026-09-13-dashboard-procedure-transport.md) — the first transport, mounting it
 
 ### CrateStack
 
