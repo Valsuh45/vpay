@@ -192,6 +192,19 @@ grew `--admin` (defaulting to `false`), proven by
 `staff_add_admin_flag_defaults_to_false_and_admin_sets_it` in
 `backends/apps/vpay-server/tests/cli.rs`.
 
+_Reviewed 2026-09-13._ All 21 cases ran against real Postgres — 21 passed, 0
+ignored, 0 skipped — and the three properties above were **mutation-tested
+rather than asserted**: deleting the `is_admin` check reddens the two
+non-admin cases (the failure body shows the other tenant's row in a
+non-admin's list), deleting `required_scope`'s write refusal reddens
+`an_admin_still_cannot_write` with a `405` where a `403` belongs, and making
+"not yours" distinguishable from "does not exist" reddens the uniform-404
+cases for admin and non-admin alike. The review also found that migration
+`0043`'s dropped `DEFAULT` broke five hand-written `INSERT`s in
+`postgres_smoke.rs` — `staff_members` has a second writer the compiler
+cannot see — and repaired them by naming the column rather than by restoring
+a default. [Verification log](../status/verification/2026-09-13-adr-0018-admin-role-review.md).
+
 **Added 2026-09-10 (issue #79 items 1-3):**
 
 - `rate_limit_windows` (migration `0038`), and with it a sign-in budget that

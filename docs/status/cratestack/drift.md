@@ -178,3 +178,16 @@ prove" warns a compiler cannot see either way — a modelled column naming a
 type the live table cannot produce would have passed `cargo build` and
 `just check-schema` identically — and `the_cstack_schema_drifts_from_the_migrations_by_a_measured_amount`
 is what actually proved it rather than assumed it.
+
+**Who took that measurement, and when.** The paragraph above was written
+before the run. The ADR-0018 review took it on 2026-09-13, against a freshly
+migrated `postgres:16-alpine`, and the report's own header line read
+`drift detected in 24 table(s)/view(s) (179 change(s) total)` with
+`19 column(s) have a Postgres type cratestack could not confidently map`.
+All three constants held, so the prediction was right and the paragraph
+stands — but it was a prediction when it was written, and the numbers are
+quoted here so a later reader can tell the two apart. The constants in
+`postgres_smoke.rs` now carry the same three "Still … after migration 0043"
+notes the repository writes for every other migration, which is what
+`0043_staff-members-is-admin.sql`'s own DRIFT paragraph points a reader at;
+before the review those notes did not exist and that pointer led nowhere.

@@ -319,4 +319,51 @@ mod tenancy_tests {
         assert!(!DashboardTenancy::Bound("acme".to_owned()).is_cross_tenant());
         assert!(DashboardTenancy::ChosenByAdmin("beta".to_owned()).is_cross_tenant());
     }
+
+    /// The seam is **extractable**, and it fails closed when it is not there.
+    ///
+    /// Added by the ADR-0018 review, because until it existed the
+    /// `FromRequestParts` impl above had no caller anywhere: nothing in
+    /// `/dash/v1` reads a `DashboardTenancy` yet — the plan's Lane C is what
+    /// will — so the whole extractor, including its fail-closed arm, was
+    /// code the test suite never ran. An impl the first consumer discovers
+    /// is broken is not a seam; this is the cheapest thing that makes it
+    /// one.
+    ///
+    /// The absent arm is the half that matters. It must be a **500**, not a
+    /// default tenant: reaching a handler with no tenancy on the request
+    /// means `require_dashboard_token` is not mounted in front of it, and
+    /// the one thing an extractor must never do there is invent a merchant
+    /// id for an unauthenticated request to read.
+    #[tokio::test]
+    async fn the_seam_is_extractable_and_fails_closed_when_it_is_absent() {
+        use axum::extract::FromRequestParts;
+
+        let (mut parts, _) = axum::http::Request::builder()
+            .uri("/dash/v1/payment_intents")
+            .body(())
+            .expect("building a request")
+            .into_parts();
+
+        let rejection = DashboardTenancy::from_request_parts(&mut parts, &())
+            .await
+            .expect_err("no middleware ran, so there is no tenancy to extract");
+        assert!(
+            matches!(rejection, crate::ApiError::Internal(_)),
+            "an absent tenancy must fail closed, never resolve to a tenant: {rejection:?}"
+        );
+
+        parts
+            .extensions
+            .insert(DashboardTenancy::ChosenByAdmin("beta".to_owned()));
+        let extracted = DashboardTenancy::from_request_parts(&mut parts, &())
+            .await
+            .expect("the tenancy the middleware inserted is readable by a handler");
+        assert_eq!(
+            extracted,
+            DashboardTenancy::ChosenByAdmin("beta".to_owned())
+        );
+        assert_eq!(extracted.merchant_id(), "beta");
+        assert!(extracted.is_cross_tenant());
+    }
 }
