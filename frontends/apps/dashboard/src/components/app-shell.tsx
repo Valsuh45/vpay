@@ -209,11 +209,26 @@ export function AppShell({
             drawer for a different reason and wants sign-out right there.
           */}
           <div className="flex flex-wrap items-center gap-4 xl:hidden">
-            <SignedInBar
-              email={email}
-              merchantId={merchantId}
-              signOut={signOut}
-            />
+            {/*
+              Hidden below `sm`. On a 375px phone this block wrapped to three
+              lines — address, merchant id, then "Sign out" — and pushed the
+              screen's own heading below the fold before a single row was
+              read. The drawer carries the same `SignedInBar`, so nothing is
+              unreachable; it is one tap instead of zero.
+
+              `sm` (640px) and not `md`, deliberately: `dashboard.cy.ts` runs
+              at Cypress's default **1000px** viewport and asserts
+              `cy.contains(staffEmail()).should("be.visible")` with eight
+              tests chained behind it. 1000 is above `sm`, so that assertion
+              still sees this copy.
+            */}
+            <div className="hidden sm:block">
+              <SignedInBar
+                email={email}
+                merchantId={merchantId}
+                signOut={signOut}
+              />
+            </div>
             <MoreMenu
               email={email}
               merchantId={merchantId}
