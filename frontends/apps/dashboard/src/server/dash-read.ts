@@ -98,10 +98,29 @@ export async function readDash<T>(
   });
 }
 
-/** One page of a CrateStack `Page<T>`, as the generated transport answers it. */
+/**
+ * One page of a CrateStack `Page<T>`, as the generated transport answers it.
+ *
+ * **camelCase, and it is the one place in this app that is.** Every vpay wire
+ * type is snake_case — `verify-serde` refuses a serialisable type that does
+ * not spell that convention — but `Page<T>` is **CrateStack's** type, and
+ * `cratestack-core-0.12.0/src/page.rs` declares it
+ * `#[serde(rename_all = "camelCase")]`. So the keys are `totalCount` and
+ * `pageInfo`, not `total_count` and `page_info`.
+ *
+ * This was found by running it, not by reading it: a `total_count` field here
+ * parsed as `undefined` against a `200` that carried every row correctly, and
+ * the pager rendered "1–3 of  so far" with the count simply missing. Nothing
+ * failed — which is exactly why the mismatch is written down here rather than
+ * left for the next reader to re-discover.
+ */
 export interface ProcedurePage<T> {
   readonly items: readonly T[];
-  readonly total_count: number;
+  readonly totalCount: number | null;
+  readonly pageInfo: {
+    readonly hasNextPage: boolean;
+    readonly hasPreviousPage: boolean;
+  };
 }
 
 /**

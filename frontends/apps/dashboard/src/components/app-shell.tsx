@@ -1,6 +1,6 @@
 "use client";
 
-import { SideNav, ThemeSwitcher } from "@vaam-apps/ui";
+import { SideNav } from "@vaam-apps/ui";
 
 import { MoreMenu } from "./more-menu";
 import { SignedInBar } from "./signed-in-bar";
@@ -80,58 +80,98 @@ export function AppShell({
       <header>
         <h1 className="sr-only">vpay dashboard</h1>
       </header>
-      <SideNav
-        /*
+      {/*
+        The in-flow sidebar is full height and pinned to the top, and both
+        halves of that need this wrapper because `SideNav` takes no
+        `className`.
+
+        **Measured before the change** (1440x900, real render): the sidebar
+        carries `xl:h-full`, but its only ancestor is `flex min-h-screen` —
+        a *min*-height, not a definite one — so `height: 100%` resolved to
+        `auto` and the nav was **407px tall** with `position: static`. It
+        ended partway down the viewport and scrolled away with the page.
+
+        `xl:h-screen` gives the definite height `xl:h-full` needs, and
+        `xl:sticky xl:top-0` pins it. The nav's own `xl:overflow-y-auto`
+        then scrolls the nav's contents rather than the page when the list
+        outgrows the viewport.
+
+        `contents` below `xl` is deliberate: at those widths the rails are
+        `position: fixed` and portalled to `document.body`, so a box here
+        would be an empty column the rails never occupy. `display: contents`
+        adds no box at all, which keeps every measurement in the comment on
+        `<main>` below exactly as it was.
+      */}
+      <div className="contents xl:sticky xl:top-0 xl:block xl:h-screen">
+        <SideNav
+          /*
           A distinct icon from the group below. `topItem` and the one
           `Payments` entry both rendered `CreditCard` at first, so the rail
           showed the same glyph twice with nothing to tell them apart —
           visible in `03-payments.png` from the e2e run before this line
           existed. The top item is the console; the entry is the resource.
         */
-        topItem={{
-          label: "Console",
-          href: first?.href ?? "/",
-          icon: LayoutDashboard,
-        }}
-        groups={[
-          {
-            label: "Observe",
-            items: NAV_ENTRIES.map((entry) => ({
-              label: entry.label,
-              href: entry.href,
-              icon: entry.icon,
-            })),
-          },
-        ]}
-        footerItems={[]}
-        currentPath={pathname}
-        /*
-          The theme control only. **The identity and the sign-out are NOT
+          topItem={{
+            label: "Console",
+            href: first?.href ?? "/",
+            icon: LayoutDashboard,
+          }}
+          groups={[
+            {
+              label: "Observe",
+              items: NAV_ENTRIES.map((entry) => ({
+                label: entry.label,
+                href: entry.href,
+                icon: entry.icon,
+              })),
+            },
+          ]}
+          footerItems={[]}
+          currentPath={pathname}
+          /*
+          The menu, in the rail. **The identity and the sign-out are NOT
           here, and that is a fix rather than a preference.**
 
           `SideNav` does not render `accountSlot` below `lg` — its own doc
           says so, and ~52px has no room for an email address. Putting the
-          signed-in identity there meant that at the e2e viewport (1000px)
+          signed-in identity here meant that at the e2e viewport (1000px)
           it was not on screen at all, and `dashboard.cy.ts`'s
           `cy.contains(staffEmail()).should("be.visible")` failed — taking
           the eight tests that follow it in that `testIsolation: false`
           sequence with it. The rail is navigation; who is signed in and the
           way out belong somewhere always visible.
 
-          This is also why `MoreMenu` carries its own `ThemeSwitcher`
-          instance rather than this one moving there: `accountSlot` only
-          ever renders in the ≥1280px in-flow sidebar (`side-nav.d.ts`'s own
-          doc — "not rendered below `lg`"), so below that width there was no
-          theme control anywhere on the page until the drawer existed. Two
-          mounted switchers sounds like a duplication bug; it isn't one —
-          `useTheme`'s module-level store (`theme-switcher.js`) is the single
-          source both read and write, so the two can never disagree even in
-          the one case both are mounted together (≥1280px, with the drawer
-          also open) — each is a view onto the same preference, not a second
-          copy of it.
+          `MoreMenu` is what the slot holds, so the menu trigger sits in the
+          rail rather than in the top-right of `<main>`. Because the slot
+          renders **only** in the ≥1280px in-flow sidebar, `<main>` keeps a
+          second `MoreMenu` behind `xl:hidden` — otherwise every width below
+          `xl` would have no way to reach the theme control or the nav tree
+          at all. `xl:hidden` is `display: none`, so exactly one of the two
+          is ever in the accessibility tree; `more-menu.test.tsx` holds that
+          property for the drawer's sign-out and the same reasoning covers
+          the trigger.
+
+          The theme switcher lives inside the drawer rather than in this
+          slot for that same reason: a control only reachable at ≥1280px is
+          not a control a phone has.
         */
-        accountSlot={<ThemeSwitcher />}
-      />
+          accountSlot={
+            <div className="flex flex-col gap-3">
+              <SignedInBar
+                email={email}
+                merchantId={merchantId}
+                signOut={signOut}
+              />
+              <MoreMenu
+                email={email}
+                merchantId={merchantId}
+                signOut={signOut}
+                currentPath={pathname}
+              />
+            </div>
+          }
+        />
+      </div>
       {/*
         `smallScreen` is left at its default, `"floating"`. This app owns a
         drawer now (`MoreMenu`, below) but `side-nav.d.ts`'s `"off-canvas"`
@@ -172,7 +212,7 @@ export function AppShell({
             switcher, and a second `SignedInBar` for anyone who reached the
             drawer for a different reason and wants sign-out right there.
           */}
-          <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center gap-4 xl:hidden">
             <SignedInBar
               email={email}
               merchantId={merchantId}

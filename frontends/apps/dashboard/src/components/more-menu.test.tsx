@@ -49,9 +49,26 @@ function renderShell() {
   );
 }
 
-/** Click "Menu" and return the open panel, failing if it never opened. */
+/**
+ * Click "Menu" and return the open panel, failing if it never opened.
+ *
+ * **`getAllBy`, and the first one, because `AppShell` mounts the trigger
+ * twice on purpose.** One goes in `SideNav`'s `accountSlot`, which that
+ * component renders **only** in the ≥1280px in-flow sidebar; the other sits
+ * in `<main>` behind `xl:hidden` so every narrower width can still reach the
+ * theme control and the nav tree. Exactly one is ever visible in a browser —
+ * but jsdom applies no CSS, so both are here and a `getBy` throws "found
+ * multiple elements".
+ *
+ * Which one this clicks does not matter to anything below: both render the
+ * same `MoreMenu` with the same props, only one drawer can be open at a
+ * time, and `MoreDetailDrawer` is modal — Radix `aria-hidden`s the rest of
+ * the document while it is open, which is what keeps the sign-out assertion
+ * below true with two triggers mounted.
+ */
 async function openDrawer(): Promise<HTMLElement> {
-  screen.getByRole("button", { name: /^menu$/i }).click();
+  const triggers = screen.getAllByRole("button", { name: /^menu$/i });
+  triggers[0]!.click();
   return await screen.findByRole("dialog");
 }
 
@@ -193,8 +210,10 @@ describe("the More drawer", () => {
   });
 
   it("never puts two sign-outs in the accessibility tree at once", async () => {
-    // `AppShell` mounts `SignedInBar` twice — once always-visible in
-    // `<main>` (which `dashboard.cy.ts` needs) and once in this drawer. That
+    // `AppShell` mounts `SignedInBar` three times — in `SideNav`'s
+    // `accountSlot` (>=1280px only), in `<main>` behind `xl:hidden` for
+    // every narrower width (which `dashboard.cy.ts` needs at its 1000px
+    // viewport), and once in this drawer. That
     // is safe rather than a duplication bug, and this is the measurement
     // behind that claim rather than an argument for it: `MoreDetailDrawer`
     // is the dimmed, MODAL variant, so Radix marks the rest of the document
@@ -206,9 +225,19 @@ describe("the More drawer", () => {
     // { name: /sign out/i })` unambiguous, which would otherwise throw
     // "found multiple elements" the moment a case opened the drawer.
     renderShell();
+    // TWO when closed, and that is the design rather than a regression:
+    // the account block is mounted in `SideNav`'s `accountSlot` (which that
+    // component renders ONLY at >=1280px) and again in `<main>` behind
+    // `xl:hidden`. The two are mutually exclusive **by CSS**, so a browser
+    // shows exactly one at every width — but jsdom applies no stylesheet, so
+    // both are in the tree here. Asserting `1` would be asserting jsdom's
+    // blindness, so this asserts the mechanism instead: one of the two is
+    // inside an `xl:hidden` container, which is what makes them exclusive.
+    const closed = screen.getAllByRole("button", { name: /sign out/i });
+    expect(closed, "closed: the rail copy and the <main> copy").toHaveLength(2);
     expect(
-      screen.getAllByRole("button", { name: /sign out/i }),
-      "closed: only the <main> copy",
+      closed.filter((b) => b.closest(".xl\\:hidden") !== null),
+      "exactly one of the two is hidden from xl up",
     ).toHaveLength(1);
 
     await openDrawer();

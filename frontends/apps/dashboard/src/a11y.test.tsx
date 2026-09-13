@@ -193,7 +193,7 @@ describe("the rendered app", () => {
     // second copy of the shell rather than this render.
     document.body.innerHTML = "";
 
-    const { getByRole, findByRole } = render(
+    const { getAllByRole, getByRole, findByRole } = render(
       <AppShell
         email="ops@example.test"
         merchantId="acct_test"
@@ -202,7 +202,7 @@ describe("the rendered app", () => {
         <PaymentsTable rows={[INTENT]} />
       </AppShell>,
     );
-    getByRole("button", { name: /^menu$/i }).click();
+    getAllByRole("button", { name: /^menu$/i })[0]!.click();
     // Fails loudly if the drawer never opened, rather than running axe over
     // a document that still has no drawer in it and reporting green.
     const panel = await findByRole("dialog");

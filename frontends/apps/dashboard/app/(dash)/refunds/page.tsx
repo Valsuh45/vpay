@@ -117,7 +117,8 @@ export default async function RefundsPage({
               basePath="/refunds"
               offset={offset}
               returned={result.value.items.length}
-              totalCount={result.value.total_count}
+              totalCount={result.value.totalCount}
+              hasNext={result.value.pageInfo.hasNextPage}
             />
           </>
         )}

@@ -637,7 +637,7 @@ export async function procedureListResponse(
   return serve(result, (page) => ({
     object: "list",
     data: page.items,
-    total_count: page.total_count,
+    total_count: page.totalCount,
     limit,
     offset,
   }));

@@ -9,8 +9,10 @@ export interface ProcedurePagerProps {
   readonly offset: number;
   /** How many rows came back — never how many were asked for. */
   readonly returned: number;
-  /** `total_count`, exact for the statement that returned it. */
-  readonly totalCount: number;
+  /** `totalCount`, exact for the statement that returned it, or null. */
+  readonly totalCount: number | null;
+  /** `pageInfo.hasNextPage` — the server's own answer, not a guess. */
+  readonly hasNext: boolean;
 }
 
 /**
@@ -30,29 +32,34 @@ export interface ProcedurePagerProps {
  * total.** It is exact for the statement that produced it and says nothing
  * about the next one.
  *
- * # "Next" is decided by what came back, not by the count
+ * # "Next" comes from `pageInfo.hasNextPage`, not from arithmetic
  *
- * `returned === PAGE_SIZE` is the condition, not `offset + PAGE_SIZE <
- * totalCount`. A short page is the end of the list whatever the count says,
- * and trusting the count instead would offer a next page that answers
+ * The server answers it, so this does not re-derive it from `offset +
+ * PAGE_SIZE < totalCount` — that comparison offers a next page that answers
  * nothing whenever rows were deleted between the count and the read.
+ *
+ * `totalCount` is `Option<i64>` upstream and is rendered only when present:
+ * a page that carries no count says "1–20 so far" rather than "1–20 of
+ * undefined", which is what this rendered before the camelCase mismatch in
+ * `dash-read.ts` was found.
  */
 export function ProcedurePager({
   basePath,
   offset,
   returned,
   totalCount,
+  hasNext,
 }: ProcedurePagerProps) {
   const previousOffset = Math.max(0, offset - PAGE_SIZE);
   const hasPrevious = offset > 0;
-  const hasNext = returned === PAGE_SIZE;
   const first = offset + 1;
   const last = offset + returned;
 
   return (
     <nav aria-label="Pagination" className="flex items-center gap-4">
       <span className="text-caption text-muted-foreground">
-        {first}–{last} of {totalCount} so far
+        {first}–{last}
+        {totalCount === null ? "" : ` of ${totalCount}`} so far
       </span>
       {hasPrevious ? (
         <NextLink href={`${basePath}?offset=${previousOffset}`} rel="prev">
