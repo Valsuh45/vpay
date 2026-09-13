@@ -62,10 +62,24 @@ export function PaymentsTable({ rows }: PaymentsTableProps) {
       <TableHeader>
         <TableRow>
           <TableHead scope="col">Payment</TableHead>
-          <TableHead scope="col">Created (UTC)</TableHead>
+          {/*
+            Created and Methods step aside below `sm`. `Table` already wraps
+            itself in `w-full overflow-x-auto`, so nothing was unreachable —
+            but at 375px five columns put three of them off-screen with no
+            affordance, and an operator who does not know to swipe reads the
+            id and a truncated timestamp as the whole row. Payment, Amount
+            and Status are what the screen is for; the other two return at
+            `sm`. Static classes, never computed: `verify-ui` refuses a
+            computed className in an app.
+          */}
+          <TableHead scope="col" className="hidden sm:table-cell">
+            Created (UTC)
+          </TableHead>
           <TableHead scope="col">Amount</TableHead>
           <TableHead scope="col">Status</TableHead>
-          <TableHead scope="col">Methods</TableHead>
+          <TableHead scope="col" className="hidden sm:table-cell">
+            Methods
+          </TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -78,7 +92,9 @@ export function PaymentsTable({ rows }: PaymentsTableProps) {
                   <Code>{row.id}</Code>
                 </NextLink>
               </TableCell>
-              <TableCell>{formatInstant(row.created)}</TableCell>
+              <TableCell className="hidden sm:table-cell">
+                {formatInstant(row.created)}
+              </TableCell>
               <TableCell>{formatAmount(row.amount, row.currency)}</TableCell>
               <TableCell>
                 {/*
@@ -93,7 +109,9 @@ export function PaymentsTable({ rows }: PaymentsTableProps) {
                   <PaymentStatusPill state={status} />
                 )}
               </TableCell>
-              <TableCell>{formatMethods(row.payment_method_types)}</TableCell>
+              <TableCell className="hidden sm:table-cell">
+                {formatMethods(row.payment_method_types)}
+              </TableCell>
             </TableRow>
           );
         })}
