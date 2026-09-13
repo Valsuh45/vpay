@@ -96,6 +96,17 @@ use vpay_core::IntentStatus;
 
 use super::cratestack_schema::{self, procedures, types};
 
+// `search_refunds.rs`'s body — Lane D's refunds slice. `#[path]` rather than
+// a plain `mod search_refunds;` because this file's own submodules would
+// otherwise resolve under `schema/search_payment_intents/`, and the file
+// lives beside this one at `schema/search_refunds.rs`; `#[path]` is resolved
+// relative to this file's own directory (`schema/`), which is what points
+// it there. Kept out of `schema.rs` on purpose: every Lane D slice adds one
+// `mod` line and one delegation method to *this* file rather than to that
+// one, so the four slices' diffs land on one shared file instead of two.
+#[path = "search_refunds.rs"]
+mod search_refunds;
+
 /// The largest page this procedure will answer.
 ///
 /// **100, which is a deliberate copy of `vpay_api::v1::paging::MAX_LIMIT`**
@@ -204,6 +215,21 @@ impl procedures::ProcedureRegistry for Payments {
             .map_err(cratestack::cratestack_error_from_sqlx)?;
 
         page_of(rows, limit, offset)
+    }
+
+    // A thin delegation, on purpose: this trait's home is `Payments`, but
+    // the refunds slice's real body — the JOIN onto `payment_intents` that
+    // its own tenancy predicate needs, since `model Refund` has no
+    // `merchant_id` — lives in `search_refunds.rs`, not here. See that
+    // file's module doc for why.
+    async fn search_refunds(
+        &self,
+        db: &cratestack_schema::Cratestack,
+        ctx: &CratestackContext,
+        args: procedures::search_refunds::Args,
+        authorized: procedures::search_refunds::Authorized,
+    ) -> Result<procedures::search_refunds::Output, CratestackError> {
+        search_refunds::run(db, ctx, args, authorized).await
     }
 }
 
