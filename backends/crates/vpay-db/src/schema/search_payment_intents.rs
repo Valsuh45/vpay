@@ -205,6 +205,25 @@ impl procedures::ProcedureRegistry for Payments {
 
         page_of(rows, limit, offset)
     }
+
+    /// `procedure searchCustomers` — a thin delegation, and deliberately no
+    /// more than one. The real body, including its own tenancy predicate and
+    /// its own `anonymized_at` exclusion, is
+    /// `super::search_customers::search_customers`; this method exists only
+    /// because `ProcedureRegistry` requires one implementer for every
+    /// procedure this schema declares, and `Payments` is that implementer.
+    /// `_authorized` is dropped for the reason it is dropped above: the
+    /// witness proves the `@allow` arm already passed, and the body has
+    /// nothing further to ask it.
+    async fn search_customers(
+        &self,
+        db: &cratestack_schema::Cratestack,
+        ctx: &CratestackContext,
+        args: procedures::search_customers::Args,
+        _authorized: procedures::search_customers::Authorized,
+    ) -> Result<procedures::search_customers::Output, CratestackError> {
+        super::search_customers::search_customers(db, ctx, args).await
+    }
 }
 
 /// [`PageInput::resolve`]'s clamp, with vpay's default page size rather
