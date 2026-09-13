@@ -40,6 +40,15 @@ the order they were measured.
   unauthenticated caller is refused, the tenant-mismatch mutation reddens the
   procedure body's own container test, and a routing-table walk proves no
   generated model CRUD route is reachable
+- [verification/2026-09-13-dashboard-storybook.md](verification/2026-09-13-dashboard-storybook.md) —
+  a Storybook for `frontends/apps/dashboard`, mirroring the checkout's: 25
+  stories, both `@vaam-apps/ui` themes (21 `dark`, 4 `light`), a measured
+  router/`next/link` fix, one real `@vaam-apps/ui` accessibility defect found
+  and suppressed by rule id rather than hidden, and the checkout's own
+  theme.css alias measured as unnecessary here — plus the same day's
+  adversarial review, which found three stories rendering the wrong theme,
+  an `AppShell` with no axe coverage at all, and a built-stylesheet gate that
+  never ran in CI
 - [verification/2026-09-13-dash-shell-drawer.md](verification/2026-09-13-dash-shell-drawer.md) —
   the dashboard shell's "More" drawer (nav plan Lane A): the theme switcher
   reachable below the ≥1280px sidebar, the signed-in identity kept visible in
