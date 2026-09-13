@@ -4705,7 +4705,9 @@ fn dart_call_is_skipped(chars: &[char], start: usize) -> bool {
 /// starts at `start`, honouring Dart's raw-string rule that a backslash
 /// inside `r'…'`/`r"…"` is literal rather than an escape.
 fn skip_dart_string_literal(chars: &[char], start: usize, raw: bool) -> usize {
-    let quote = chars[start];
+    let Some(&quote) = chars.get(start) else {
+        return start;
+    };
     let mut i = start + 1;
     while let Some(&c) = chars.get(i) {
         if !raw && c == '\\' {
