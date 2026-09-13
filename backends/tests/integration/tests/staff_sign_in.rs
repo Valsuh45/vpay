@@ -319,12 +319,19 @@ impl Harness {
     /// `open_secret` the server does, so a change to the sealing format
     /// breaks it here rather than silently somewhere else.
     async fn enrolled_totp(&self) -> anyhow::Result<totp::Totp> {
-        let sealed: String = sqlx::query("SELECT totp_secret FROM staff_members WHERE email = $1")
-            .bind(STAFF_EMAIL)
-            .fetch_one(&self.repositories.op_store_pool())
-            .await
-            .context("reading the stored TOTP secret")?
-            .get("totp_secret");
+        // From `credentials` since ADR-0019, joined through the staff row
+        // rather than read off it: the secret is a `totp` credential's
+        // `material` now, and "enrolled" is the EXISTENCE of that row.
+        let sealed: String = sqlx::query(
+            "SELECT c.material FROM credentials c
+             JOIN staff_members s ON s.id = c.staff_member_id
+             WHERE s.email = $1 AND c.kind = 'totp'",
+        )
+        .bind(STAFF_EMAIL)
+        .fetch_one(&self.repositories.op_store_pool())
+        .await
+        .context("reading the stored TOTP secret")?
+        .get("material");
         Ok(totp::Totp::new(self.credentials.open_secret(&sealed)?))
     }
 
@@ -332,7 +339,7 @@ impl Harness {
     /// TOTP step `step`: the session token.
     ///
     /// `step` is a parameter and not `now`, and that is the whole reason this
-    /// helper exists. `Staff::record_totp_step` is a compare-and-swap that
+    /// helper exists. `Credentials::advance_counter` is a compare-and-swap that
     /// admits only a *strictly greater* step, so two sign-ins inside one
     /// 30-second window are a replay and the second is refused — correctly.
     /// A case that needs two live sessions therefore authenticates the second
@@ -862,13 +869,15 @@ async fn disabling_a_staff_member_refuses_their_live_session() -> anyhow::Result
 /// step, presented twice.
 ///
 /// The second presentation is refused because
-/// `Staff::record_totp_step`'s compare-and-swap admits only a step strictly
+/// `Credentials::advance_counter`'s compare-and-swap admits only a step strictly
 /// greater than the last accepted one. Without it the +/-1 skew window — the
 /// thing that makes TOTP usable across a clock drift — would be a 90-second
 /// replay window.
 ///
-/// The decisive mutation: drop `.where_(last_totp_step().lt(step))` from
-/// `record_totp_step` and the second sign-in below succeeds.
+/// The decisive mutation: drop `.where_(credential::counter().lt(counter))`
+/// from `Credentials::advance_counter` and the second sign-in below succeeds.
+/// (It was `Staff::record_totp_step` until ADR-0019 moved the guard, with its
+/// reasoning intact, onto the credential row it actually guards.)
 #[tokio::test]
 async fn a_replayed_totp_code_is_refused() -> anyhow::Result<()> {
     let harness = harness().await?;
@@ -1288,8 +1297,12 @@ async fn a_session_that_has_not_presented_a_second_factor_cannot_authorize() -> 
 /// Two logins are started against an *unenrolled* account, so each is handed
 /// its own freshly minted secret. The first completes enrolment; the second
 /// then presents a valid code **from its own secret**, and is refused —
-/// because `Staff::enrol_totp`'s compare-and-swap guards on
-/// `totp_enrolled_at IS NULL` and the first login won it.
+/// because a `totp` credential row can only be created once and the first
+/// login created it. ADR-0019 replaced `Staff::enrol_totp`'s
+/// `totp_enrolled_at IS NULL` guard with the partial unique index
+/// `credentials_one_singleton_kind_per_staff_member`, which is a
+/// strengthening rather than a rename: a `WHERE` clause can be dropped by an
+/// edit, and an index cannot be dropped by one.
 ///
 /// Without that guard the second login would *succeed* and overwrite the
 /// stored secret with its own: a second-factor reset performed by whoever
@@ -1297,8 +1310,9 @@ async fn a_session_that_has_not_presented_a_second_factor_cannot_authorize() -> 
 /// front of it. The step used is deliberately one **ahead** of the first's,
 /// so the TOTP replay guard is not what refuses it.
 ///
-/// The decisive mutation: delete
-/// `.where_(staff_member::totp_enrolled_at().is_null())` from `enrol_totp`.
+/// The decisive mutation: make
+/// `credentials_one_singleton_kind_per_staff_member` an ordinary index in
+/// migration 0044.
 #[tokio::test]
 async fn a_second_enrolment_cannot_replace_an_enrolled_second_factor() -> anyhow::Result<()> {
     let harness = harness().await?;
