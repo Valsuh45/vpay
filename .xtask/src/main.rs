@@ -3187,9 +3187,11 @@ struct ParityRow {
 ///   are for.
 /// * a `✅` cell names the test(s) that prove the capability **in that SDK**,
 ///   and every one of them must exist there — a Rust `#[test]`/`#[tokio::test]`
-///   function or a TypeScript `it("…")`/`test("…")` with that exact name.
-///   Renaming a test without updating the matrix is the ordinary way a
-///   proof-of-parity claim rots, and it fails here instead.
+///   function, a TypeScript `it("…")`/`test("…")`, or (2026-09-13) a Dart
+///   `test('…')`/`testWidgets('…')`/`group('…')` with that exact name, and
+///   not carrying `skip: true` or a string `skip:` reason. Renaming a test
+///   without updating the matrix is the ordinary way a proof-of-parity claim
+///   rots, and it fails here instead.
 /// * a `⛔` cell must carry a date. ADR-0015 allows a capability to be
 ///   missing from one SDK; it does not allow the absence to be undated,
 ///   because an undated gap is indistinguishable from one nobody has looked
@@ -3482,9 +3484,10 @@ fn check_parity_cell(
             } else {
                 problems.push(format!(
                     "{at}: names the test `{name}`, which does not exist under `{column}` \
-                     (looked for a Rust `#[test]`/`#[tokio::test]` fn or a TypeScript \
-                     `it(\"…\")`/`test(\"…\")` with exactly that name, ignoring anything \
-                     `#[ignore]`d)"
+                     (looked for a Rust `#[test]`/`#[tokio::test]` fn, a TypeScript \
+                     `it(\"…\")`/`test(\"…\")`, or a Dart `test('…')`/`testWidgets('…')`/ \
+                     `group('…')` with exactly that name, ignoring anything `#[ignore]`d or \
+                     `skip:`ped)"
                 ));
             }
         }

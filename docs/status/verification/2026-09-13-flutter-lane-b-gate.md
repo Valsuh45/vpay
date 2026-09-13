@@ -56,7 +56,7 @@ this run and removed before committing, was:
 
 ```
 sdk parity violations:
-  - docs/sdks/parity.md:3 `checkout controller starts idle` / sdks/flutter-fixture: names the test `starts idle`, which does not exist under `sdks/flutter-fixture` (looked for a Rust `#[test]`/`#[tokio::test]` fn or a TypeScript `it("…")`/`test("…")` with exactly that name, ignoring anything `#[ignore]`d)
+  - docs/sdks/parity.md:3 `checkout controller starts idle` / sdks/flutter-fixture: names the test `starts idle`, which does not exist under `sdks/flutter-fixture` (looked for a Rust `#[test]`/`#[tokio::test]` fn, a TypeScript `it("…")`/`test("…")`, or a Dart `test('…')`/`testWidgets('…')`/ `group('…')` with exactly that name, ignoring anything `#[ignore]`d or `skip:`ped)
 ```
 
 That is the literal string a caller of `main()`'s `"verify-sdk-parity"` arm
@@ -64,10 +64,15 @@ would see on stderr, with `ExitCode::FAILURE` (`1` on this platform), naming
 both the cell (`checkout controller starts idle`) and the column
 (`sdks/flutter-fixture`) — the property B1 asked to be proven, proven with
 the real function and a real mutation rather than asserted about it from a
-distance. The error text's own wording still says "a Rust … or a TypeScript
-…" — it is the same message every cell miss gets, regardless of which
-language's reader actually ran; it does not name Dart, and that is a
-pre-existing generality this lane did not change.
+distance. The message text itself was widened in this lane, once the first
+capture (below) showed it still read "a Rust … or a TypeScript …" with no
+mention of Dart or `skip:` — a payer reading this error for a Dart cell miss
+would have been told to look for the wrong two languages. Both the message
+(`test_names_in`'s caller, `.xtask/src/main.rs`) and its doc comment now name
+all three readers and the skip rule; the quote above is the corrected text,
+re-verified after the edit (`cargo test -p xtask` and `cargo clippy
+--all-targets -- -D warnings` both re-run clean afterward, see the table
+above).
 
 A second, narrower Dart-only unit test
 (`sdk_parity_tests::a_dart_column_reads_test_titles_and_a_skipped_one_cannot_satisfy_a_tick`)
