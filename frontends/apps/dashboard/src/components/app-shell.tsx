@@ -4,7 +4,7 @@ import { SideNav, ThemeSwitcher } from "@vaam-apps/ui";
 
 import { MoreMenu } from "./more-menu";
 import { SignedInBar } from "./signed-in-bar";
-import { LayoutDashboard } from "lucide-react";
+import { CreditCard } from "lucide-react";
 import { usePathname } from "next/navigation";
 
 import { NAV_ENTRIES } from "../dash/resources";
@@ -111,15 +111,33 @@ export function AppShell({
           visible in `03-payments.png` from the e2e run before this line
           existed. The top item is the console; the entry is the resource.
         */
-          topItem={{
-            label: "Console",
-            href: first?.href ?? "/",
-            icon: LayoutDashboard,
-          }}
+          /*
+            The first destination IS the top item, rather than a "Console"
+            row pointing at it.
+
+            `topItem` is required by `SideNav` and there is no overview page
+            to give it, so it used to be a second row carrying the FIRST
+            entry's href — `/payments` twice over. That was two things at
+            once: a redundant row, and issue #163's React duplicate-key
+            warning, because the sub-640px pill keys `[topItem, ...items]`
+            by href.
+
+            Taking that entry out of the group below leaves four distinct
+            destinations and no repeat. Four also happens to be exactly what
+            the phone pill shows before it opens an overflow — so the
+            overflow, which repeated what the Menu drawer already carries,
+            is gone too.
+          */
+          topItem={
+            first ?? { label: "Payments", href: "/payments", icon: CreditCard }
+          }
           groups={[
             {
               label: "Observe",
-              items: NAV_ENTRIES.map((entry) => ({
+              // `.slice(1)` — the first entry is `topItem` above, and a
+              // destination in both places is the duplicate this just
+              // removed.
+              items: NAV_ENTRIES.slice(1).map((entry) => ({
                 label: entry.label,
                 href: entry.href,
                 icon: entry.icon,
@@ -209,6 +227,13 @@ export function AppShell({
         sibling pinned to the same corner rather than a child of the rail,
         and it is styled by `Button` so it reads as part of that cluster.
 
+        It is its OWN pill rather than a bare button: same `rounded-full
+        border border-edge bg-surface-2/90` and the same `backdrop-blur-md`
+        the package gives its rails, so the two read as one cluster instead
+        of a stray control parked near one. A single item, because the nav
+        tree it opens is the drawer's job and the rail beside it already
+        lists the destinations.
+
         `left-3 bottom-3` is the rail's own geometry, not a guess: the
         vertical rail is `fixed top-1/2 left-3 w-[52px]` and the sub-640px
         pill is `fixed bottom-3 left-1/2 -translate-x-1/2`, so the
@@ -221,14 +246,16 @@ export function AppShell({
         the account block and the theme control, so a trigger would open a
         drawer that repeats the page.
       */}
-      <div className="fixed bottom-3 left-3 z-40 xl:hidden">
-        <MoreMenu
-          email={email}
-          merchantId={merchantId}
-          signOut={signOut}
-          currentPath={pathname}
-          compact
-        />
+      <div className="fixed bottom-3 left-3 z-40 backdrop-blur-md xl:hidden">
+        <div className="rounded-full border border-edge bg-surface-2/90 p-1.5">
+          <MoreMenu
+            email={email}
+            merchantId={merchantId}
+            signOut={signOut}
+            currentPath={pathname}
+            compact
+          />
+        </div>
       </div>
       <main className="min-w-0 flex-1 pb-20 sm:pb-0 sm:pl-20 xl:pl-0">
         <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-6">
