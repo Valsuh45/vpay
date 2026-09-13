@@ -59,7 +59,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
-use axum::extract::{FromRef, MatchedPath, State};
+use axum::extract::{FromRef, FromRequestParts, MatchedPath, State};
 use axum::http::header::CONTENT_TYPE;
 use axum::http::{HeaderName, Method, Request, Uri};
 use axum::middleware::{Next, from_fn, from_fn_with_state};
@@ -1103,8 +1103,8 @@ where
     // is the other half, and without it the copy only protects the tenant
     // being moved to.
     let repositories = Arc::<dyn Repositories>::from_ref(&state);
-    match vpay_db::Staff::find(repositories.as_ref(), &claims.subject).await {
-        Ok(Some(staff)) if staff.is_active() && staff.merchant_id == binding.merchant_id => {}
+    let staff = match vpay_db::Staff::find(repositories.as_ref(), &claims.subject).await {
+        Ok(Some(staff)) if staff.is_active() && staff.merchant_id == binding.merchant_id => staff,
         Ok(_) => {
             // One answer for "disabled", "gone" and "no longer this tenant's":
             // telling them apart would say which `stf_…` values name a row,
@@ -1123,15 +1123,80 @@ where
             tracing::error!(%error, "reading the staff row behind a /dash/v1 token");
             return ApiError::from(error).into_response();
         }
-    }
+    };
 
-    // The tenant this surface reads is the *bound* one, never anything the
-    // token said. That is the difference from `/v1` that matters most: there
-    // is no claim a caller could put in a token that changes which merchant
-    // a `/dash/v1` query filters by.
-    parts
-        .extensions
-        .insert(MerchantScope::for_dashboard(binding.merchant_id.clone()));
+    // Which tenant this request may read (ADR-0018). A non-admin resolves to
+    // the *bound* one unconditionally, and never anything the token or the
+    // query string said — that is the difference from `/v1` that matters
+    // most, and it is exactly as true after this ADR as before it: the
+    // `?merchant_id=` parameter below is not even PARSED unless
+    // `staff.is_admin` is true, so nothing a non-admin caller writes can
+    // move it — `a_non_admin_cannot_move_the_tenant_with_the_query_parameter`
+    // is the end-to-end guard.
+    //
+    // `dash::AdminMerchantOverride` is read through `VpayQuery` — the same
+    // decoder every `/dash/v1` and `/v1` query parameter goes through —
+    // rather than a bespoke split on `&`/`=`, so a malformed value here fails
+    // the same way a malformed `limit` does, and not in a boundary-specific
+    // way nothing else in this crate produces.
+    let tenancy = if staff.is_admin {
+        let requested =
+            match crate::form::VpayQuery::<dash::AdminMerchantOverride>::from_request_parts(
+                &mut parts, &state,
+            )
+            .await
+            {
+                Ok(crate::form::VpayQuery(over)) => {
+                    over.merchant_id.filter(|value| !value.is_empty())
+                }
+                Err(rejection) => return rejection.into_response(),
+            };
+
+        match requested {
+            // No override, or the admin named its own tenant: this is not a
+            // cross-tenant read, and `DashboardTenancy::is_cross_tenant`
+            // must answer `false` for it — see that type's doc.
+            None => dash::DashboardTenancy::Bound(binding.merchant_id.clone()),
+            Some(merchant_id) if merchant_id == binding.merchant_id => {
+                dash::DashboardTenancy::Bound(merchant_id)
+            }
+            Some(merchant_id) => {
+                if !resource_config.is_known_merchant(&merchant_id) {
+                    tracing::warn!(
+                        subject = %claims.subject,
+                        %merchant_id,
+                        "an admin /dash/v1 request named a merchant this deployment does not \
+                         serve; refusing rather than answering an empty page for a typo"
+                    );
+                    return ApiError::invalid_param(
+                        "merchant_id",
+                        "Unknown merchant. An admin may read any merchant this deployment \
+                         serves; this is not one of them.",
+                    )
+                    .into_response();
+                }
+                // The one line ADR-0018's "blast radius" section asks for:
+                // every cross-tenant read is logged with both merchants, so
+                // a mis-set `is_admin` is visible in the same place every
+                // other refusal and grant on this surface already is.
+                tracing::info!(
+                    subject = %claims.subject,
+                    home_merchant_id = %binding.merchant_id,
+                    %merchant_id,
+                    "an admin /dash/v1 session named a merchant other than its own; serving a \
+                     cross-tenant read (ADR-0018)"
+                );
+                dash::DashboardTenancy::ChosenByAdmin(merchant_id)
+            }
+        }
+    } else {
+        dash::DashboardTenancy::Bound(binding.merchant_id.clone())
+    };
+
+    parts.extensions.insert(MerchantScope::for_dashboard(
+        tenancy.merchant_id().to_owned(),
+    ));
+    parts.extensions.insert(tenancy);
     parts.extensions.insert(claims);
 
     next.run(Request::from_parts(parts, body)).await
