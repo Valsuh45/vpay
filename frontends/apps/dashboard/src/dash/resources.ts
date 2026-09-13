@@ -29,6 +29,7 @@
 import type { ResourceProps } from "@refinedev/core";
 import {
   CreditCard,
+  ShoppingCart,
   RotateCcw,
   Users,
   Webhook,
@@ -36,6 +37,7 @@ import {
 } from "lucide-react";
 
 import {
+  CHECKOUT_SESSIONS,
   CUSTOMERS,
   PAYMENT_INTENTS,
   REFUNDS,
@@ -86,6 +88,15 @@ export const DASH_RESOURCES: readonly DashResourceEntry[] = [
     },
     label: "Deliveries",
     icon: Webhook,
+  },
+  {
+    resource: {
+      name: CHECKOUT_SESSIONS,
+      list: "/checkouts",
+      meta: { label: "Checkouts", canDelete: false },
+    },
+    label: "Checkouts",
+    icon: ShoppingCart,
   },
   {
     resource: {
