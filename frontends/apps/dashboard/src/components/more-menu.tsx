@@ -153,13 +153,25 @@ export function MoreMenu({
       {compact ? (
         <Button
           type="button"
-          variant="secondary"
-          size="sm"
+          variant="ghost"
+          size="icon"
           aria-label="Menu"
           title="Menu"
+          /*
+            `h-11 w-11` is 44px, and it is measured rather than chosen:
+            `SideNav`'s floating rail renders its rows at exactly 44x44
+            inside 6px of padding, giving a 58px pill. This trigger was
+            42x32 in a 46px pill, so the two sat side by side at visibly
+            different heights. Matching the row size matches the pill,
+            because both are `p-1.5` around their one item.
+
+            44px is also the rail's own touch-target floor, so this is not
+            only a visual match.
+          */
+          className="h-11 w-11"
           onClick={() => setOpen(true)}
         >
-          <Menu size={16} aria-hidden="true" />
+          <Menu size={20} aria-hidden="true" />
         </Button>
       ) : (
         <Button
