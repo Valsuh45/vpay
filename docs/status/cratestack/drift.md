@@ -161,3 +161,20 @@ diff` was still never run, no snapshot was ever written, nothing was
 reconciled, and none of the 86 changes was closed. **One of them has been
 closed since** — `disabled_clients` — and `migrate diff` is still never run,
 no snapshot is still ever written, and the remaining 85 stand.
+
+**2026-09-13 ([ADR-0018](../../adr/0018-cross-tenant-admin-reads.md)):
+`staff_members.is_admin` (migration `0043`) added the fifth boolean to a
+CrateStack-modelled table, and measured against a real, freshly migrated
+Postgres it cost the constants in `postgres_smoke.rs` exactly what
+`password_change_required` cost on the same table when it was created: zero.
+`EXPECTED_DRIFT_CHANGES` stayed 179 and `EXPECTED_UNMAPPABLE_COLUMNS` stayed
+19 — a `BOOLEAN` column with no hand-named `CHECK`, no index and no
+`@default` (dropped from `Create{Model}Input` had it carried one, per the
+rule migration `0035` established for this table) is one of the shapes
+0.11.1's `map_scalar` maps outright, so it costs neither a "column … type
+differs" line nor an unmappable-column line. This is the case
+`docs/reference/vpay-db/cratestack.md` § "What compiling the schema does not
+prove" warns a compiler cannot see either way — a modelled column naming a
+type the live table cannot produce would have passed `cargo build` and
+`just check-schema` identically — and `the_cstack_schema_drifts_from_the_migrations_by_a_measured_amount`
+is what actually proved it rather than assumed it.
