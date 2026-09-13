@@ -744,6 +744,7 @@ async fn staff_add(
     let repositories = vpay_api::boot::open_migrated_database(database_url).await?;
 
     let id = vpay_core::ids::staff_id();
+    let now = time::OffsetDateTime::now_utc();
     vpay_db::Staff::create(
         repositories.as_ref(),
         vpay_db::NewStaff {
@@ -751,13 +752,62 @@ async fn staff_add(
             merchant_id: merchant.to_owned(),
             email: email.clone(),
             display_name: display_name.to_owned(),
-            password_hash,
             is_admin: admin,
-            now: time::OffsetDateTime::now_utc(),
+            now,
         },
     )
     .await
     .with_context(|| format!("creating staff member {email}"))?;
+
+    // THE PASSWORD IS A SECOND ROW SINCE ADR-0019, and two inserts that are
+    // not one statement have a window between them. A failure here leaves a
+    // staff member who can never sign in AND whose address is taken — the
+    // email unique index refuses a second `staff add` for them, so the
+    // operator could not even retry.
+    //
+    // So this compensates. A real transaction would be better and is not
+    // available: `TxRepositories` is a hand-curated trait of raw `sqlx`
+    // statements, and putting these two inserts in it would take both tables
+    // off the generated data layer, which is the property migrations 0035 and
+    // 0044 were both shaped to buy (`vpay_db::Staff::delete`'s doc carries the
+    // argument).
+    //
+    // The residual is real and is not hidden: if the compensating delete also
+    // fails, the operator is shown BOTH errors and the `stf_…` to remove by
+    // hand. That is strictly better than either error alone, and it is why
+    // this is not a `?` on the delete.
+    let credential = vpay_db::Credentials::create(
+        repositories.as_ref(),
+        vpay_db::NewCredential {
+            id: vpay_core::ids::credential_id(),
+            staff_member_id: Some(id.clone()),
+            kind: vpay_db::CredentialKind::Password,
+            material: Some(password_hash),
+            issuer: None,
+            subject: None,
+            // The one-time password the CLI is about to print is a credential
+            // the operator has seen; it stops being usable the moment its
+            // owner picks their own.
+            must_change: true,
+            expires_at: None,
+            now,
+        },
+    )
+    .await;
+    if let Err(error) = credential {
+        let rolled_back = vpay_db::Staff::delete(repositories.as_ref(), &id).await;
+        return match rolled_back {
+            Ok(_) => Err(anyhow::Error::new(error).context(format!(
+                "creating the password credential for staff member {email}; the staff row was \
+                 removed again, so `staff add` can be retried"
+            ))),
+            Err(cleanup) => Err(anyhow::Error::new(error).context(format!(
+                "creating the password credential for staff member {email}, AND the staff row \
+                 could not be removed again ({cleanup}). Staff member {id} exists, cannot sign \
+                 in, and holds the address — delete it by hand before retrying"
+            ))),
+        };
+    }
 
     tracing::info!(
         staff_id = %id,

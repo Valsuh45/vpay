@@ -428,9 +428,6 @@ async fn seed_staff(repositories: &dyn Repositories) -> anyhow::Result<()> {
             merchant_id: MERCHANT_A.to_owned(),
             email: "dash-reader@example.test".to_owned(),
             display_name: "Dash Reader".to_owned(),
-            // Never verified here — see this function's doc.
-            password_hash: "$argon2id$v=19$m=19456,t=2,p=1$c2FsdHNhbHRzYWx0$notarealhash"
-                .to_owned(),
             // Not an admin: the whole file's other 13 cases are about the
             // ordinary tenant-bound boundary, and ADR-0018's cases mint their
             // own row via `seed_admin_staff` so the two never share a fixture.
@@ -440,6 +437,28 @@ async fn seed_staff(repositories: &dyn Repositories) -> anyhow::Result<()> {
     )
     .await
     .context("seeding the staff member every token in this suite names")?;
+    // A password row, since ADR-0019 — still never verified here, and still a
+    // placeholder. Seeded anyway because a staff member with no credential is
+    // a *different* fixture (an SSO-provisioned one), and this suite's subject
+    // is an ordinary password account.
+    vpay_db::Credentials::create(
+        repositories,
+        vpay_db::NewCredential {
+            id: vpay_core::ids::credential_id(),
+            staff_member_id: Some(STAFF_ID.to_owned()),
+            kind: vpay_db::CredentialKind::Password,
+            material: Some(
+                "$argon2id$v=19$m=19456,t=2,p=1$c2FsdHNhbHRzYWx0$notarealhash".to_owned(),
+            ),
+            issuer: None,
+            subject: None,
+            must_change: false,
+            expires_at: None,
+            now: time::OffsetDateTime::now_utc(),
+        },
+    )
+    .await
+    .context("seeding that staff member's password credential")?;
     Ok(())
 }
 
@@ -458,15 +477,19 @@ async fn seed_admin_staff(repositories: &dyn Repositories) -> anyhow::Result<()>
             merchant_id: MERCHANT_A.to_owned(),
             email: "dash-admin@example.test".to_owned(),
             display_name: "Dash Admin".to_owned(),
-            // Never verified here — see `seed_staff`'s doc.
-            password_hash: "$argon2id$v=19$m=19456,t=2,p=1$c2FsdHNhbHRzYWx0$notarealhash"
-                .to_owned(),
             is_admin: true,
             now: time::OffsetDateTime::now_utc(),
         },
     )
     .await
     .context("seeding the admin staff member ADR-0018's cases name")?;
+    // AND NO CREDENTIAL AT ALL, deliberately, since ADR-0019. Nothing in this
+    // suite signs in — every case mints a token directly — so this row needs
+    // none, and writing a placeholder one would hide something worth knowing:
+    // `require_dashboard_token` reads `status`, `merchant_id` and `is_admin`
+    // and must not require a credential to exist. A staff member provisioned
+    // through SSO who has never had a password is exactly this row, and every
+    // ADR-0018 case in this file passing against it is the evidence.
     Ok(())
 }
 

@@ -596,15 +596,35 @@ async fn add_staff(
             merchant_id: merchant_id.to_owned(),
             email: STAFF_EMAIL.to_owned(),
             display_name: STAFF_NAME.to_owned(),
-            password_hash: credentials
-                .hash_password(ONE_TIME_PASSWORD)
-                .expect("hashing the one-time password"),
             is_admin: false,
             now: OffsetDateTime::now_utc(),
         },
     )
     .await
     .context("creating the suite's staff member")?;
+    // The one-time password is a `credentials` row since ADR-0019, exactly as
+    // `vpay-server staff add` writes it — `must_change: true` included, which
+    // is what several cases in this file then assert the API reports.
+    vpay_db::Credentials::create(
+        repositories,
+        vpay_db::NewCredential {
+            id: vpay_core::ids::credential_id(),
+            staff_member_id: Some(id.clone()),
+            kind: vpay_db::CredentialKind::Password,
+            material: Some(
+                credentials
+                    .hash_password(ONE_TIME_PASSWORD)
+                    .expect("hashing the one-time password"),
+            ),
+            issuer: None,
+            subject: None,
+            must_change: true,
+            expires_at: None,
+            now: OffsetDateTime::now_utc(),
+        },
+    )
+    .await
+    .context("creating the suite's password credential")?;
     Ok(id)
 }
 
@@ -1025,15 +1045,31 @@ async fn a_staff_member_of_another_merchant_cannot_obtain_a_dashboard_token() ->
     vpay_db::Staff::create(
         harness.repositories.as_ref(),
         NewStaff {
-            id,
+            id: id.clone(),
             merchant_id: MERCHANT_B.to_owned(),
             email: other_email.to_owned(),
             display_name: "Grace Hopper".to_owned(),
-            password_hash: harness
-                .credentials
-                .hash_password(ONE_TIME_PASSWORD)
-                .expect("hashing"),
             is_admin: false,
+            now: OffsetDateTime::now_utc(),
+        },
+    )
+    .await?;
+    vpay_db::Credentials::create(
+        harness.repositories.as_ref(),
+        vpay_db::NewCredential {
+            id: vpay_core::ids::credential_id(),
+            staff_member_id: Some(id),
+            kind: vpay_db::CredentialKind::Password,
+            material: Some(
+                harness
+                    .credentials
+                    .hash_password(ONE_TIME_PASSWORD)
+                    .expect("hashing"),
+            ),
+            issuer: None,
+            subject: None,
+            must_change: true,
+            expires_at: None,
             now: OffsetDateTime::now_utc(),
         },
     )
