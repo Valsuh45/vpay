@@ -115,8 +115,8 @@ export default async function CustomersPage({
           <ReadFailure failure={result.failure} />
         ) : result.value.items.length === 0 ? (
           <InlineEmptyState
-            title="No customers"
-            description="This merchant has no customers yet."
+            variant="standalone"
+            message="No customers. This merchant has no customers yet."
           />
         ) : (
           <>

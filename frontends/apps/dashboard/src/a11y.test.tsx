@@ -188,7 +188,7 @@ describe("the rendered app", () => {
     // `cleanup` only unmounts roots and removes containers it created
     // itself — it does not undo that assignment. Left in place, the static
     // shell from the previous case is still in the document here, so this
-    // one would find its "More" button too (`getByRole` throws "found
+    // one would find its "Menu" button too (`getByRole` throws "found
     // multiple elements" — measured) and axe would be scanning a stale
     // second copy of the shell rather than this render.
     document.body.innerHTML = "";
@@ -202,11 +202,11 @@ describe("the rendered app", () => {
         <PaymentsTable rows={[INTENT]} />
       </AppShell>,
     );
-    getByRole("button", { name: /more/i }).click();
+    getByRole("button", { name: /^menu$/i }).click();
     // Fails loudly if the drawer never opened, rather than running axe over
     // a document that still has no drawer in it and reporting green.
     const panel = await findByRole("dialog");
-    expect(panel).toHaveAccessibleName("More");
+    expect(panel).toHaveAccessibleName("Menu");
     expect(
       panel.querySelectorAll("a").length,
       "the open drawer really contains the nav tree",

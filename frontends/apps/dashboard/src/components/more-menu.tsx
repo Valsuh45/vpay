@@ -24,7 +24,17 @@ export interface MoreMenuProps {
 }
 
 /**
- * The "More" drawer: everything the rail and the sidebar's `accountSlot`
+ * The "Menu" drawer: everything the rail and the sidebar's `accountSlot`
+ *
+ * **Named "Menu" and not "More", and the rename is load-bearing.** `SideNav`
+ * renders its OWN "More" overflow button below 640px once the rail has more
+ * destinations than fit — four plus an overflow, per its own documentation.
+ * The dashboard crossed that threshold when Lane E grew the nav from one
+ * entry to four, and two different controls both called "More" appeared in
+ * the same pill: one opening the rail's overflow list, one opening this
+ * drawer. `more-menu.test.tsx` and `a11y.test.tsx` found it as "found
+ * multiple elements with the role button and name /more/i", which is the
+ * accessibility tree describing the same collision a person would hit.
  * cannot reach below the full ≥1280px sidebar.
  *
  * # Why this exists at all
@@ -131,16 +141,16 @@ export function MoreMenu({
         onClick={() => setOpen(true)}
       >
         <Menu size={16} aria-hidden="true" />
-        More
+        Menu
       </Button>
       <MoreDetailDrawer
         open={open}
         onOpenChange={setOpen}
-        title="More"
+        title="Menu"
         description="Navigation, theme, and your account."
       >
         <div className="flex flex-col gap-6">
-          <nav aria-label="More destinations">
+          <nav aria-label="Menu destinations">
             <ul className="flex flex-col gap-1">
               {NAV_ENTRIES.map((entry) => {
                 const Icon = entry.icon;

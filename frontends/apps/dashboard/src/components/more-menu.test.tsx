@@ -1,5 +1,5 @@
 /**
- * The "More" drawer: the nav tree it renders, the accessible name and
+ * The "Menu" drawer: the nav tree it renders, the accessible name and
  * description vaul requires, the theme control it exists to make reachable,
  * the sign-out that must stay a POST inside it too, and the current-entry
  * rule it has to share with the rail.
@@ -49,9 +49,9 @@ function renderShell() {
   );
 }
 
-/** Click "More" and return the open panel, failing if it never opened. */
+/** Click "Menu" and return the open panel, failing if it never opened. */
 async function openDrawer(): Promise<HTMLElement> {
-  screen.getByRole("button", { name: /more/i }).click();
+  screen.getByRole("button", { name: /^menu$/i }).click();
   return await screen.findByRole("dialog");
 }
 
@@ -66,7 +66,7 @@ describe("the More drawer", () => {
     renderMenu();
     const panel = await openDrawer();
     const tree = within(panel).getByRole("navigation", {
-      name: "More destinations",
+      name: "Menu destinations",
     });
     const links = within(tree).getAllByRole("link");
 
@@ -92,7 +92,7 @@ describe("the More drawer", () => {
     renderMenu();
     const panel = await openDrawer();
 
-    expect(panel).toHaveAccessibleName("More");
+    expect(panel).toHaveAccessibleName("Menu");
 
     const describedBy = panel.getAttribute("aria-describedby");
     expect(describedBy, "the drawer names a description element").toBeTruthy();
@@ -232,6 +232,6 @@ describe("the More drawer", () => {
     expect(h1s[0]?.textContent).toBe("vpay dashboard");
     expect(
       [...document.body.querySelectorAll("h2")].map((h) => h.textContent),
-    ).toContain("More");
+    ).toContain("Menu");
   });
 });

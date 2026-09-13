@@ -111,8 +111,8 @@ export default async function DeliveriesPage({
           <ReadFailure failure={result.failure} />
         ) : result.value.items.length === 0 ? (
           <InlineEmptyState
-            title="No webhook deliveries"
-            description="Nothing has been delivered for this merchant yet."
+            variant="standalone"
+            message="No deliveries. Nothing has been delivered for this merchant yet."
           />
         ) : (
           <>

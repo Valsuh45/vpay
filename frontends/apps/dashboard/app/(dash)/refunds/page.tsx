@@ -102,8 +102,8 @@ export default async function RefundsPage({
           <ReadFailure failure={result.failure} />
         ) : result.value.items.length === 0 ? (
           <InlineEmptyState
-            title="No refunds"
-            description="This merchant has no refunds yet."
+            variant="standalone"
+            message="No refunds. This merchant has no refunds yet."
           />
         ) : (
           <>

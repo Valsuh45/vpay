@@ -616,11 +616,11 @@ export async function procedureListResponse(
 
   const params = searchRecord(request.url);
   const limit = boundedNumber(
-    params["limit"],
+    params["limit"]?.[0],
     DEFAULT_PROCEDURE_LIMIT,
     MAX_PROCEDURE_LIMIT,
   );
-  const offset = boundedNumber(params["offset"], 0, Number.MAX_SAFE_INTEGER);
+  const offset = boundedNumber(params["offset"]?.[0], 0, Number.MAX_SAFE_INTEGER);
 
   const result = await callDashProcedure<ProcedurePage<unknown>>(
     reader.session.config,
