@@ -21,6 +21,21 @@ export interface MoreMenuProps {
    * `aria-current`, never for routing: every href here still comes from
    * `NAV_ENTRIES`. */
   readonly currentPath: string;
+  /**
+   * Render the trigger as the icon alone, with `aria-label="Menu"`.
+   *
+   * Used where the trigger floats beside `SideNav`'s own rails rather than
+   * sitting in the content column. It has to be narrow there: below `xl`
+   * `<main>` carries `sm:pl-20`, an 80px gutter the vertical rail occupies,
+   * and a labelled button is wider than that — it would sit on top of the
+   * first column of the screen it is meant to navigate away from. The icon
+   * alone is ~44px, which is both inside the gutter and the minimum touch
+   * target the rail's own rows use.
+   *
+   * The accessible name is unchanged, so every test and every screen reader
+   * still finds one control named "Menu".
+   */
+  readonly compact?: boolean;
 }
 
 /**
@@ -129,20 +144,34 @@ export function MoreMenu({
   merchantId,
   signOut,
   currentPath,
+  compact = false,
 }: MoreMenuProps) {
   const [open, setOpen] = useState(false);
 
   return (
     <>
-      <Button
-        type="button"
-        variant="secondary"
-        size="sm"
-        onClick={() => setOpen(true)}
-      >
-        <Menu size={16} aria-hidden="true" />
-        Menu
-      </Button>
+      {compact ? (
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          aria-label="Menu"
+          title="Menu"
+          onClick={() => setOpen(true)}
+        >
+          <Menu size={16} aria-hidden="true" />
+        </Button>
+      ) : (
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          onClick={() => setOpen(true)}
+        >
+          <Menu size={16} aria-hidden="true" />
+          Menu
+        </Button>
+      )}
       <MoreDetailDrawer
         open={open}
         onOpenChange={setOpen}

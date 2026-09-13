@@ -199,6 +199,37 @@ export function AppShell({
         to `xl`, where the real in-flow sidebar takes over and `xl:pl-0`
         gives the padding back.
       */}
+      {/*
+        The menu floats WITH the rail below `xl`, rather than sitting at the
+        top of the content column.
+
+        `SideNav`'s small-screen rails are `position: fixed` and portalled to
+        `document.body`, and the component exposes no slot inside them —
+        `accountSlot` renders only in the ≥1280px sidebar. So this is a
+        sibling pinned to the same corner rather than a child of the rail,
+        and it is styled by `Button` so it reads as part of that cluster.
+
+        `left-3 bottom-3` is the rail's own geometry, not a guess: the
+        vertical rail is `fixed top-1/2 left-3 w-[52px]` and the sub-640px
+        pill is `fixed bottom-3 left-1/2 -translate-x-1/2`, so the
+        bottom-left corner is empty at every width below `xl`. The icon-only
+        trigger is ~44px wide, which fits inside the 80px gutter `<main>`
+        already reserves with `sm:pl-20` — a labelled one would not, and
+        would overlap the first column of the screen it navigates away from.
+
+        Hidden from `xl` up: there the in-flow sidebar carries the nav tree,
+        the account block and the theme control, so a trigger would open a
+        drawer that repeats the page.
+      */}
+      <div className="fixed bottom-3 left-3 z-40 xl:hidden">
+        <MoreMenu
+          email={email}
+          merchantId={merchantId}
+          signOut={signOut}
+          currentPath={pathname}
+          compact
+        />
+      </div>
       <main className="min-w-0 flex-1 pb-20 sm:pb-0 sm:pl-20 xl:pl-0">
         <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-6">
           {/*
@@ -229,12 +260,6 @@ export function AppShell({
                 signOut={signOut}
               />
             </div>
-            <MoreMenu
-              email={email}
-              merchantId={merchantId}
-              signOut={signOut}
-              currentPath={pathname}
-            />
           </div>
           {children}
         </div>
