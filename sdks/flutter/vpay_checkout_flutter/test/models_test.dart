@@ -84,23 +84,33 @@ void main() {
       },
     );
 
-    for (final status in ['succeeded', 'canceled']) {
-      test('$status has stopped moving', () {
-        final intent = PaymentIntent.fromJson(
-          _samplePaymentIntentJson(status: status),
-        );
-        expect(intent.hasStoppedMoving, isTrue);
-      });
-    }
+    test('succeeded has stopped moving', () {
+      final intent = PaymentIntent.fromJson(
+        _samplePaymentIntentJson(status: 'succeeded'),
+      );
+      expect(intent.hasStoppedMoving, isTrue);
+    });
 
-    for (final status in ['processing', 'requires_action']) {
-      test('$status has not stopped moving', () {
-        final intent = PaymentIntent.fromJson(
-          _samplePaymentIntentJson(status: status),
-        );
-        expect(intent.hasStoppedMoving, isFalse);
-      });
-    }
+    test('canceled has stopped moving', () {
+      final intent = PaymentIntent.fromJson(
+        _samplePaymentIntentJson(status: 'canceled'),
+      );
+      expect(intent.hasStoppedMoving, isTrue);
+    });
+
+    test('processing has not stopped moving', () {
+      final intent = PaymentIntent.fromJson(
+        _samplePaymentIntentJson(status: 'processing'),
+      );
+      expect(intent.hasStoppedMoving, isFalse);
+    });
+
+    test('requires_action has not stopped moving', () {
+      final intent = PaymentIntent.fromJson(
+        _samplePaymentIntentJson(status: 'requires_action'),
+      );
+      expect(intent.hasStoppedMoving, isFalse);
+    });
 
     test('a PaymentIntent debug output never contains its client_secret', () {
       final intent = PaymentIntent.fromJson(_samplePaymentIntentJson());
