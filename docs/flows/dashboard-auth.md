@@ -126,13 +126,48 @@ mints no token at all**: every token it presents came out of
 and the server verified it through its own published JWKS over the same
 socket.
 
+**The credentials moved out of `staff_members` on 2026-09-13
+([ADR-0019](../adr/0019-credential-model.md), migration `0044`), and nothing
+on this surface changed.** `password_hash`, `password_change_required`,
+`totp_secret`, `totp_enrolled_at` and `last_totp_step` are rows in
+`credentials` now — one per credential, generic over kind today and over
+subject tomorrow — because their *names* hardcoded exactly two authentication
+methods on a table that is not about credentials.
+
+That the flow below is unchanged is the **acceptance criterion** and not an
+accident: the suite named in the paragraph above passes **48/48 with every
+assertion exactly as it was written against the pre-split behaviour**. Three
+fixtures and four doc comments moved; not one assertion did. The migration is
+one file and therefore one transaction, and it copies every live row's material
+**byte for byte** — the argon2id PHC string verifies under the same unchanged
+pepper and the sealed secret opens under the same unchanged key — so there is
+no instant at which anybody cannot sign in.
+
+Two things a reader of this page should carry away from it. **The replay guard
+is `Credentials::advance_counter` now**, a compare-and-swap on the credential
+row rather than on the person, with its `NOT NULL` counter argument intact
+(`NULL < step` is `NULL` in SQL, so a nullable counter refuses every subject's
+first code forever). And **enrolment is the existence of a `totp` row**, so
+`staff_members_totp_is_paired` and `Staff::enrol_totp`'s
+`totp_enrolled_at IS NULL` guard are both gone — replaced by a partial unique
+index, which an edit cannot drop by accident the way a `WHERE` clause can.
+
+**Eight kinds are declared and two are implemented.** `hotp`, `magic_link`,
+`email_otp`, `phone_otp`, `webauthn` and `oidc` are reachable by no code path
+here; federated identity has columns, constraints and indexes and **no
+writer**. Whether a live payment deployment may ever accept a single-factor
+credential is a **reserved maintainer decision** — ADR-0019 § R1 — and it is
+not live, because no third kind has a verifier.
+
 What is built, in the order a request meets it:
 
 - `staff_members`, `staff_sessions` and `oauth_authorization_codes`
-  (migration `0035`), all three born with a `schemas/vpay.cstack` model and
-  shaped so that **every** repository method runs through CrateStack — no
-  `jsonb`, no `bytea`, no native enum, no `DEFAULT` on any column a writer
-  names. `docs/reference/vpay-db.md` § CrateStack has the account.
+  (migration `0035`) and `credentials` (migration `0044`), all four born with a
+  `schemas/vpay.cstack` model and shaped so that **every** repository method
+  runs through CrateStack — no `jsonb`, no `bytea`, no native enum, no
+  `DEFAULT` on any column a writer names. `docs/reference/vpay-db.md` §
+  CrateStack has the account, and
+  `docs/status/cratestack/2026-09-13-credentials.md` has 0044's measurement.
 - `vpay-server staff add --merchant … --email … --name …`, the **only** way a
   staff member is created. No HTTP endpoint creates one and there is no
   self-service sign-up. It prints a one-time password on stdout alone —

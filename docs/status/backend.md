@@ -298,3 +298,82 @@ this section used to name are gone**, and `just verify-ignored` now pins
 Capabilities being real matters more than it sounds: `orange_money` declares
 `supports_refunds: false`, and that flag — not a rail-specific branch — is what
 makes the core refuse a refund on that rail.
+
+## Credentials are their own object (2026-09-13, ADR-0019)
+
+Five of `staff_members`' fourteen columns were credentials whose **names
+hardcoded exactly two authentication methods**. Migration `0044` makes them
+rows in `credentials`, generic over kind today and over subject tomorrow.
+[ADR-0019](../adr/0019-credential-model.md) decides it and
+[status/cratestack/2026-09-13-credentials.md](cratestack/2026-09-13-credentials.md)
+carries the measurement.
+
+**Nothing about `/dash/v1` changed.** The request bodies, the status codes, the
+two-leg flow and the session states are identical, and that is the acceptance
+criterion rather than a happy accident: `staff_sign_in.rs` passes **48/48 with
+every assertion exactly as it was written against the pre-split behaviour**.
+Three fixtures and four doc comments moved; not one assertion did. `just
+demo-staff`, `compose.e2e.yml` and `dashboard.cy.ts` are untouched and still
+sign in with password + TOTP.
+
+**What is real:**
+
+- one table, `credentials`, every repository method through CrateStack;
+- the TOTP replay guard, still a compare-and-swap, now
+  `Credentials::advance_counter` on the credential row rather than
+  `Staff::record_totp_step` on the person. Proven end to end: dropping its
+  compare half makes `a_replayed_totp_code_is_refused` answer `200` where it
+  demands `401`;
+- per-kind uniqueness as three partial unique indexes — one
+  password/totp/hotp per subject, at most one federated link per issuer per
+  subject, and `(issuer, subject)` globally unique. None is visible to any
+  compile-time gate; each is proven by a container test and by the mutation
+  that drops it;
+- a real FK with `ON DELETE CASCADE`, so a credential cannot outlive its
+  subject;
+- a hand-written `Debug` that redacts `material` for every kind and shows
+  `issuer`/`subject`, which are public identifiers an operator debugging a
+  broken SSO link needs.
+
+**What is declared and NOT implemented, and must not be read as working:**
+
+- **six of the eight kinds.** `password` and `totp` are reachable. `hotp`,
+  `magic_link`, `email_otp`, `phone_otp`, `webauthn` and `oidc` are values the
+  CHECK admits and **no code path in this deployment can reach**. Nothing mints
+  them; `vpay_api::staff_auth` has a verifier for two. A reader who finds
+  `'webauthn'` in a CHECK constraint must not conclude vpay supports WebAuthn.
+- **federated identity is designed for and not built.** `issuer` and `subject`
+  are columns with constraints, three indexes and **no writer**.
+  `jwks_cache.rs` remains a cache with no federated caller, and no deployment
+  configuration names a trusted issuer because nothing reads one yet.
+- **`expires_at` has no writer**, so **nothing sweeps `credentials`** — there
+  is nothing to sweep. When something writes a transient kind, it needs a
+  sweep.
+
+**A residual this change introduces, stated rather than hidden.**
+`vpay-server staff add` was one insert and is two. It compensates on failure
+with `Staff::delete`, whose cascades take everything naming the row — but the
+two inserts are **not one transaction**, because `TxRepositories` is raw
+`sqlx` and moving them into it would take both tables off the generated data
+layer. If the compensating delete also fails, the operator is shown both errors
+and the `stf_…` to remove by hand.
+
+**Reserved for the maintainer, and deliberately not defaulted** — ADR-0019 §
+"Reserved for the maintainer" carries the arguments:
+
+- **R1: may a live payment deployment accept a single-factor credential?** The
+  maintainer's "in dev, a simple email can be enough" is about which kinds a
+  deployment enables and is plainly right about development. Whether livemode
+  may enable, say, `magic_link` alone is a different question with a different
+  blast radius. **Not live yet** — no code path reaches a third kind, so
+  nothing is enabled or disabled today and no default has been smuggled in. It
+  becomes live the moment a third kind gets a verifier, and should be decided
+  before that.
+- **R2: may an IdP group/role claim drive `is_admin`?** "The IdP says this
+  person is an admin" and "vpay's own row says so" are different trust models,
+  and the answer changes what #166 means. Nothing in this slice does it.
+- **R3: is the issuer allow-list per deployment or per merchant?** Both shapes
+  are reachable from this schema without a migration, which is what lets the
+  question stay open honestly.
+- **R4: does `staff add` grow a `--kind`, and what provisions an SSO member?**
+  Answerable only alongside the slice that implements a third kind.

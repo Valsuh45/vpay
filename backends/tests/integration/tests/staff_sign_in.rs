@@ -1310,9 +1310,22 @@ async fn a_session_that_has_not_presented_a_second_factor_cannot_authorize() -> 
 /// front of it. The step used is deliberately one **ahead** of the first's,
 /// so the TOTP replay guard is not what refuses it.
 ///
-/// The decisive mutation: make
-/// `credentials_one_singleton_kind_per_staff_member` an ordinary index in
-/// migration 0044.
+/// **What actually refuses it here is measured, not assumed, and it is not the
+/// index.** Making `credentials_one_singleton_kind_per_staff_member` an
+/// ordinary index leaves this test GREEN — run on 2026-09-13. The reason is
+/// the one `vpay-db`'s own version of this case has always given: by the time
+/// the second request runs, a `totp` credential exists, so the handler reads
+/// it and takes the **stored-secret** path. The second login's code is
+/// generated from its own secret, which is not the stored one, so it fails
+/// verification. The create path is never reached and the index is never
+/// consulted.
+///
+/// That is a real refusal and this test is worth having for it. But the
+/// *guard* is pinned where a mutation can reach it:
+/// `the_credential_guards_are_compare_and_swaps_and_only_one_caller_wins` in
+/// `vpay-db/tests/repositories.rs`, where dropping the index's uniqueness
+/// **is** caught. This paragraph exists because the sentence it replaced
+/// claimed a decisive mutation this test does not catch.
 #[tokio::test]
 async fn a_second_enrolment_cannot_replace_an_enrolled_second_factor() -> anyhow::Result<()> {
     let harness = harness().await?;
