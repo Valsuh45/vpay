@@ -738,8 +738,8 @@ mod tests {
         /// can catch either: a predicate is only observable through the
         /// rows it excluded.
         #[tokio::test]
-        async fn the_page_is_the_tenants_own_live_rows_filtered_and_bounded()
-        -> anyhow::Result<()> {
+        async fn the_page_is_the_tenants_own_live_rows_filtered_and_bounded() -> anyhow::Result<()>
+        {
             let (_container, cs) = seeded().await?;
             let a = context_for_tenant("merchant_a");
             let b = context_for_tenant("merchant_b");

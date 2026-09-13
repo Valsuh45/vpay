@@ -96,14 +96,11 @@ use vpay_core::IntentStatus;
 
 use super::cratestack_schema::{self, procedures, types};
 
-// `search_refunds.rs`'s body — Lane D's refunds slice. `#[path]` rather than
-// a plain `mod search_refunds;` because this file's own submodules would
-// otherwise resolve under `schema/search_payment_intents/`, and the file
-// lives beside this one at `schema/search_refunds.rs`; `#[path]` is resolved
-// relative to this file's own directory (`schema/`), which is what points
-// it there. Kept out of `schema.rs` on purpose: every Lane D slice adds one
-// `mod` line and one delegation method to *this* file rather than to that
-// one, so the four slices' diffs land on one shared file instead of two.
+// `#[path]` rather than a plain `mod search_refunds;` in `schema.rs`:
+// `resolve_page`, `tenant_of`, `to_chrono` and `to_time` are private
+// `fn`s in THIS file, so only a child of this module can reach them.
+// The other slices import nothing private and so declare themselves in
+// `schema.rs`; normalising this one to match them does not compile.
 #[path = "search_refunds.rs"]
 mod search_refunds;
 
@@ -230,6 +227,7 @@ impl procedures::ProcedureRegistry for Payments {
         authorized: procedures::search_refunds::Authorized,
     ) -> Result<procedures::search_refunds::Output, CratestackError> {
         search_refunds::run(db, ctx, args, authorized).await
+    }
     /// `procedure searchWebhookDeliveries` (Lane D, slice: webhook
     /// deliveries) — a thin delegation. The real body, including the
     /// join-based tenancy predicate `webhook_deliveries` needs and this
@@ -245,6 +243,7 @@ impl procedures::ProcedureRegistry for Payments {
         _authorized: procedures::search_webhook_deliveries::Authorized,
     ) -> Result<procedures::search_webhook_deliveries::Output, CratestackError> {
         super::search_webhook_deliveries::search(db, ctx, args).await
+    }
     /// `procedure searchCustomers` — a thin delegation, and deliberately no
     /// more than one. The real body, including its own tenancy predicate and
     /// its own `anonymized_at` exclusion, is

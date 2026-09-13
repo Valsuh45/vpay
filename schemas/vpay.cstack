@@ -2333,55 +2333,6 @@ type RefundSummary {
   failure_code FailureCode?
   provider_reference_id Uuid?
   fee Int?
-// The dashboard's customers list, `searchPaymentIntents`' sibling and the
-// same shape for the same reason: `model Customer` carries no
-// `@@allow("read", …)` arm (see the model's own comment on why only
-// `update` and `delete` are declared), so a generated read renders `FALSE`
-// and answers zero rows forever. This procedure's body —
-// `backends/crates/vpay-db/src/schema/search_customers.rs` — is the one
-// place this table is read.
-//
-// TWO MAINTAINER DECISIONS, 2026-09-13, IMPLEMENTED HERE RATHER THAN
-// RELITIGATED:
-//
-//   1. `name`, `email` and `phone` are unmasked on this surface, even though
-//      all three carry `@sensitive` above. That attribute has exactly one
-//      reader in this build — `is_sensitive_field`, which redacts a value
-//      from the audit log CrateStack would write if `@@audit` were ever
-//      declared (it is not: nothing in vpay audits today). It has never
-//      masked a value over the wire, here or anywhere else. The maintainer's
-//      call: an operator who can already read a payer's full identifiers off
-//      the payment-detail screen gains nothing from having them hidden on
-//      this one. `type CustomerSummary`'s own comment repeats this, because
-//      the two attributes reading the same word to mean different things is
-//      exactly the kind of gap a future reader would otherwise paper over
-//      with an assumption.
-//   2. An anonymised customer (`anonymized_at` set — the erasure path closed
-//      by issue #111/#143) does not appear in this list, ever. The
-//      predicate excluding it lives in the procedure body's own `WHERE`, not
-//      in a filter the caller could omit.
-//
-// WHAT IS DELIBERATELY NOT ON `type CustomerSummary`: the six `address_*`
-// columns and the two coordinate columns, all `@sensitive`, all excluded for
-// `type PaymentIntentSummary`'s reason applied to the more sensitive case —
-// a list is not where a payer's postal address or GPS point is read, and a
-// customer's coordinates least of all. `metadata` is absent for
-// `type PaymentIntentSummary`'s `Value::from_plain_json` reason: it is
-// `jsonb`, merchant-authored, and a hand-built `Json` field would silently
-// demote a number outside `i64` to a float. `seq` is absent for the same
-// reason it is absent there — it is vpay's internal counter, not part of
-// the answer.
-type CustomerSummary {
-  id String
-  merchant_id String
-  livemode Boolean
-  // Unmasked. See this file's comment on `procedure searchCustomers` —
-  // `@sensitive` here governs an audit log this build does not have, and
-  // has never redacted a wire response.
-  name String?
-  email String?
-  phone String?
-  last_used_at DateTime
   created_at DateTime
   updated_at DateTime
 }
@@ -2400,6 +2351,38 @@ type RefundListFilter {
   // `400` naming `status`, not a serde decode error, and not an empty page.
   status String?
   // Inclusive bounds on `created_at`.
+  created_gte DateTime?
+  created_lte DateTime?
+}
+
+// The dashboard's refunds list, paginated by offset — `searchPaymentIntents`
+// is the template this follows, and the one place this body MUST diverge
+// from it.
+//
+// `model Refund` HAS NO `merchant_id` COLUMN AT ALL. Tenancy reaches a
+// refund only through `payment_intent_id -> PaymentIntent.merchant_id`, so
+// the body's statement is a JOIN onto `payment_intents` rather than a
+// `WHERE merchant_id = $1` on its own table (`docs/plans/2026-09-13-
+// dashboard-nav-notes/slices.md` § 2, and `vpay_db::refunds`'
+// `get_for_merchant`/`list_for_intent`, which join for the same reason). A
+// body that forgets the join does not fail — it returns every tenant's
+// refunds, and only a container test that seeds a second tenant's row can
+// catch it; a unit test cannot observe a predicate, only the rows it
+// excluded.
+//
+// `@allow(auth() != null)`: the caller must be authenticated, exactly as
+// `searchPaymentIntents`. The tenancy predicate is not expressible in the
+// policy — `inTenant(...)` takes a string literal, not the caller's own
+// tenant — so it lives in the body, which reads `ctx.tenant_id()` and
+// refuses its absence rather than reading unscoped.
+//
+// NAMED `search`, NOT `list`: `procedure listRefunds` collides with the
+// generated `list` CRUD handler for `model Refund` — both would emit
+// `handle_list_refunds` — and fails to compile as `error[E0428]`, exactly
+// as `procedure listPaymentIntents` did.
+procedure searchRefunds(page: PageInput, filter: RefundListFilter): Page<RefundSummary>
+  @allow(auth() != null)
+
 // --- webhook deliveries (Lane D, slice: deliveries) --------------------
 
 // The dashboard's answer to "did my webhook actually arrive?" — one row per
@@ -2484,32 +2467,6 @@ type WebhookDeliveryListFilter {
   created_lte DateTime?
 }
 
-// The dashboard's refunds list, paginated by offset — `searchPaymentIntents`
-// is the template this follows, and the one place this body MUST diverge
-// from it.
-//
-// `model Refund` HAS NO `merchant_id` COLUMN AT ALL. Tenancy reaches a
-// refund only through `payment_intent_id -> PaymentIntent.merchant_id`, so
-// the body's statement is a JOIN onto `payment_intents` rather than a
-// `WHERE merchant_id = $1` on its own table (`docs/plans/2026-09-13-
-// dashboard-nav-notes/slices.md` § 2, and `vpay_db::refunds`'
-// `get_for_merchant`/`list_for_intent`, which join for the same reason). A
-// body that forgets the join does not fail — it returns every tenant's
-// refunds, and only a container test that seeds a second tenant's row can
-// catch it; a unit test cannot observe a predicate, only the rows it
-// excluded.
-//
-// `@allow(auth() != null)`: the caller must be authenticated, exactly as
-// `searchPaymentIntents`. The tenancy predicate is not expressible in the
-// policy — `inTenant(...)` takes a string literal, not the caller's own
-// tenant — so it lives in the body, which reads `ctx.tenant_id()` and
-// refuses its absence rather than reading unscoped.
-//
-// NAMED `search`, NOT `list`: `procedure listRefunds` collides with the
-// generated `list` CRUD handler for `model Refund` — both would emit
-// `handle_list_refunds` — and fails to compile as `error[E0428]`, exactly
-// as `procedure listPaymentIntents` did.
-procedure searchRefunds(page: PageInput, filter: RefundListFilter): Page<RefundSummary>
 // The dashboard's webhook-deliveries list — "did my webhook actually
 // arrive?" — paginated by offset, the same shape `searchPaymentIntents`
 // answers in and for the same reason (`slices.md`'s "rules that apply to
@@ -2530,6 +2487,61 @@ procedure searchRefunds(page: PageInput, filter: RefundListFilter): Page<RefundS
 // `handle_list_webhook_deliveries` CRUD stem and fails to compile as
 // `error[E0428]`, whether or not that stem is ever routed.
 procedure searchWebhookDeliveries(page: PageInput, filter: WebhookDeliveryListFilter): Page<WebhookDeliverySummary>
+  @allow(auth() != null)
+
+// The dashboard's customers list, `searchPaymentIntents`' sibling and the
+// same shape for the same reason: `model Customer` carries no
+// `@@allow("read", …)` arm (see the model's own comment on why only
+// `update` and `delete` are declared), so a generated read renders `FALSE`
+// and answers zero rows forever. This procedure's body —
+// `backends/crates/vpay-db/src/schema/search_customers.rs` — is the one
+// place this table is read.
+//
+// TWO MAINTAINER DECISIONS, 2026-09-13, IMPLEMENTED HERE RATHER THAN
+// RELITIGATED:
+//
+//   1. `name`, `email` and `phone` are unmasked on this surface, even though
+//      all three carry `@sensitive` above. That attribute has exactly one
+//      reader in this build — `is_sensitive_field`, which redacts a value
+//      from the audit log CrateStack would write if `@@audit` were ever
+//      declared (it is not: nothing in vpay audits today). It has never
+//      masked a value over the wire, here or anywhere else. The maintainer's
+//      call: an operator who can already read a payer's full identifiers off
+//      the payment-detail screen gains nothing from having them hidden on
+//      this one. `type CustomerSummary`'s own comment repeats this, because
+//      the two attributes reading the same word to mean different things is
+//      exactly the kind of gap a future reader would otherwise paper over
+//      with an assumption.
+//   2. An anonymised customer (`anonymized_at` set — the erasure path closed
+//      by issue #111/#143) does not appear in this list, ever. The
+//      predicate excluding it lives in the procedure body's own `WHERE`, not
+//      in a filter the caller could omit.
+//
+// WHAT IS DELIBERATELY NOT ON `type CustomerSummary`: the six `address_*`
+// columns and the two coordinate columns, all `@sensitive`, all excluded for
+// `type PaymentIntentSummary`'s reason applied to the more sensitive case —
+// a list is not where a payer's postal address or GPS point is read, and a
+// customer's coordinates least of all. `metadata` is absent for
+// `type PaymentIntentSummary`'s `Value::from_plain_json` reason: it is
+// `jsonb`, merchant-authored, and a hand-built `Json` field would silently
+// demote a number outside `i64` to a float. `seq` is absent for the same
+// reason it is absent there — it is vpay's internal counter, not part of
+// the answer.
+type CustomerSummary {
+  id String
+  merchant_id String
+  livemode Boolean
+  // Unmasked. See this file's comment on `procedure searchCustomers` —
+  // `@sensitive` here governs an audit log this build does not have, and
+  // has never redacted a wire response.
+  name String?
+  email String?
+  phone String?
+  last_used_at DateTime
+  created_at DateTime
+  updated_at DateTime
+}
+
 // The search filters `searchCustomers` accepts.
 //
 // HAND-ROLLED RATHER THAN `FindMany<Customer>`, for `PaymentIntentListFilter`'s

@@ -216,7 +216,11 @@ fn validated_state(raw: Option<&str>) -> Result<Option<String>, CratestackError>
 /// carried as `String` precisely so there is no closed vocabulary to fall
 /// out of — so this returns the page directly rather than wrapping it in an
 /// `Ok` that could never be an `Err`.
-fn page_of(mut rows: Vec<SummaryRow>, limit: i64, offset: i64) -> Page<types::WebhookDeliverySummary> {
+fn page_of(
+    mut rows: Vec<SummaryRow>,
+    limit: i64,
+    offset: i64,
+) -> Page<types::WebhookDeliverySummary> {
     let has_next_page = i64::try_from(rows.len()).unwrap_or(i64::MAX) > limit;
     let total_count = rows
         .first()
@@ -604,7 +608,16 @@ mod tests {
             let day = time::Duration::days(1);
             let base = time::OffsetDateTime::UNIX_EPOCH + time::Duration::days(20_000);
 
-            for (event_id, merchant, event_type, delivery_id, endpoint, url_value, state, created) in [
+            for (
+                event_id,
+                merchant,
+                event_type,
+                delivery_id,
+                endpoint,
+                url_value,
+                state,
+                created,
+            ) in [
                 (
                     "evt_a_old",
                     "merchant_a",
@@ -792,7 +805,10 @@ mod tests {
                 ["evt_a_new"]
             );
             assert_eq!(
-                succeeded_type.items.first().map(|item| item.event_type.as_str()),
+                succeeded_type
+                    .items
+                    .first()
+                    .map(|item| item.event_type.as_str()),
                 Some("payment_intent.succeeded")
             );
 
@@ -801,8 +817,8 @@ mod tests {
             //    against the statement text.
             assert!(
                 page.items.iter().all(|item| {
-                    let json = serde_json::to_value(item)
-                        .expect("WebhookDeliverySummary serialises");
+                    let json =
+                        serde_json::to_value(item).expect("WebhookDeliverySummary serialises");
                     json.get("response_excerpt").is_none()
                 }),
                 "response_excerpt leaked into a serialised summary"
