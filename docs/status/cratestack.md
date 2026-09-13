@@ -4,7 +4,7 @@ _Archived from [docs/status.md](../status.md) on 2026-09-11 by exp57, which spli
 
 _It still says "above" and "below" where it once pointed at another part of the same page. Those targets are on sibling pages now, and [README.md](README.md) is the index of them._
 
-**The per-step measured findings are on nine dated pages**, and the text below jumps
+**The per-step measured findings are on ten dated pages** _(nine until 2026-09-13, when migration 0044's landed)_, and the text below jumps
 straight from the adoption section to the 0.11.1 → 0.12.0 bump because they sat
 between the two on `docs/status.md` as it was:
 
@@ -17,6 +17,7 @@ between the two on `docs/status.md` as it was:
 - [cratestack/2026-09-06-customers.md](cratestack/2026-09-06-customers.md)
 - [cratestack/2026-09-07-money-tables.md](cratestack/2026-09-07-money-tables.md) — migration 0037
 - [cratestack/2026-09-11-search-payment-intents.md](cratestack/2026-09-11-search-payment-intents.md) — the first `procedure`
+- [cratestack/2026-09-13-credentials.md](cratestack/2026-09-13-credentials.md) — migration 0044, `model Credential`
 - [cratestack/2026-09-13-dashboard-procedure-transport.md](cratestack/2026-09-13-dashboard-procedure-transport.md) — the first transport, mounting it
 
 ### CrateStack

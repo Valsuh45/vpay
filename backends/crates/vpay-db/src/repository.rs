@@ -27,6 +27,7 @@ use crate::charges::Charges;
 use crate::checkout_sessions::CheckoutSessions;
 use crate::client_assertion::ClientAssertions;
 use crate::config_reconcile::ConfigReconcile;
+use crate::credentials::Credentials;
 use crate::customers::Customers;
 use crate::disabled_clients::DisabledClients;
 use crate::error::DbError;
@@ -816,6 +817,7 @@ pub trait Repositories:
     + CheckoutSessions
     + ClientAssertions
     + ConfigReconcile
+    + Credentials
     + Customers
     + DisabledClients
     + Events

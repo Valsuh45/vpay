@@ -210,15 +210,23 @@ async fn harness() -> anyhow::Result<Harness> {
             merchant_id: MERCHANT_A.to_owned(),
             email: "dash-procs-reader@example.test".to_owned(),
             display_name: "Dash Procs Reader".to_owned(),
-            // Never verified: nothing in this suite signs in.
-            password_hash: "$argon2id$v=19$m=19456,t=2,p=1$c2FsdHNhbHRzYWx0$notarealhash"
-                .to_owned(),
             is_admin: false,
             now: time::OffsetDateTime::now_utc(),
         },
     )
     .await
     .context("seeding the staff member this suite's token names")?;
+    // AND NO CREDENTIAL AT ALL, deliberately, since ADR-0019. This field was
+    // `password_hash: "…notarealhash"` when Lane C wrote it, under a comment
+    // saying "never verified: nothing in this suite signs in" — and the
+    // credential split removed the field, so the merge had to say something
+    // about it rather than carry it over. It says the same thing
+    // `dashboard_read_surface.rs` says: a suite whose every case mints a token
+    // directly needs no credential row, and writing a placeholder one would
+    // hide something worth knowing — `require_dashboard_procedure_token`
+    // resolves tenancy from `status`, `merchant_id` and `is_admin` and must
+    // not require a credential to exist. An SSO-provisioned staff member who
+    // has never had a password is exactly this row.
 
     Ok(Harness {
         _container: container,

@@ -58,7 +58,7 @@ mod search_payment_intents;
 ///
 /// **`procedure_router`, never `router()`.** The generated `router()`
 /// merges `model_router(...)` — the CRUD CrateStack generates for every one
-/// of this schema's eighteen models, creates/updates/deletes included,
+/// of this schema's nineteen models, creates/updates/deletes included,
 /// whether or not anything routes it — with `procedure_router(...)`
 /// (`cratestack-macros-0.12.0/src/include/server/axum_module/router_fn.rs`).
 /// `procedure_router` is the same generated function with that merge
@@ -298,7 +298,7 @@ mod tests {
         );
     }
 
-    /// Walks candidate paths for every one of the eighteen models' generated
+    /// Walks candidate paths for every one of the nineteen models' generated
     /// CRUD, proving none of them is mounted through
     /// [`super::dashboard_procedure_router`] — the mechanical version of
     /// `DASH_ROUTES`' own doc's reason for keeping a route table at all:
@@ -308,7 +308,7 @@ mod tests {
     /// **Decisive.** Changing `super::dashboard_procedure_router`'s call
     /// from `cratestack_schema::axum::procedure_router(...)` to
     /// `cratestack_schema::axum::router(...)` (the merged form that also
-    /// mounts `model_router`) turns every one of the seventy-two assertions
+    /// mounts `model_router`) turns every one of the seventy-six assertions
     /// below red at once, because every model's `list`/`create` path
     /// (`/{plural}`) and `get`/`update`/`delete` path (`/{plural}/{id}`)
     /// would start answering `405` (a route matched, the method did not)
@@ -316,7 +316,7 @@ mod tests {
     /// `cratestack-macros-0.12.0/src/axum/model/routes.rs` is where those
     /// paths and that four-method set come from, and
     /// `docs/reference/vpay-db/cratestack.md`'s "the table name is decided
-    /// by the model name" is why the eighteen strings below are the same
+    /// by the model name" is why the nineteen strings below are the same
     /// ones `backends/migrations/*.sql` names as tables.
     #[tokio::test]
     async fn no_generated_model_route_is_mounted_only_the_one_procedure_is() {
@@ -324,7 +324,7 @@ mod tests {
 
         // A pool that never connects, exactly like every other test in this
         // module. Every probed request below is refused before a statement
-        // could run: the eighteen models' paths never match any route at
+        // could run: the nineteen models' paths never match any route at
         // all, and the one real procedure is asked with a method it does
         // not serve (`GET`, never `POST`) so this test proves routing
         // without needing the lazy pool to answer anything.
@@ -333,7 +333,7 @@ mod tests {
             |_: &::cratestack::axum::http::Extensions| Some("acme-cameroon-tenant".to_owned()),
         ));
 
-        const MODEL_TABLES: [&str; 18] = [
+        const MODEL_TABLES: [&str; 19] = [
             "currencies",
             "providers",
             "payment_intents",
@@ -349,6 +349,11 @@ mod tests {
             "staff_members",
             "staff_sessions",
             "oauth_authorization_codes",
+            // Nineteenth, added when this branch's `model Credential`
+            // (migration 0044) merged with Lane C's transport: a model
+            // declared after this list was written is exactly the one whose
+            // generated CRUD nobody has yet proved is unmounted.
+            "credentials",
             "invoices",
             "invoice_items",
             "rate_limit_windows",

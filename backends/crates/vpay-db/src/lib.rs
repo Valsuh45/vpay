@@ -25,6 +25,9 @@ pub mod charges;
 // reachable only from `settlement`.
 pub mod checkout_sessions;
 pub mod config_reconcile;
+/// Credentials as their own object: opaque material, generic over kind now
+/// and over subject later (ADR-0019). The TOTP replay guard lives here.
+pub mod credentials;
 // The merchant-owned payer record (S4a). Its own module for
 // `checkout_sessions`' reason — one table family, one file — and because the
 // privacy rules that apply to a table whose whole content is personal data
@@ -70,8 +73,9 @@ pub mod refunds;
 /// a password change made by somebody already signed in.
 pub mod rate_limits;
 pub mod settlement;
-/// Staff sign-in: the `staff_members` table, its two credentials and the replay
-/// guard (ADR-0017).
+/// Staff sign-in: who a person is, and who they may read as. Their
+/// credentials are NOT here — they moved to [`credentials`] in migration 0044
+/// (ADR-0019).
 pub mod staff;
 /// Server-side staff sessions: the two bounds, and the revocation that makes
 /// signing out mean something (ADR-0017 decision 2).
@@ -146,6 +150,7 @@ pub use payment_intents::{
 // `classify_cratestack`/`system_context` stay `pub(crate)` — nothing outside
 // this crate has a `CratestackError` to classify or a reason to build a
 // system context.
+pub use credentials::{CredentialKind, CredentialRow, Credentials, NewCredential};
 pub use persistence::PersistenceError;
 pub use pool::{MAX_CONNECTIONS, connect, connect_lazy};
 pub use provider_requests::ProviderRequests;
