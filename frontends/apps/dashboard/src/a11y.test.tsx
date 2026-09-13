@@ -193,7 +193,7 @@ describe("the rendered app", () => {
     // second copy of the shell rather than this render.
     document.body.innerHTML = "";
 
-    const { getAllByRole, getByRole, findByRole } = render(
+    const { getAllByRole, findByRole } = render(
       <AppShell
         email="ops@example.test"
         merchantId="acct_test"
