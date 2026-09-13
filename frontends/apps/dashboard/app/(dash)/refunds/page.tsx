@@ -50,6 +50,7 @@ const COLUMNS: readonly ProcedureColumn<RefundRow>[] = [
   { key: "id", header: "Refund", render: (r) => <IdCell value={r.id} /> },
   {
     key: "payment_intent_id",
+    secondary: true,
     header: "Payment",
     render: (r) => <IdCell value={r.payment_intent_id} />,
   },
@@ -61,12 +62,19 @@ const COLUMNS: readonly ProcedureColumn<RefundRow>[] = [
   { key: "status", header: "Status", render: (r) => r.status },
   {
     key: "failure_code",
+    secondary: true,
     header: "Failure",
     render: (r) => r.failure_code ?? ABSENT,
   },
-  { key: "reason", header: "Reason", render: (r) => r.reason ?? ABSENT },
+  {
+    key: "reason",
+    secondary: true,
+    header: "Reason",
+    render: (r) => r.reason ?? ABSENT,
+  },
   {
     key: "created_at",
+    secondary: true,
     header: "Created",
     render: (r) => formatIsoInstant(r.created_at),
   },

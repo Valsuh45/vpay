@@ -55,23 +55,27 @@ const COLUMNS: readonly ProcedureColumn<DeliveryRow>[] = [
   },
   {
     key: "event_id",
+    secondary: true,
     header: "Event id",
     render: (r) => <IdCell value={r.event_id} />,
   },
   { key: "state", header: "State", render: (r) => r.state },
-  { key: "url", header: "Endpoint", render: (r) => r.url },
+  { key: "url", secondary: true, header: "Endpoint", render: (r) => r.url },
   {
     key: "created_at",
+    secondary: true,
     header: "Created",
     render: (r) => formatIsoInstant(r.created_at),
   },
   {
     key: "sent_at",
+    secondary: true,
     header: "Sent",
     render: (r) => formatIsoInstant(r.sent_at),
   },
   {
     key: "next_attempt_at",
+    secondary: true,
     header: "Next attempt",
     render: (r) => formatIsoInstant(r.next_attempt_at),
   },

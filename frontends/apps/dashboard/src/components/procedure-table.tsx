@@ -22,6 +22,21 @@ export interface ProcedureColumn<Row> {
   readonly key: string;
   /** What this cell shows for `row`. */
   readonly render: (row: Row) => React.ReactNode;
+  /**
+   * Hide this column below `sm` (640px).
+   *
+   * `Table` already wraps itself in `w-full overflow-x-auto`, so a wide
+   * table *can* be swiped sideways on a phone rather than being clipped
+   * — measured, not assumed. But a seven-column table on a 375px screen
+   * puts five of its columns off-screen with no affordance saying so, and
+   * an operator who does not know to swipe reads the first two columns as
+   * the whole answer. Marking the columns that are not the answer keeps
+   * the phone view to the ones that are, and the rest return at `sm`.
+   *
+   * This is a static class per column, never a computed one: `verify-ui`
+   * refuses a computed `className` anywhere in an app.
+   */
+  readonly secondary?: boolean;
 }
 
 export interface ProcedureTableProps<Row> {
@@ -69,17 +84,29 @@ export function ProcedureTable<Row>({
       <caption className="sr-only">{caption}</caption>
       <TableHeader>
         <TableRow>
-          {columns.map((column) => (
-            <TableHead key={column.key}>{column.header}</TableHead>
-          ))}
+          {columns.map((column) =>
+            column.secondary === true ? (
+              <TableHead key={column.key} className="hidden sm:table-cell">
+                {column.header}
+              </TableHead>
+            ) : (
+              <TableHead key={column.key}>{column.header}</TableHead>
+            ),
+          )}
         </TableRow>
       </TableHeader>
       <TableBody>
         {rows.map((row) => (
           <TableRow key={idOf(row)}>
-            {columns.map((column) => (
-              <TableCell key={column.key}>{column.render(row)}</TableCell>
-            ))}
+            {columns.map((column) =>
+              column.secondary === true ? (
+                <TableCell key={column.key} className="hidden sm:table-cell">
+                  {column.render(row)}
+                </TableCell>
+              ) : (
+                <TableCell key={column.key}>{column.render(row)}</TableCell>
+              ),
+            )}
           </TableRow>
         ))}
       </TableBody>

@@ -64,22 +64,35 @@ interface CustomerRow {
 export const dynamic = "force-dynamic";
 
 const COLUMNS: readonly ProcedureColumn<CustomerRow>[] = [
-  { key: "id", header: "Customer", render: (r) => <IdCell value={r.id} /> },
+  {
+    key: "id",
+    secondary: true,
+    header: "Customer",
+    render: (r) => <IdCell value={r.id} />,
+  },
   { key: "name", header: "Name", render: (r) => r.name ?? ABSENT },
   { key: "email", header: "Email", render: (r) => r.email ?? ABSENT },
-  { key: "phone", header: "Phone", render: (r) => r.phone ?? ABSENT },
+  {
+    key: "phone",
+    secondary: true,
+    header: "Phone",
+    render: (r) => r.phone ?? ABSENT,
+  },
   {
     key: "livemode",
+    secondary: true,
     header: "Mode",
     render: (r) => (r.livemode ? "live" : "test"),
   },
   {
     key: "last_used_at",
+    secondary: true,
     header: "Last used",
     render: (r) => formatIsoInstant(r.last_used_at),
   },
   {
     key: "created_at",
+    secondary: true,
     header: "Created",
     render: (r) => formatIsoInstant(r.created_at),
   },
