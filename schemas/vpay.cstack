@@ -2296,3 +2296,89 @@ type PaymentIntentListFilter {
 // `createCharge` and `deleteCustomer` are unavailable for the same reason.
 procedure searchPaymentIntents(page: PageInput, filter: PaymentIntentListFilter): Page<PaymentIntentSummary>
   @allow(auth() != null)
+
+// --- Lane D: the refunds slice --------------------------------------------
+//
+// `docs/plans/2026-09-13-dashboard-nav-notes/slices.md` is the brief this
+// was read from before either `type` below was declared; its § 2 and § 4 are
+// the two properties that decide this procedure's shape.
+
+// One row of the refunds list.
+//
+// HAND-WRITTEN, and `failure_raw` is deliberately absent — it is
+// `@sensitive`, up to 2 000 characters of a rail's own prose
+// (`model Refund.failure_raw`), and `PaymentIntentSummary` already made this
+// exact call for its own equivalent: `last_payment_error_code` is in the
+// summary, the raw text is not, because "a list is not where it is read".
+// `@sensitive` itself buys nothing here — `cratestack-macros`' only reader
+// of it is the audit log (`is_sensitive_field`, `shared/attrs.rs:64`), and
+// nothing in this workspace audits through CrateStack — so the field is
+// absent because this file leaves it out, not because the annotation would
+// have.
+//
+// Also absent: `metadata`, for `PaymentIntentSummary`'s reason — it is
+// `jsonb` and undeclared on `model Refund`.
+type RefundSummary {
+  id String
+  // The join key, and the only path from a refund to its tenant: `model
+  // Refund` has no `merchant_id` column. Echoed back for the reason
+  // `PaymentIntentSummary.merchant_id` is: it is what a container test can
+  // assert the tenancy predicate produced.
+  payment_intent_id String
+  charge_id String?
+  amount Int
+  currency_code String
+  status RefundStatus
+  reason String?
+  failure_code FailureCode?
+  provider_reference_id Uuid?
+  fee Int?
+  created_at DateTime
+  updated_at DateTime
+}
+
+// The search filters `searchRefunds` accepts.
+//
+// HAND-ROLLED RATHER THAN `FindMany<Refund>`, for `PaymentIntentListFilter`'s
+// reason: a `FindMany` publishes a filter over every filterable scalar of
+// the model, and the only thing to do with one is the generated model read,
+// which answers `FALSE` forever on this table regardless (`model Refund`
+// carries no `@@allow` arm). Named scalar fields, matching the shape
+// `PaymentIntentListFilter` already settled on.
+type RefundListFilter {
+  // One `RefundStatus` wire value, as TEXT rather than as the enum — see
+  // `PaymentIntentListFilter.status` for why: an unknown value must be a
+  // `400` naming `status`, not a serde decode error, and not an empty page.
+  status String?
+  // Inclusive bounds on `created_at`.
+  created_gte DateTime?
+  created_lte DateTime?
+}
+
+// The dashboard's refunds list, paginated by offset — `searchPaymentIntents`
+// is the template this follows, and the one place this body MUST diverge
+// from it.
+//
+// `model Refund` HAS NO `merchant_id` COLUMN AT ALL. Tenancy reaches a
+// refund only through `payment_intent_id -> PaymentIntent.merchant_id`, so
+// the body's statement is a JOIN onto `payment_intents` rather than a
+// `WHERE merchant_id = $1` on its own table (`docs/plans/2026-09-13-
+// dashboard-nav-notes/slices.md` § 2, and `vpay_db::refunds`'
+// `get_for_merchant`/`list_for_intent`, which join for the same reason). A
+// body that forgets the join does not fail — it returns every tenant's
+// refunds, and only a container test that seeds a second tenant's row can
+// catch it; a unit test cannot observe a predicate, only the rows it
+// excluded.
+//
+// `@allow(auth() != null)`: the caller must be authenticated, exactly as
+// `searchPaymentIntents`. The tenancy predicate is not expressible in the
+// policy — `inTenant(...)` takes a string literal, not the caller's own
+// tenant — so it lives in the body, which reads `ctx.tenant_id()` and
+// refuses its absence rather than reading unscoped.
+//
+// NAMED `search`, NOT `list`: `procedure listRefunds` collides with the
+// generated `list` CRUD handler for `model Refund` — both would emit
+// `handle_list_refunds` — and fails to compile as `error[E0428]`, exactly
+// as `procedure listPaymentIntents` did.
+procedure searchRefunds(page: PageInput, filter: RefundListFilter): Page<RefundSummary>
+  @allow(auth() != null)
