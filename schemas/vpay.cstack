@@ -2351,6 +2351,86 @@ type RefundListFilter {
   // `400` naming `status`, not a serde decode error, and not an empty page.
   status String?
   // Inclusive bounds on `created_at`.
+// --- webhook deliveries (Lane D, slice: deliveries) --------------------
+
+// The dashboard's answer to "did my webhook actually arrive?" — one row per
+// (event, endpoint) delivery attempt, joined to the event it carries so an
+// operator sees *what* was (or was not) delivered, not just a UUID.
+//
+// THE TENANCY PREDICATE IS A JOIN, AND THAT IS THE WHOLE SHAPE OF THIS TYPE.
+// `model WebhookDelivery` (above) has no `merchant_id` column at all — see
+// its own header comment and `docs/plans/2026-09-13-dashboard-nav-notes/
+// slices.md` item 2. Tenancy reaches a delivery only through
+// `event_id -> Event.merchant_id`, so `merchant_id` here is the JOINED
+// event's column, not a column this table owns. It is carried in the
+// summary for the same reason `PaymentIntentSummary.merchant_id` is: it is
+// what `the_page_is_the_tenants_own_rows_filtered_and_bounded`'s webhook
+// analogue asserts on, and a predicate whose result nothing can be checked
+// against is a predicate nobody can prove fired.
+//
+// `event_type` is `Event.type` through the same join — carried because it is
+// what makes this list answer the question it exists to answer: an operator
+// asks "did my `payment_intent.succeeded` land?", not "did delivery
+// `3f2504e0-...` land?". `Event.data` is NOT carried: it is `jsonb` and
+// unmapped (see `model Event`'s GAP note above), and nothing here changes
+// that.
+//
+// `response_excerpt` is NOT in this type, and deliberately. Up to 2 000
+// characters of a merchant endpoint's own response body
+// (`slices.md` item 4, and `excerpt_length`'s own CHECK) — it belongs to a
+// detail read if it belongs anywhere, exactly as `PaymentIntentSummary`
+// refuses `last_payment_error_message` for the same reason. Nor is
+// `payload_sha256`: a forensic detail with no reading an operator does from
+// a list. `state`, `url`, the four timestamps and `event_type` are the
+// operator's answer to "did it arrive".
+type WebhookDeliverySummary {
+  id Uuid
+  merchant_id String
+  event_id String
+  event_type String
+  endpoint_id String
+  url String
+  // The wire value of `webhook_deliveries.state` — `pending`, `succeeded`,
+  // `failed` or `exhausted` (migration 0022's `state_is_known`). `String`
+  // rather than an enum for the same reason `WebhookDelivery.state` itself
+  // is `String` and not one: no `.cstack` enum can be renamed onto a
+  // hand-named CHECK without a migration (see `model WebhookDelivery`'s own
+  // note on `@db_enforce`), and there is no `vpay_core` type for this
+  // vocabulary to keep an enum here honest against, the way `IntentStatus`
+  // keeps `PaymentIntentSummary.status` honest. The body validates against
+  // the same four strings the CHECK enforces and refuses a fifth.
+  state String
+  created_at DateTime
+  sent_at DateTime?
+  responded_at DateTime?
+  next_attempt_at DateTime?
+}
+
+// The search filters `searchWebhookDeliveries` accepts.
+//
+// HAND-ROLLED, NOT `FindMany<WebhookDelivery>`, for the rule
+// `slices.md` states and `PaymentIntentListFilter` already applies: a
+// generated filter publishes every filterable scalar the model has, and
+// naming the fields here is what keeps that from happening. Three filters,
+// matching what an operator actually asks the delivery log:
+type WebhookDeliveryListFilter {
+  // One `webhook_deliveries.state` wire value, as TEXT and not as an enum —
+  // `WebhookDeliverySummary.state`'s comment gives the type reason; the
+  // 400-not-empty-page reason is `PaymentIntentListFilter.status`'s: an
+  // unknown value is refused naming `state` and listing the four known
+  // ones, not answered with a page that looks like "no deliveries in this
+  // state" when it is actually "your caller mistyped the state".
+  state String?
+  // `Event.type` through the join — the vocabulary an operator actually asks
+  // about ("did `payment_intent.succeeded` land?"). `Event.type` is itself
+  // `String` with a hand-named CHECK and no `.cstack` enum (see `model
+  // Event`), so this filter is `String?` for the same reason `state` is.
+  // Unlike `state`, an unknown value here is not refused: the CHECK's
+  // vocabulary is `model Event`'s to own and this procedure does not carry
+  // a copy of it to validate against, so a typo'd `event_type` is an empty
+  // page — the same answer a real type this merchant has none of would give.
+  event_type String?
+  // Inclusive bounds on `webhook_deliveries.created_at`.
   created_gte DateTime?
   created_lte DateTime?
 }
@@ -2381,4 +2461,24 @@ type RefundListFilter {
 // `handle_list_refunds` — and fails to compile as `error[E0428]`, exactly
 // as `procedure listPaymentIntents` did.
 procedure searchRefunds(page: PageInput, filter: RefundListFilter): Page<RefundSummary>
+// The dashboard's webhook-deliveries list — "did my webhook actually
+// arrive?" — paginated by offset, the same shape `searchPaymentIntents`
+// answers in and for the same reason (`slices.md`'s "rules that apply to
+// every slice").
+//
+// `@allow(auth() != null)`: the caller must be authenticated, and that is
+// the whole of what the policy decides. The tenancy predicate cannot live
+// here — `inTenant(...)` takes a string literal, not "the caller's own
+// tenant" — and on this table it could not live in a policy at all even if
+// it could: `model WebhookDelivery` carries no `merchant_id` for a policy to
+// compile a predicate over. The body reads `ctx.tenant_id()`, refuses its
+// absence, and joins to `events` to reach the column that is actually
+// there. `backends/crates/vpay-db/src/schema/search_webhook_deliveries.rs`
+// is where that lives and where the join is tested against a tautology.
+//
+// NAMED `search`, NOT `list`, for the reason `searchPaymentIntents` states
+// above: `listWebhookDeliveries` collides with the generated
+// `handle_list_webhook_deliveries` CRUD stem and fails to compile as
+// `error[E0428]`, whether or not that stem is ever routed.
+procedure searchWebhookDeliveries(page: PageInput, filter: WebhookDeliveryListFilter): Page<WebhookDeliverySummary>
   @allow(auth() != null)

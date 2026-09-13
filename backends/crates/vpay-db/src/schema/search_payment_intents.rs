@@ -230,6 +230,21 @@ impl procedures::ProcedureRegistry for Payments {
         authorized: procedures::search_refunds::Authorized,
     ) -> Result<procedures::search_refunds::Output, CratestackError> {
         search_refunds::run(db, ctx, args, authorized).await
+    /// `procedure searchWebhookDeliveries` (Lane D, slice: webhook
+    /// deliveries) — a thin delegation. The real body, including the
+    /// join-based tenancy predicate `webhook_deliveries` needs and this
+    /// table does not, lives in `super::search_webhook_deliveries::search`;
+    /// this method exists only because the generated `ProcedureRegistry`
+    /// trait requires one method per declared procedure on the one type
+    /// that implements it.
+    async fn search_webhook_deliveries(
+        &self,
+        db: &cratestack_schema::Cratestack,
+        ctx: &CratestackContext,
+        args: procedures::search_webhook_deliveries::Args,
+        _authorized: procedures::search_webhook_deliveries::Authorized,
+    ) -> Result<procedures::search_webhook_deliveries::Output, CratestackError> {
+        super::search_webhook_deliveries::search(db, ctx, args).await
     }
 }
 
