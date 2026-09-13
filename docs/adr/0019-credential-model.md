@@ -18,11 +18,11 @@
 `model StaffMember` carries three unrelated concerns in one row, and the
 maintainer's instruction on 2026-09-13 was to separate the third:
 
-| Concern         | Columns                                                                                                             |
-| --------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Identity        | `id`, `email`, `display_name`, `status`, `created_at`, `updated_at`, `last_sign_in_at`                              |
-| Authorisation   | `merchant_id`, `is_admin`                                                                                           |
-| **Credentials** | `password_hash`, `password_change_required`, `totp_secret`, `totp_enrolled_at`, `last_totp_step`                    |
+| Concern         | Columns                                                                                          |
+| --------------- | ------------------------------------------------------------------------------------------------ |
+| Identity        | `id`, `email`, `display_name`, `status`, `created_at`, `updated_at`, `last_sign_in_at`           |
+| Authorisation   | `merchant_id`, `is_admin`                                                                        |
+| **Credentials** | `password_hash`, `password_change_required`, `totp_secret`, `totp_enrolled_at`, `last_totp_step` |
 
 Five of fourteen columns are credentials and their _names_ hardcode exactly
 two authentication methods. A third method — a magic link, an emailed code, a
@@ -168,12 +168,12 @@ authoritative, as it already is for ten other cross-column CHECKs, and
 per issuer" are **different rules**, and the amendment is right that a single
 uniqueness statement cannot carry both. Four indexes, in the migration:
 
-| Rule                                          | Index                                                                                       | Kinds                                            |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| One per subject                               | `UNIQUE (staff_member_id, kind) WHERE kind IN ('password','totp','hotp')`                    | `password`, `totp`, `hotp`                       |
-| At most one link per issuer per subject       | `UNIQUE (staff_member_id, issuer) WHERE kind = 'oidc'`                                       | `oidc`                                           |
-| **`(issuer, subject)` is globally unique**    | `UNIQUE (issuer, subject) WHERE kind = 'oidc'`                                               | `oidc`                                           |
-| No rule — many are correct                    | _(none)_                                                                                     | `webauthn`, `magic_link`, `email_otp`, `phone_otp` |
+| Rule                                       | Index                                                                     | Kinds                                              |
+| ------------------------------------------ | ------------------------------------------------------------------------- | -------------------------------------------------- |
+| One per subject                            | `UNIQUE (staff_member_id, kind) WHERE kind IN ('password','totp','hotp')` | `password`, `totp`, `hotp`                         |
+| At most one link per issuer per subject    | `UNIQUE (staff_member_id, issuer) WHERE kind = 'oidc'`                    | `oidc`                                             |
+| **`(issuer, subject)` is globally unique** | `UNIQUE (issuer, subject) WHERE kind = 'oidc'`                            | `oidc`                                             |
+| No rule — many are correct                 | _(none)_                                                                  | `webauthn`, `magic_link`, `email_otp`, `phone_otp` |
 
 **Where the rule lives, and how it is proven.** In
 `backends/migrations/0044_create-credentials.sql`, and nowhere else.
@@ -348,11 +348,11 @@ substance.
 same principle and with a **per-field** answer, because the amendment is right
 that a blanket rule is wrong in both directions:
 
-| Field                                        | In `Debug`      | Why                                                                                                                        |
-| -------------------------------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `material`                                   | `[redacted]`    | An argon2id digest is an offline cracking target; a sealed TOTP seed is a second factor; a WebAuthn key is neither, but the column is one column and the rule has to hold for its worst occupant. |
-| `issuer`, `subject`                          | **shown**       | Public identifiers. An operator debugging a broken SSO link needs exactly these two, and redacting them is how that debugging session ends in someone printing the whole row by hand.             |
-| `id`, `kind`, `counter`, `must_change`, timestamps | **shown**  | None is a secret and each is what an operator actually reads.                                                              |
+| Field                                              | In `Debug`   | Why                                                                                                                                                                                               |
+| -------------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `material`                                         | `[redacted]` | An argon2id digest is an offline cracking target; a sealed TOTP seed is a second factor; a WebAuthn key is neither, but the column is one column and the rule has to hold for its worst occupant. |
+| `issuer`, `subject`                                | **shown**    | Public identifiers. An operator debugging a broken SSO link needs exactly these two, and redacting them is how that debugging session ends in someone printing the whole row by hand.             |
+| `id`, `kind`, `counter`, `must_change`, timestamps | **shown**    | None is a secret and each is what an operator actually reads.                                                                                                                                     |
 
 Note what the table does **not** do: it does not make redaction depend on
 `kind`. `material` is redacted for every kind including the ones whose

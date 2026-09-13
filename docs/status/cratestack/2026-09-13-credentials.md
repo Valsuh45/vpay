@@ -17,11 +17,11 @@ Three of `vpay_db::Staff`'s six methods moved with them and were generalised
 on the way, because none of them said anything about a password or a time step
 that was not already "opaque material" and "a strictly increasing counter":
 
-| Was                        | Is                                  |
-| -------------------------- | ----------------------------------- |
-| `Staff::enrol_totp`        | `Credentials::create`               |
-| `Staff::record_totp_step`  | `Credentials::advance_counter`      |
-| `Staff::set_password`      | `Credentials::replace_material`     |
+| Was                       | Is                              |
+| ------------------------- | ------------------------------- |
+| `Staff::enrol_totp`       | `Credentials::create`           |
+| `Staff::record_totp_step` | `Credentials::advance_counter`  |
+| `Staff::set_password`     | `Credentials::replace_material` |
 
 `Staff` keeps `create`, `find_by_email`, `find` and `record_sign_in`, and
 gained one — `Staff::delete`, which exists for a single caller and is a
@@ -38,11 +38,11 @@ That is a property of migration 0044 rather than of ambition: it repeats
 Read off a freshly migrated `postgres:16-alpine` on 2026-09-13, not derived by
 adding deltas.
 
-| Constant                       | Before | After   |
-| ------------------------------ | ------ | ------- |
-| `EXPECTED_DRIFT_CHANGES`       | 179    | **190** |
-| `EXPECTED_DRIFTED_RELATIONS`   | 24     | **25**  |
-| `EXPECTED_UNMAPPABLE_COLUMNS`  | 19     | **19**  |
+| Constant                      | Before | After   |
+| ----------------------------- | ------ | ------- |
+| `EXPECTED_DRIFT_CHANGES`      | 179    | **190** |
+| `EXPECTED_DRIFTED_RELATIONS`  | 24     | **25**  |
+| `EXPECTED_UNMAPPABLE_COLUMNS` | 19     | **19**  |
 
 **The +11 is fully accounted for.** `credentials` contributes **twelve** lines
 and `staff_members` loses **one**.

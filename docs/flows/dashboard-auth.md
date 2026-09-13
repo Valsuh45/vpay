@@ -131,7 +131,7 @@ socket.
 on this surface changed.** `password_hash`, `password_change_required`,
 `totp_secret`, `totp_enrolled_at` and `last_totp_step` are rows in
 `credentials` now — one per credential, generic over kind today and over
-subject tomorrow — because their *names* hardcoded exactly two authentication
+subject tomorrow — because their _names_ hardcoded exactly two authentication
 methods on a table that is not about credentials.
 
 That the flow below is unchanged is the **acceptance criterion** and not an
