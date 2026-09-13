@@ -13,8 +13,24 @@ counts as proof.
 
 Copy these into each agent's prompt verbatim; they are not preamble.
 
+0. **Commit early, and keep committing.** Make a WIP commit as soon as you have
+   written anything at all — within your first few minutes, before any gate run
+   — and commit again after each meaningful step. Echo `git rev-parse HEAD` and
+   confirm your branch has moved **off its base commit**.
+
+   This is not bookkeeping. On 2026-09-13 a Lane B agent worked for twelve
+   minutes, reached the `dart_test_names` seam, ran twelve cargo commands, and
+   lost **all of it**: its worktree was removed out from under it mid-run and it
+   had made no commit. Its branch still sat on the commit it was branched from,
+   which is the cheapest possible proof that nothing was delivered. An
+   interruption must cost you minutes, not the session.
+
 1. **Work only in your own worktree, on your own branch.** Never `cd` to
-   `/home/selast/dev/vpay`. First action, and echo the output into your report:
+   `/home/selast/dev/vpay`. **Worktrees for this work live outside
+   `.claude/worktrees/`** — that directory is harness-managed and unlocked
+   worktrees in it are pruned when the owning session ends, which is what
+   destroyed the 2026-09-13 run. First action, and echo the output into your
+   report:
    ```
    git rev-parse --show-toplevel && git rev-parse --abbrev-ref HEAD && git rev-parse HEAD
    ```
@@ -85,7 +101,7 @@ a seam that only one lane can define.
 
 ## Lane B — the gate learns Dart, and the repository makes room
 
-**Branch:** `claude/flutter-lane-b-gate`
+**Branch:** `claude/flutter-lane-b-gate`, worktree `/home/selast/dev/vpay-flutter-lane-b`
 **Owns:** `.xtask/`, `justfile`, `docs/adr/`, `docs/flows/`, `docs/status*`,
 the Flutter version pin. **Does not touch** `docs/sdks/parity.md` or
 `sdks/flutter/`.
@@ -174,7 +190,7 @@ This is the part most likely to be done quietly and must not be:
 
 ## Lane A — the Dart core
 
-**Branch:** `claude/flutter-lane-a-core` (branched from Lane B's head)
+**Branch:** `claude/flutter-lane-a-core` (branched from Lane B's head), worktree `/home/selast/dev/vpay-flutter-lane-a`
 **Owns:** `sdks/flutter/vpay_checkout_flutter/`, `docs/sdks/parity.md`.
 **Does not touch** `.xtask/`, `justfile`, or any other doc.
 
@@ -254,7 +270,7 @@ third merchant SDK, so it shares no row with the merchant tables).
 
 ## Lane C — the platform hosts
 
-**Branch:** `claude/flutter-lane-c-platforms`, branched from Lane A's head —
+**Branch:** `claude/flutter-lane-c-platforms`, worktree `/home/selast/dev/vpay-flutter-lane-c`, branched from Lane A's head —
 C cannot start before A, see "Lane order".
 **Owns:** `sdks/flutter/vpay_checkout_flutter/{android,ios,macos}/` and the web
 implementation. **Does not touch** `pigeons/checkout.dart` (Lane A owns it),
