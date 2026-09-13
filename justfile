@@ -270,6 +270,79 @@ test-sdk-browser:
 build-sdk-browser:
     pnpm --filter @vaam-apps/vpay-stripe-js build
 
+# --------------------------------------------------------------- flutter ---
+#
+# `vpay_checkout_flutter` (docs/plans/2026-09-13-flutter-plugin.md) — a payer
+# surface, not a merchant SDK, so these three recipes live here rather than
+# beside `test-sdk-*` above. **None of the three is in `just ci`** (D-M3,
+# decided 2026-09-13): a Flutter SDK in the CI image and in the `vpay-ci` VM
+# is a prerequisite this repository does not have yet, and the plugin should
+# not wait on it. `docs/sdks/parity.md`'s Flutter table carries the dated ⛔
+# that says so; it is the honest form of "later" and not this comment's job
+# to duplicate.
+#
+# `flutter-toolchain.toml` is the one place the pinned version lives, the way
+# `rust-toolchain.toml` pins the compiler — read that file's own comment for
+# why its `channel` is not a clean one the way Rust's is.
+#
+# **On this branch `sdks/flutter/vpay_checkout_flutter/` does not exist.**
+# Lane A of the plugin work creates it; until it lands, all three recipes
+# below refuse with a clear message naming the missing directory rather than
+# failing three commands deep inside `flutter`/`dart` with a stack trace that
+# names neither this repository nor the actual problem.
+flutter_plugin_dir := "sdks/flutter/vpay_checkout_flutter"
+
+# Fail clearly, and only once, when the plugin does not exist yet or the SDK
+# is not on PATH — shared by all three recipes below so the message is
+# identical everywhere it can occur, and there is exactly one place to fix it
+# if the plugin's path or the pin's location ever change.
+_flutter-preflight:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    pinned="$(awk -F'"' '/^version = / {print $2; exit}' flutter-toolchain.toml)"
+    if [ ! -d "{{ flutter_plugin_dir }}" ]; then
+        echo "{{ flutter_plugin_dir }}: FAIL — this directory does not exist." >&2
+        echo "  Lane A of docs/plans/2026-09-13-flutter-plugin-brief.md creates it;" >&2
+        echo "  until it lands there is nothing here for Flutter to build, analyze" >&2
+        echo "  or test, and this recipe refuses rather than fail inside 'flutter'" >&2
+        echo "  or 'dart' with a stack trace naming neither this repository nor" >&2
+        echo "  the actual problem." >&2
+        exit 1
+    fi
+    if ! command -v flutter >/dev/null 2>&1; then
+        echo "flutter: FAIL — needs the Flutter SDK on PATH, and it is not there." >&2
+        echo "  This repository pins Flutter $pinned (see flutter-toolchain.toml)." >&2
+        echo "  Install it — https://docs.flutter.dev/get-started/install — and add" >&2
+        echo "  its bin/ to PATH, then re-run this recipe." >&2
+        exit 1
+    fi
+    found="$(flutter --version 2>&1 | head -1 | awk '{print $2}')"
+    if [ "$found" != "$pinned" ]; then
+        echo "flutter: WARNING — Flutter $found on PATH, this repository pins $pinned." >&2
+        echo "  The command below still ran in full, against $found." >&2
+    fi
+
+# `flutter pub get` for the plugin and its `example/` app. The version-and-
+# existence guard is `_flutter-preflight`, above; this recipe is real work
+# once that has passed.
+install-flutter: _flutter-preflight
+    cd {{ flutter_plugin_dir }} && flutter pub get
+
+# `--fatal-infos`, not the bare default: an info-level lint that nobody acts
+# on is exactly how a Dart package accumulates the kind of drift
+# `verify-serde`/`verify-errors` exist to catch on the Rust side, and this
+# plugin has no such gate of its own yet (D-M3) — `dart analyze` is the
+# closest thing it has, so it is run at its strictest setting.
+analyze-flutter: _flutter-preflight
+    cd {{ flutter_plugin_dir }} && dart analyze --fatal-infos
+
+# Unit tests only (`flutter test`, no device) — the plugin's `checkout_
+# controller.dart` is pure by design (docs/plans/2026-09-13-flutter-plugin.md,
+# D1/D4: no HTTP, no timers, no platform calls in the state machine itself),
+# so this needs no emulator, no simulator and no `adb`.
+test-flutter: _flutter-preflight
+    cd {{ flutter_plugin_dir }} && flutter test
+
 # Vendors `@vaam-apps/vpay-stripe-js`'s build output into
 # `examples/checkout-browser/dist/stripe-js/`, which its `index.html` imports
 # as a plain relative ESM path (no bundler, no import map). A COPY rather
