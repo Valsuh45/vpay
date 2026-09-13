@@ -61,6 +61,15 @@ mod search_payment_intents;
 // `search_payment_intents.rs` does not.
 mod search_webhook_deliveries;
 
+// The body of `procedure searchCustomers` — `search_payment_intents`'
+// sibling for `model Customer`. `pub(super)` on its one free function, not a
+// second `ProcedureRegistry` impl: the trait requires exactly one
+// implementer per schema (`Payments`, in `search_payment_intents.rs`), so
+// this module's contribution is a function that `Payments`' own
+// `search_customers` method delegates to, thinly, rather than a struct of
+// its own.
+mod search_customers;
+
 /// Mounts `searchPaymentIntents` over HTTP — the read-only CrateStack
 /// transport this schema has never had a caller for before Lane C
 /// (docs/plans/2026-09-13-dashboard-nav-notes/transport.md).
