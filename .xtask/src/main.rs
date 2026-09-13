@@ -9381,8 +9381,9 @@ mod sdk_parity_tests {
         let found = problems(&dir, doc);
         assert_eq!(found.len(), 1, "{found:?}");
         assert!(
-            found.first().is_some_and(|m| m
-                .contains("reports pending, never succeeded, off a bare redirect")),
+            found.first().is_some_and(
+                |m| m.contains("reports pending, never succeeded, off a bare redirect")
+            ),
             "{found:?}"
         );
     }
@@ -9480,7 +9481,10 @@ mod sdk_parity_tests {
             );
         };
         assert!(message.contains("starts idle"), "{message}");
-        assert!(message.contains("checkout controller starts idle"), "{message}");
+        assert!(
+            message.contains("checkout controller starts idle"),
+            "{message}"
+        );
         assert!(message.contains("sdks/flutter-fixture"), "{message}");
     }
 
