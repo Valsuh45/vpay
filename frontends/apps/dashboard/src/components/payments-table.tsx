@@ -88,23 +88,28 @@ export function PaymentsTable({ rows }: PaymentsTableProps) {
           return (
             <TableRow key={row.id} data-payment-id={row.id}>
               {/*
-                `break-all` below `sm`, and it is what makes the other
-                columns reachable. Measured at 375px before this line: a
-                28-character monospace id held the first column open, the
-                table came to 487px inside a 311px box, and `Status` sat at
-                338–527 — off-screen, reachable only by swiping a table with
-                no affordance saying so. Wrapping the id onto a second line
-                costs a row of height and brings Amount and Status back into
-                view. `sm:break-normal` returns the single line from 640px
-                up, where there is room for it.
+                The id truncates below `sm`, and the row stays one line.
 
-                Wrapping rather than truncating, deliberately: an id is what
-                an operator copies into a support ticket, and half of one is
-                worse than a tall row.
+                Measured at 375px, twice. Untouched, a 28-character
+                monospace id held this column open: the table came to 487px
+                inside a 311px box and `Status` sat at 338–527, off-screen
+                behind a swipe with no affordance. With `break-all` every
+                column fitted, but the id wrapped onto FIVE lines and a row
+                became taller than a phone shows of the list — trading one
+                unreadable screen for another.
+
+                So it truncates instead, and the earlier argument against
+                that ("an id is what an operator copies") is answered rather
+                than ignored: this cell is a link to `/payments/{id}`, and
+                the detail screen renders the id in full. It is one tap, not
+                a loss. `sm:max-w-none` gives the whole id back from 640px
+                up, where it fits on one line anyway.
               */}
-              <TableCell className="break-all sm:break-normal">
+              <TableCell>
                 <NextLink href={`/payments/${row.id}`}>
-                  <Code>{row.id}</Code>
+                  <span className="block max-w-[11ch] truncate sm:max-w-none">
+                    <Code>{row.id}</Code>
+                  </span>
                 </NextLink>
               </TableCell>
               <TableCell className="hidden sm:table-cell">
