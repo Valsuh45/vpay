@@ -9351,6 +9351,134 @@ mod sdk_parity_tests {
         assert_eq!(found.len(), 2, "{found:?}");
     }
 
+    /// A Dart cell behaves exactly like the Rust/TypeScript ones: a live
+    /// `test('…')` satisfies a ✅, and `skip: true` on the same test does not.
+    #[test]
+    fn a_dart_column_reads_test_titles_and_a_skipped_one_cannot_satisfy_a_tick() {
+        let dir = TempDir::new("parity-dart");
+        let flutter = dir.path().join("sdks/flutter/vpay_checkout_flutter/test");
+        fs::create_dir_all(&flutter).expect("the flutter fixture directory is creatable");
+        fs::write(
+            flutter.join("checkout_controller_test.dart"),
+            "void main() {\n  \
+               group('checkout controller', () {\n    \
+                 test('starts idle', () {});\n    \
+                 test('reports pending, never succeeded, off a bare redirect', () {},\n      \
+                   skip: true);\n  \
+               });\n\
+             }\n",
+        )
+        .expect("the flutter fixture is writable");
+
+        let doc = "| Capability | `sdks/flutter/vpay_checkout_flutter` |\n|---|---|\n\
+             | idle start | ✅ `starts idle` |\n\
+             | pending outcome | ✅ `reports pending, never succeeded, off a bare redirect` |\n";
+        let found = problems(&dir, doc);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(
+            found.first().is_some_and(|m| m
+                .contains("reports pending, never succeeded, off a bare redirect")),
+            "{found:?}"
+        );
+    }
+
+    /// `.dart_tool` and `build` hold generated/vendored Dart, exactly like
+    /// `node_modules` holds vendored TypeScript, and must not let a
+    /// dependency's own test satisfy a ✅ cell.
+    #[test]
+    fn dart_tool_and_build_directories_are_skipped_like_node_modules() {
+        let dir = TempDir::new("parity-dart-skipped-dirs");
+        let flutter = dir.path().join("sdks/flutter/vpay_checkout_flutter");
+        let dart_tool = flutter.join(".dart_tool/pub/deps");
+        let build = flutter.join("build/generated");
+        fs::create_dir_all(&flutter).expect("the flutter fixture directory is creatable");
+        fs::create_dir_all(&dart_tool).expect("the .dart_tool fixture directory is creatable");
+        fs::create_dir_all(&build).expect("the build fixture directory is creatable");
+        fs::write(
+            dart_tool.join("vendor_test.dart"),
+            "void main() { test('a vendored dependency owns this', () {}); }\n",
+        )
+        .expect("the .dart_tool fixture is writable");
+        fs::write(
+            build.join("generated_test.dart"),
+            "void main() { test('generated code owns this', () {}); }\n",
+        )
+        .expect("the build fixture is writable");
+
+        let doc = "| Capability | `sdks/flutter/vpay_checkout_flutter` |\n|---|---|\n\
+             | vendored | ✅ `a vendored dependency owns this` |\n";
+        let found = problems(&dir, doc);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(
+            found
+                .first()
+                .is_some_and(|m| m.contains("a vendored dependency owns this")),
+            "{found:?}"
+        );
+    }
+
+    /// The decisive property: calling [`verify_sdk_parity`] itself — the
+    /// exact function `main()` dispatches `verify-sdk-parity` to, and the one
+    /// whose `Ok`/`Err` [`main`] turns into `ExitCode::SUCCESS`/`FAILURE` —
+    /// against a synthetic Flutter-shaped fixture flips from `Ok` to an `Err`
+    /// naming the cell the moment the cited test gains `skip: true`.
+    ///
+    /// This does not shell out to the compiled binary: `repo_root` is fixed
+    /// to this checkout at compile time (`env!("CARGO_MANIFEST_DIR")`), and
+    /// the hard rule for this lane forbids creating anything under
+    /// `sdks/flutter/` or editing the real `docs/sdks/parity.md` to fake a
+    /// real invocation. Calling [`verify_sdk_parity`] directly with a
+    /// synthetic `root` is the same function, with the same
+    /// `Ok(())`/`Err(String)` contract `main` reads to choose an exit code,
+    /// so the flip below *is* the flip `cargo run -p xtask -- verify-sdk-parity`
+    /// would show, minus the process boundary a fixed compile-time root
+    /// makes impossible to cross here.
+    fn synthetic_flutter_fixture_root(label: &str, skip: bool) -> TempDir {
+        let dir = TempDir::new(label);
+        let test_dir = dir.path().join("sdks/flutter-fixture/test");
+        fs::create_dir_all(&test_dir).expect("the flutter fixture directory is creatable");
+        let skip_clause = if skip { ", skip: true" } else { "" };
+        fs::write(
+            test_dir.join("checkout_controller_test.dart"),
+            format!("void main() {{\n  test('starts idle'{skip_clause}, () {{}});\n}}\n"),
+        )
+        .expect("the flutter fixture is writable");
+
+        let docs_dir = dir.path().join("docs/sdks");
+        fs::create_dir_all(&docs_dir).expect("the docs/sdks fixture directory is creatable");
+        fs::write(
+            docs_dir.join("parity.md"),
+            "| Capability | `sdks/flutter-fixture` |\n|---|---|\n\
+             | checkout controller starts idle | ✅ `starts idle` |\n",
+        )
+        .expect("the parity doc fixture is writable");
+
+        dir
+    }
+
+    #[test]
+    fn dart_decisive_mutation_a_live_test_passes_verify_sdk_parity() {
+        let dir = synthetic_flutter_fixture_root("dart-mutation-before", false);
+        let result = verify_sdk_parity(dir.path());
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
+    fn dart_decisive_mutation_skip_true_fails_verify_sdk_parity_naming_the_cell() {
+        let dir = synthetic_flutter_fixture_root("dart-mutation-after", true);
+        let result = verify_sdk_parity(dir.path());
+        let Err(message) = result else {
+            panic!(
+                "verify_sdk_parity must fail once the cited test carries `skip: true` \
+                 — a reader that still collects a skipped test passes every other test \
+                 this file could write, and this is the one that catches it; got {result:?}"
+            );
+        };
+        assert!(message.contains("starts idle"), "{message}");
+        assert!(message.contains("checkout controller starts idle"), "{message}");
+        assert!(message.contains("sdks/flutter-fixture"), "{message}");
+    }
+
     /// A vendored dependency's tests are not this SDK's proof.
     #[test]
     fn a_test_inside_node_modules_does_not_satisfy_a_tick() {
@@ -9390,6 +9518,91 @@ mod sdk_parity_tests {
             &mut names,
         );
         assert!(names.is_empty(), "{names:?}");
+    }
+
+    #[test]
+    fn dart_test_testwidgets_and_group_titles_are_collected() {
+        let mut names = BTreeSet::new();
+        dart_test_names(
+            "void main() {\n  \
+               group('checkout controller', () {\n    \
+                 test('starts idle', () {});\n    \
+                 testWidgets('renders a spinner', (tester) async {});\n  \
+               });\n\
+             }\n",
+            &mut names,
+        );
+        assert_eq!(
+            names,
+            BTreeSet::from([
+                "checkout controller".to_owned(),
+                "starts idle".to_owned(),
+                "renders a spinner".to_owned(),
+            ])
+        );
+    }
+
+    #[test]
+    fn dart_test_skip_true_is_not_collected_but_skip_false_is() {
+        let mut names = BTreeSet::new();
+        dart_test_names(
+            "test('a skipped one', () {}, skip: true);\n\
+             test('a not-skipped one', () {}, skip: false);\n",
+            &mut names,
+        );
+        assert_eq!(names, BTreeSet::from(["a not-skipped one".to_owned()]));
+    }
+
+    #[test]
+    fn dart_test_skip_with_a_reason_string_is_not_collected() {
+        let mut names = BTreeSet::new();
+        dart_test_names(
+            "test('flaky on ci', () {}, skip: 'orange rail is down');\n",
+            &mut names,
+        );
+        assert!(names.is_empty(), "{names:?}");
+    }
+
+    /// `skip:` on a *nested* call inside the body must not be mistaken for
+    /// the outer test's own `skip:` argument.
+    #[test]
+    fn a_nested_calls_skip_argument_does_not_skip_the_outer_test() {
+        let mut names = BTreeSet::new();
+        dart_test_names(
+            "test('still runs', () {\n  \
+               configure(skip: true);\n\
+             });\n",
+            &mut names,
+        );
+        assert_eq!(names, BTreeSet::from(["still runs".to_owned()]));
+    }
+
+    #[test]
+    fn dart_raw_strings_are_read_without_escape_processing() {
+        let mut names = BTreeSet::new();
+        dart_test_names("test(r'a raw \\n title', () {});\n", &mut names);
+        assert_eq!(names, BTreeSet::from(["a raw \\n title".to_owned()]));
+    }
+
+    #[test]
+    fn dart_double_quoted_titles_and_escapes_are_read() {
+        let mut names = BTreeSet::new();
+        dart_test_names("test(\"a \\\"quoted\\\" title\", () {});\n", &mut names);
+        assert_eq!(names, BTreeSet::from(["a \"quoted\" title".to_owned()]));
+    }
+
+    #[test]
+    fn dart_a_plain_function_call_named_test_something_is_not_a_test() {
+        let mut names = BTreeSet::new();
+        dart_test_names(
+            "testHarness('not a test framework call', () {});\nawait test('word boundary needed');\n",
+            &mut names,
+        );
+        // `testHarness(` fails the keyword-boundary check (next char after
+        // `test` is `H`, not `(`); `await test(` is a real `test(` call and
+        // is collected — the leading `await` on the wrong keyword must not
+        // hide the correct one.
+        assert_eq!(names, BTreeSet::from(["word boundary needed".to_owned()]));
     }
 
     // ----------------------------------------------------------- code → doc
