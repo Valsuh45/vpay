@@ -53,8 +53,8 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 use vpay_db::{
-    CredentialKind, Credentials, NewCredential, NewSession, Repositories,
-    SessionRow, SessionState, StaffRow, StaffSessions,
+    CredentialKind, Credentials, NewCredential, NewSession, Repositories, SessionRow, SessionState,
+    StaffRow, StaffSessions,
 };
 
 use crate::ApiError;

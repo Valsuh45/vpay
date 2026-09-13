@@ -112,9 +112,12 @@ impl StaffStatus {
 
 /// One `staff_members` row, exactly as stored.
 ///
-/// `Debug` is **hand-written** below: three of these fields are credentials
-/// or personal data, and `{:?}` on this struct reaches `tracing` fields,
-/// `anyhow` chains and every failing assertion's output.
+/// `Debug` is **hand-written** below: two of these fields are personal data,
+/// and `{:?}` on this struct reaches `tracing` fields, `anyhow` chains and
+/// every failing assertion's output. It said "three of these fields are
+/// credentials or personal data" until migration 0044 took the credentials
+/// to [`crate::credentials::CredentialRow`], which carries the same rule and
+/// its own test.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StaffRow {
     /// `stf_…`.
@@ -177,7 +180,6 @@ impl StaffRow {
     pub fn is_active(&self) -> bool {
         self.status == StaffStatus::Active
     }
-
 }
 
 /// Everything `vpay-server staff add` supplies for one row.

@@ -144,6 +144,7 @@ pub use payment_intents::{
 // `classify_cratestack`/`system_context` stay `pub(crate)` — nothing outside
 // this crate has a `CratestackError` to classify or a reason to build a
 // system context.
+pub use credentials::{CredentialKind, CredentialRow, Credentials, NewCredential};
 pub use persistence::PersistenceError;
 pub use pool::{MAX_CONNECTIONS, connect, connect_lazy};
 pub use provider_requests::ProviderRequests;
@@ -155,7 +156,6 @@ pub use repository::{
 };
 pub use settlement::{AttemptRow, InvoicePaidEvent, Settlement};
 pub use signing_keys::{ActivationOutcome, SigningKey, SigningKeys};
-pub use credentials::{CredentialKind, CredentialRow, Credentials, NewCredential};
 pub use staff::{NewStaff, Staff, StaffRow, StaffStatus};
 pub use staff_sessions::{
     ABSOLUTE_LIFETIME, IDLE_TIMEOUT, NewSession, SessionRow, SessionState, StaffSessions,

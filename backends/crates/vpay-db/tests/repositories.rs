@@ -34,9 +34,8 @@ use sqlx::PgPool;
 use testcontainers::ContainerAsync;
 use testcontainers_modules::postgres::Postgres as PostgresImage;
 use vpay_db::{
-    CredentialKind, Credentials, NewCredential,
-    Charges, CheckoutSessions, Events, Idempotency, Jobs, NewStaff, PaymentIntents, Repositories,
-    Staff, TxOutcome, UnitOfWork as _,
+    Charges, CheckoutSessions, CredentialKind, Credentials, Events, Idempotency, Jobs,
+    NewCredential, NewStaff, PaymentIntents, Repositories, Staff, TxOutcome, UnitOfWork as _,
 };
 
 /// Starts a fresh, migrated Postgres 16 container and returns the
@@ -9318,7 +9317,9 @@ async fn migration_0044_moves_every_live_credential_unchanged() -> anyhow::Resul
         .await
         .context("container port")?;
     let url = format!("postgres://postgres:postgres@{host}:{port}/postgres");
-    let pool = PgPool::connect(&url).await.context("the raw pool connects")?;
+    let pool = PgPool::connect(&url)
+        .await
+        .context("the raw pool connects")?;
 
     // --- the world as it was before this change ----------------------------
     let migrator = sqlx::migrate!("../../migrations");
@@ -9373,10 +9374,12 @@ async fn migration_0044_moves_every_live_credential_unchanged() -> anyhow::Resul
         .iter()
         .find(|migration| migration.version == 44)
         .context("migration 0044 is in the embedded set")?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(zero_zero_four_four.sql.as_str().to_owned()))
-        .execute(&pool)
-        .await
-        .context("migration 0044 applies to a database that already has staff rows")?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        zero_zero_four_four.sql.as_str().to_owned(),
+    ))
+    .execute(&pool)
+    .await
+    .context("migration 0044 applies to a database that already has staff rows")?;
 
     // --- and what must be true afterwards ----------------------------------
     let repositories = vpay_db::connect(&url).await?;
@@ -9544,8 +9547,8 @@ fn now_secs() -> time::OffsetDateTime {
 ///   `advance_counter` — a spent step is accepted again;
 /// * change that filter to `lte` — the same, one step wider.
 #[tokio::test]
-async fn the_credential_guards_are_compare_and_swaps_and_only_one_caller_wins()
--> anyhow::Result<()> {
+async fn the_credential_guards_are_compare_and_swaps_and_only_one_caller_wins() -> anyhow::Result<()>
+{
     let (_container, repositories, _pool) = migrated_postgres().await?;
     let now = time::OffsetDateTime::now_utc();
 
@@ -9637,7 +9640,9 @@ async fn the_credential_guards_are_compare_and_swaps_and_only_one_caller_wins()
         !Credentials::advance_counter(repositories.as_ref(), "cred_nobody", 200, now).await?,
         "a compare-and-swap against a row that does not exist matches nothing"
     );
-    assert!(!Credentials::replace_material(repositories.as_ref(), "cred_nobody", "hash", now).await?);
+    assert!(
+        !Credentials::replace_material(repositories.as_ref(), "cred_nobody", "hash", now).await?
+    );
     assert!(!Staff::record_sign_in(repositories.as_ref(), "stf_nobody", now).await?);
 
     Ok(())
@@ -9778,7 +9783,10 @@ async fn the_per_kind_uniqueness_rules_fire() -> anyhow::Result<()> {
     let (_container, repositories, _pool) = migrated_postgres().await?;
     let now = time::OffsetDateTime::now_utc();
 
-    for (id, email) in [("stf_ada", "ada@example.test"), ("stf_grace", "grace@example.test")] {
+    for (id, email) in [
+        ("stf_ada", "ada@example.test"),
+        ("stf_grace", "grace@example.test"),
+    ] {
         Staff::create(
             repositories.as_ref(),
             NewStaff {
@@ -9856,12 +9864,22 @@ async fn the_per_kind_uniqueness_rules_fire() -> anyhow::Result<()> {
     // --- at most one federated link per issuer per subject ------------------
     Credentials::create(
         repositories.as_ref(),
-        federated("cred_g1", "stf_ada", "https://accounts.google.com", "ada-at-google"),
+        federated(
+            "cred_g1",
+            "stf_ada",
+            "https://accounts.google.com",
+            "ada-at-google",
+        ),
     )
     .await?;
     let err = Credentials::create(
         repositories.as_ref(),
-        federated("cred_g2", "stf_ada", "https://accounts.google.com", "someone-else"),
+        federated(
+            "cred_g2",
+            "stf_ada",
+            "https://accounts.google.com",
+            "someone-else",
+        ),
     )
     .await
     .expect_err("one link per issuer per subject");
@@ -9887,7 +9905,12 @@ async fn the_per_kind_uniqueness_rules_fire() -> anyhow::Result<()> {
     // --- (issuer, subject) is GLOBALLY unique -------------------------------
     let err = Credentials::create(
         repositories.as_ref(),
-        federated("cred_g3", "stf_grace", "https://accounts.google.com", "ada-at-google"),
+        federated(
+            "cred_g3",
+            "stf_grace",
+            "https://accounts.google.com",
+            "ada-at-google",
+        ),
     )
     .await
     .expect_err(

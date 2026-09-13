@@ -579,10 +579,11 @@ impl Credentials for crate::repository::PgRepositories {
 /// the vocabulary is [`DbError::CredentialKindUnknown`] rather than a
 /// default, for the reason that function's doc gives.
 fn row_from_model(model: cratestack_schema::models::Credential) -> Result<CredentialRow, DbError> {
-    let kind = CredentialKind::parse(&model.kind).ok_or_else(|| DbError::CredentialKindUnknown {
-        id: model.id.clone(),
-        kind: model.kind.clone(),
-    })?;
+    let kind =
+        CredentialKind::parse(&model.kind).ok_or_else(|| DbError::CredentialKindUnknown {
+            id: model.id.clone(),
+            kind: model.kind.clone(),
+        })?;
 
     Ok(CredentialRow {
         id: model.id,
@@ -683,7 +684,10 @@ mod tests {
             CredentialKind::Totp,
             CredentialKind::Hotp,
         ] {
-            assert!(kind.is_singleton_per_subject(), "{kind:?} is one-per-subject");
+            assert!(
+                kind.is_singleton_per_subject(),
+                "{kind:?} is one-per-subject"
+            );
         }
         for kind in [
             CredentialKind::Webauthn,

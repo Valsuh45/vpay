@@ -525,12 +525,20 @@ async fn a_malformed_credential_is_refused_by_the_database() -> anyhow::Result<(
     )
     .execute(&pool)
     .await
-    .context("a staff member with NO CREDENTIAL AT ALL is a legal row, and must stay one: \
+    .context(
+        "a staff member with NO CREDENTIAL AT ALL is a legal row, and must stay one: \
               just-in-time SSO provisioning makes one, and an invariant that every member has \
-              a credential is exactly what ADR-0019 decision 7 forbids")?;
+              a credential is exactly what ADR-0019 decision 7 forbids",
+    )?;
 
-    let insert = |id: &str, kind: &str, material: &str, issuer: &str, subject: &str,
-                  counter: &str, must_change: &str, expires: &str| {
+    let insert = |id: &str,
+                  kind: &str,
+                  material: &str,
+                  issuer: &str,
+                  subject: &str,
+                  counter: &str,
+                  must_change: &str,
+                  expires: &str| {
         let sql = format!(
             "INSERT INTO credentials (id, staff_member_id, kind, material, issuer, subject, \
              counter, must_change, expires_at, created_at, updated_at) \
@@ -543,54 +551,115 @@ async fn a_malformed_credential_is_refused_by_the_database() -> anyhow::Result<(
     for (id, kind, material, issuer, subject, counter, must_change, expires, constraint) in [
         // A secret-bearing kind with no secret: verifies against nothing.
         (
-            "hollow", "password", "NULL", "NULL", "NULL", "0", "false", "NULL",
+            "hollow",
+            "password",
+            "NULL",
+            "NULL",
+            "NULL",
+            "0",
+            "false",
+            "NULL",
             "credentials_federated_carries_identity_and_no_material",
         ),
         // A federated credential carrying a secret: the confusion the whole
         // split exists to prevent.
         (
-            "confused", "oidc", "'a-secret'", "'https://idp.example.test'", "'sub-1'", "0",
-            "false", "NULL",
+            "confused",
+            "oidc",
+            "'a-secret'",
+            "'https://idp.example.test'",
+            "'sub-1'",
+            "0",
+            "false",
+            "NULL",
             "credentials_federated_carries_identity_and_no_material",
         ),
         // A federated credential naming nobody at no issuer.
         (
-            "anonymous", "oidc", "NULL", "NULL", "NULL", "0", "false", "NULL",
+            "anonymous",
+            "oidc",
+            "NULL",
+            "NULL",
+            "NULL",
+            "0",
+            "false",
+            "NULL",
             "credentials_federated_carries_identity_and_no_material",
         ),
         // A secret-bearing kind carrying an issuer: an issuer crammed into a
         // row that already has a hash is the "somebody puts the IdP in the
         // password_hash column" failure, one column over.
         (
-            "smuggled", "password", "'a-hash'", "'https://idp.example.test'", "'sub-1'", "0",
-            "false", "NULL",
+            "smuggled",
+            "password",
+            "'a-hash'",
+            "'https://idp.example.test'",
+            "'sub-1'",
+            "0",
+            "false",
+            "NULL",
             "credentials_federated_carries_identity_and_no_material",
         ),
         // A transient credential that never expires: a permanent bearer
         // credential sitting in an inbox.
         (
-            "forever", "magic_link", "'a-link-digest'", "NULL", "NULL", "0", "false", "NULL",
+            "forever",
+            "magic_link",
+            "'a-link-digest'",
+            "NULL",
+            "NULL",
+            "0",
+            "false",
+            "NULL",
             "credentials_transient_kinds_expire",
         ),
         // `must_change` on something that is not a password.
         (
-            "mustchange", "webauthn", "'a-public-key'", "NULL", "NULL", "0", "true", "NULL",
+            "mustchange",
+            "webauthn",
+            "'a-public-key'",
+            "NULL",
+            "NULL",
+            "0",
+            "true",
+            "NULL",
             "credentials_only_a_password_may_require_change",
         ),
         // Two subject columns' worth of nothing. Single-column today and
         // multi-column the day `customer_id` lands; pinned here either way.
         (
-            "subjectless", "password", "'a-hash'", "NULL", "NULL", "0", "false", "NULL",
+            "subjectless",
+            "password",
+            "'a-hash'",
+            "NULL",
+            "NULL",
+            "0",
+            "false",
+            "NULL",
             "credentials_has_exactly_one_subject",
         ),
         // A counter below the seed.
         (
-            "negative", "totp", "'sealed'", "NULL", "NULL", "-1", "false", "NULL",
+            "negative",
+            "totp",
+            "'sealed'",
+            "NULL",
+            "NULL",
+            "-1",
+            "false",
+            "NULL",
             "credentials_counter_is_not_negative",
         ),
         // A kind nobody declared.
         (
-            "unknown", "saml", "'assertion'", "NULL", "NULL", "0", "false", "NULL",
+            "unknown",
+            "saml",
+            "'assertion'",
+            "NULL",
+            "NULL",
+            "0",
+            "false",
+            "NULL",
             "credentials_kind_is_known",
         ),
     ] {
@@ -605,7 +674,17 @@ async fn a_malformed_credential_is_refused_by_the_database() -> anyhow::Result<(
             );
             sqlx::query(sqlx::AssertSqlSafe(sql)).execute(&pool).await
         } else {
-            insert(id, kind, material, issuer, subject, counter, must_change, expires).await
+            insert(
+                id,
+                kind,
+                material,
+                issuer,
+                subject,
+                counter,
+                must_change,
+                expires,
+            )
+            .await
         };
 
         let err = result.expect_err(
@@ -627,12 +706,16 @@ async fn a_malformed_credential_is_refused_by_the_database() -> anyhow::Result<(
     // Without these the CHECKs above could all be `FALSE` and this test would
     // still pass, which is the failure mode the old version of this test
     // guarded against with its "neither" case.
-    insert("ok_pw", "password", "'a-hash'", "NULL", "NULL", "0", "true", "NULL")
-        .await
-        .context("an operator-issued password is a legal row")?;
-    insert("ok_totp", "totp", "'sealed'", "NULL", "NULL", "0", "false", "NULL")
-        .await
-        .context("an enrolled second factor is a legal row")?;
+    insert(
+        "ok_pw", "password", "'a-hash'", "NULL", "NULL", "0", "true", "NULL",
+    )
+    .await
+    .context("an operator-issued password is a legal row")?;
+    insert(
+        "ok_totp", "totp", "'sealed'", "NULL", "NULL", "0", "false", "NULL",
+    )
+    .await
+    .context("an enrolled second factor is a legal row")?;
     insert(
         "ok_oidc",
         "oidc",
@@ -3647,7 +3730,10 @@ async fn the_cstack_schema_drifts_from_the_migrations_by_a_measured_amount() -> 
                 "credentials",
                 "credentials_federated_carries_identity_and_no_material",
             ),
-            ("credentials", "credentials_only_a_password_may_require_change"),
+            (
+                "credentials",
+                "credentials_only_a_password_may_require_change"
+            ),
             ("credentials", "credentials_transient_kinds_expire"),
             // Migration 0041's pair rule (2026-09-11): a customer has both
             // coordinates or neither, because half a coordinate is a line
