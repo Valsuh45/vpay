@@ -25,5 +25,9 @@ import { WEBHOOK_DELIVERIES } from "../../../../src/dash/resource-name";
 export const dynamic = "force-dynamic";
 
 export function GET(request: Request): Promise<NextResponse> {
-  return procedureListResponse(request, WEBHOOK_DELIVERIES, dashboardConfig().config);
+  return procedureListResponse(
+    request,
+    WEBHOOK_DELIVERIES,
+    dashboardConfig().config,
+  );
 }

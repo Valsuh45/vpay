@@ -98,7 +98,6 @@ export async function readDash<T>(
   });
 }
 
-
 /** One page of a CrateStack `Page<T>`, as the generated transport answers it. */
 export interface ProcedurePage<T> {
   readonly items: readonly T[];
