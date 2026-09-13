@@ -3138,7 +3138,20 @@ const PARITY_TABLE_MARKER: &str = "Capability";
 /// Directories that hold no first-party source and would only slow the walk
 /// down — or, worse, contribute a test name from a vendored dependency and
 /// let a ✅ cell be satisfied by somebody else's test.
-const PARITY_SKIPPED_DIRS: [&str; 5] = ["node_modules", "dist", "target", ".git", "coverage"];
+///
+/// `.dart_tool` and `build` joined the list for the Flutter plugin
+/// (2026-09-13): both hold generated or vendored Dart, and left unskipped
+/// either would let a package's own tooling — or a dependency pulled in by
+/// `pub get` — satisfy a ✅ cell nobody wrote.
+const PARITY_SKIPPED_DIRS: [&str; 7] = [
+    "node_modules",
+    "dist",
+    "target",
+    ".git",
+    "coverage",
+    ".dart_tool",
+    "build",
+];
 
 /// Extensions [`test_names_in`] knows how to read.
 const PARITY_TS_EXTENSIONS: [&str; 5] = ["ts", "tsx", "mts", "mjs", "js"];
@@ -4321,6 +4334,7 @@ fn test_names_in(dir: &Path) -> BTreeSet<String> {
         };
         match path.extension().and_then(|e| e.to_str()) {
             Some("rs") => rust_test_names(&text, &mut out),
+            Some("dart") => dart_test_names(&text, &mut out),
             Some(extension) if PARITY_TS_EXTENSIONS.contains(&extension) => {
                 ts_test_names(&text, &mut out);
             }
@@ -4515,6 +4529,195 @@ fn ts_test_keyword_at(chars: &[char], i: usize) -> Option<usize> {
         return Some(end + 1);
     }
     None
+}
+
+/// Every `test('…')`, `testWidgets('…')` and `group('…')` title in `text`.
+///
+/// Modelled on [`ts_test_names`] — a character walk, not a regex, for the
+/// same reason. Handles both quote characters, backslash escapes, and Dart's
+/// raw strings (`r'…'`, `r"…"`), where a backslash is literal rather than an
+/// escape.
+///
+/// **A skipped test is not collected.** `test('x', skip: true)` and
+/// `test('x', skip: 'reason')` are Dart's spelling of Rust's `#[ignore]`, and
+/// [`rust_test_names`]' doc comment says why an ignored test must not satisfy
+/// a ✅ cell: the behaviour it names never actually runs. `skip: false` is not
+/// a skip and does not suppress collection.
+fn dart_test_names(text: &str, out: &mut BTreeSet<String>) {
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0usize;
+
+    while i < chars.len() {
+        let Some(after_keyword) = dart_test_keyword_at(&chars, i) else {
+            i += 1;
+            continue;
+        };
+        let mut j = after_keyword;
+        while chars.get(j).is_some_and(|c| c.is_whitespace()) {
+            j += 1;
+        }
+
+        let mut raw = false;
+        if chars.get(j) == Some(&'r') && matches!(chars.get(j + 1), Some('\'') | Some('"')) {
+            raw = true;
+            j += 1;
+        }
+
+        let Some(&quote) = chars.get(j) else {
+            break;
+        };
+        if quote != '\'' && quote != '"' {
+            i += 1;
+            continue;
+        }
+        j += 1;
+
+        let mut title = String::new();
+        let mut closed = false;
+        while let Some(&c) = chars.get(j) {
+            j += 1;
+            if !raw && c == '\\' {
+                if let Some(&escaped) = chars.get(j) {
+                    j += 1;
+                    title.push(match escaped {
+                        'n' => '\n',
+                        't' => '\t',
+                        'r' => '\r',
+                        other => other,
+                    });
+                }
+                continue;
+            }
+            if c == quote {
+                closed = true;
+                break;
+            }
+            if c == '\n' {
+                break; // An unterminated single-line string is not a title.
+            }
+            title.push(c);
+        }
+
+        if closed && !title.is_empty() && !dart_call_is_skipped(&chars, j) {
+            out.insert(title);
+        }
+        i = j.max(i + 1);
+    }
+}
+
+/// If `test(`, `testWidgets(` or `group(` starts at `i` and is not part of a
+/// longer identifier or a member expression, the index just past the `(`.
+fn dart_test_keyword_at(chars: &[char], i: usize) -> Option<usize> {
+    for keyword in ["testWidgets", "test", "group"] {
+        let letters: Vec<char> = keyword.chars().collect();
+        let end = i + letters.len();
+        if chars.get(i..end) != Some(letters.as_slice()) {
+            continue;
+        }
+        if chars.get(end) != Some(&'(') {
+            continue;
+        }
+        let preceded = i
+            .checked_sub(1)
+            .and_then(|p| chars.get(p))
+            .is_some_and(|c| is_ident_char(*c) || *c == '.');
+        if preceded {
+            continue;
+        }
+        return Some(end + 1);
+    }
+    None
+}
+
+/// Whether the call whose argument list continues at `start` (just past the
+/// title argument's closing quote) carries a top-level `skip:` argument whose
+/// value is not `false`.
+///
+/// Walks the rest of the argument list tracking bracket depth so that a
+/// nested call's own `skip:` — or a `skip` string inside a tag list — does
+/// not get mistaken for this call's own named argument, and skips over every
+/// string literal it passes so a stray `)` or `:` inside one cannot desync
+/// the depth count. Stops at the `)` that closes the call itself.
+fn dart_call_is_skipped(chars: &[char], start: usize) -> bool {
+    let mut depth: i32 = 0;
+    let mut i = start;
+
+    while let Some(&c) = chars.get(i) {
+        if c == '\'' || c == '"' {
+            let raw = i
+                .checked_sub(1)
+                .and_then(|p| chars.get(p))
+                .is_some_and(|&prev| {
+                    prev == 'r'
+                        && !i
+                            .checked_sub(2)
+                            .and_then(|p| chars.get(p))
+                            .is_some_and(|c2| is_ident_char(*c2))
+                });
+            i = skip_dart_string_literal(chars, i, raw);
+            continue;
+        }
+        match c {
+            '(' | '{' | '[' => {
+                depth += 1;
+                i += 1;
+                continue;
+            }
+            ')' if depth == 0 => return false, // The call's own closing paren.
+            ')' | '}' | ']' => {
+                depth -= 1;
+                i += 1;
+                continue;
+            }
+            _ => {}
+        }
+
+        let preceded_by_ident = i
+            .checked_sub(1)
+            .and_then(|p| chars.get(p))
+            .is_some_and(|c2| is_ident_char(*c2));
+        if depth == 0
+            && !preceded_by_ident
+            && chars.get(i..i + 4) == Some(['s', 'k', 'i', 'p'].as_slice())
+            && !chars.get(i + 4).is_some_and(|c2| is_ident_char(*c2))
+        {
+            let mut k = i + 4;
+            while chars.get(k).is_some_and(|c2| c2.is_whitespace()) {
+                k += 1;
+            }
+            if chars.get(k) == Some(&':') {
+                k += 1;
+                while chars.get(k).is_some_and(|c2| c2.is_whitespace()) {
+                    k += 1;
+                }
+                if chars.get(k) == Some(&'\'') || chars.get(k) == Some(&'"') {
+                    return true; // A reason string means "skipped".
+                }
+                return chars.get(k..k + 4) == Some(['t', 'r', 'u', 'e'].as_slice());
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+/// The index just past the string literal (single- or double-quoted) that
+/// starts at `start`, honouring Dart's raw-string rule that a backslash
+/// inside `r'…'`/`r"…"` is literal rather than an escape.
+fn skip_dart_string_literal(chars: &[char], start: usize, raw: bool) -> usize {
+    let quote = chars[start];
+    let mut i = start + 1;
+    while let Some(&c) = chars.get(i) {
+        if !raw && c == '\\' {
+            i += 2;
+            continue;
+        }
+        i += 1;
+        if c == quote || c == '\n' {
+            break;
+        }
+    }
+    i
 }
 
 // ---------------------------------------------------------------------------
