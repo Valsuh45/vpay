@@ -70,6 +70,13 @@ mod search_webhook_deliveries;
 // its own.
 mod search_customers;
 
+// The body of `procedure searchCheckoutSessions` (Lane D, slice: checkout
+// sessions). A sibling of `search_customers` and declared the same way — a
+// plain `mod` here rather than a `#[path]` child of `search_payment_intents`,
+// because it imports nothing private from that file. Only `search_refunds`
+// needs the `#[path]` form, and its own comment says why.
+mod search_checkout_sessions;
+
 /// Mounts `searchPaymentIntents` over HTTP — the read-only CrateStack
 /// transport this schema has never had a caller for before Lane C
 /// (docs/plans/2026-09-13-dashboard-nav-notes/transport.md).

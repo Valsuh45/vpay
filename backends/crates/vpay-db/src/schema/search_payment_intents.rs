@@ -262,6 +262,22 @@ impl procedures::ProcedureRegistry for Payments {
     ) -> Result<procedures::search_customers::Output, CratestackError> {
         super::search_customers::search_customers(db, ctx, args).await
     }
+
+    /// `procedure searchCheckoutSessions` (Lane D, slice: checkout
+    /// sessions) — a thin delegation. The real body, including the two
+    /// payer credentials it refuses to project, is
+    /// `super::search_checkout_sessions::search_checkout_sessions`; this
+    /// method exists only because the generated `ProcedureRegistry` requires
+    /// one implementer for every procedure the schema declares.
+    async fn search_checkout_sessions(
+        &self,
+        db: &cratestack_schema::Cratestack,
+        ctx: &CratestackContext,
+        args: procedures::search_checkout_sessions::Args,
+        _authorized: procedures::search_checkout_sessions::Authorized,
+    ) -> Result<procedures::search_checkout_sessions::Output, CratestackError> {
+        super::search_checkout_sessions::search_checkout_sessions(db, ctx, args).await
+    }
 }
 
 /// [`PageInput::resolve`]'s clamp, with vpay's default page size rather
