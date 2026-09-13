@@ -1,6 +1,6 @@
 "use client";
 
-import { SideNav } from "@vaam-apps/ui";
+import { SideNav, ThemeSwitcher } from "@vaam-apps/ui";
 
 import { MoreMenu } from "./more-menu";
 import { SignedInBar } from "./signed-in-bar";
@@ -141,19 +141,20 @@ export function AppShell({
           sequence with it. The rail is navigation; who is signed in and the
           way out belong somewhere always visible.
 
-          `MoreMenu` is what the slot holds, so the menu trigger sits in the
-          rail rather than in the top-right of `<main>`. Because the slot
-          renders **only** in the ≥1280px in-flow sidebar, `<main>` keeps a
-          second `MoreMenu` behind `xl:hidden` — otherwise every width below
-          `xl` would have no way to reach the theme control or the nav tree
-          at all. `xl:hidden` is `display: none`, so exactly one of the two
-          is ever in the accessibility tree; `more-menu.test.tsx` holds that
-          property for the drawer's sign-out and the same reasoning covers
-          the trigger.
+          **There is deliberately no "Menu" button here.** One was, for one
+          revision, and it was redundant: this slot renders only in the
+          ≥1280px sidebar, where the rail already shows the whole nav tree
+          and the account block — so the drawer it opened duplicated what
+          was on screen, and the only thing it held that the rail did not
+          was the theme control. The theme control is therefore in the slot
+          directly and the trigger is gone. A button whose panel repeats the
+          page is a button an operator learns to ignore.
 
-          The theme switcher lives inside the drawer rather than in this
-          slot for that same reason: a control only reachable at ≥1280px is
-          not a control a phone has.
+          `<main>` still mounts `MoreMenu` behind `xl:hidden`, and that copy
+          is load-bearing rather than a leftover: below `xl` this slot does
+          not render at all, so the drawer is the only route to the theme
+          control, and below 640px it is also the only full-label nav tree —
+          `SideNav`'s pill shows four destinations and its own overflow.
         */
           accountSlot={
             <div className="flex flex-col gap-3">
@@ -162,12 +163,7 @@ export function AppShell({
                 merchantId={merchantId}
                 signOut={signOut}
               />
-              <MoreMenu
-                email={email}
-                merchantId={merchantId}
-                signOut={signOut}
-                currentPath={pathname}
-              />
+              <ThemeSwitcher />
             </div>
           }
         />
