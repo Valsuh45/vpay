@@ -1,14 +1,15 @@
 /// A runnable example, pointed at `compose.demo.yml`
-/// (docs/plans/2026-09-13-flutter-plugin-brief.md, Lane A).
+/// (docs/plans/2026-09-13-flutter-plugin-brief.md, Lane A/Lane C).
 ///
-/// **This example cannot open a window.** No platform host exists in this
-/// repository yet (Lane C) — `VpayCheckout.start` reaches
-/// `VpayCheckoutPlatform.instance` (the `UnimplementedVpayCheckoutPlatform`
-/// stub) and throws `UnimplementedError`, on purpose: see
-/// `docs/sdks/parity.md`'s dated ⛔ row for this package. This app still
-/// exercises the pre-flight (a real `GET
-/// /v1/browser/checkout/sessions/{id}` against a running demo stack) before
-/// it hits that wall, which is as far as this lane's own code goes.
+/// **Android and web can open a window; iOS and macOS cannot be compiled on
+/// this repository's host at all** (no macOS/iOS toolchain — Lane C's
+/// Swift is reviewed by reading only). On Android and web,
+/// `VpayCheckout.start` opens a real window via `VpayCheckoutPlatform.instance`
+/// (`MethodChannelVpayCheckoutPlatform`/`WebVpayCheckoutPlatform`) and
+/// reports one of `VpayCheckoutResult`'s outcomes once the poll resolves —
+/// nothing here decides an outcome off a URL (D1). See
+/// `docs/sdks/parity.md`'s table for this package for exactly what is and
+/// is not proven.
 ///
 /// # Getting a `sessionUrl` to paste in
 ///
@@ -87,8 +88,9 @@ class _CheckoutPageState extends State<_CheckoutPage> {
     } on UnimplementedError catch (e) {
       setState(
         () => _status =
-            'Pre-flight ran; the platform window itself is not built yet '
-            '(Lane C): $e',
+            'Pre-flight ran; no platform host is registered on this '
+            'platform (iOS/macOS are compiled by nobody in this '
+            'repository): $e',
       );
     } on Object catch (e) {
       setState(() => _status = 'Error: $e');
