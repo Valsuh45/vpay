@@ -33,51 +33,48 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('MethodChannelVpayCheckoutPlatform.show', () {
-    test(
-      'converts each StopUrlSpec to a CheckoutStopUrl carrying the same scheme, host, port and path',
-      () async {
-        final hostApi = _RecordingHostApi();
-        final platform = MethodChannelVpayCheckoutPlatform(hostApi: hostApi);
+    test('converts each StopUrlSpec to a CheckoutStopUrl carrying the same scheme, host, port and path', () async {
+      final hostApi = _RecordingHostApi();
+      final platform = MethodChannelVpayCheckoutPlatform(hostApi: hostApi);
 
-        await platform.show(
-          url: 'https://checkout.example/c/cs_123#secret',
-          stopUrls: const [
-            StopUrlSpec(
-              scheme: 'https',
-              host: 'shop.example',
-              port: 443,
-              path: '/success',
-            ),
-            StopUrlSpec(
-              scheme: 'http',
-              host: 'shop.example',
-              port: 8080,
-              path: '/cancel',
-            ),
-          ],
-          allowInsecureUrl: false,
-        );
-
-        final ShowCheckoutRequest? request = hostApi.lastShowRequest;
-        expect(request, isNotNull);
-        expect(request!.url, 'https://checkout.example/c/cs_123#secret');
-        expect(request.allowInsecureUrl, isFalse);
-        expect(request.stopUrls, [
-          CheckoutStopUrl(
+      await platform.show(
+        url: 'https://checkout.example/c/cs_123#secret',
+        stopUrls: const [
+          StopUrlSpec(
             scheme: 'https',
             host: 'shop.example',
             port: 443,
             path: '/success',
           ),
-          CheckoutStopUrl(
+          StopUrlSpec(
             scheme: 'http',
             host: 'shop.example',
             port: 8080,
             path: '/cancel',
           ),
-        ]);
-      },
-    );
+        ],
+        allowInsecureUrl: false,
+      );
+
+      final ShowCheckoutRequest? request = hostApi.lastShowRequest;
+      expect(request, isNotNull);
+      expect(request!.url, 'https://checkout.example/c/cs_123#secret');
+      expect(request.allowInsecureUrl, isFalse);
+      expect(request.stopUrls, [
+        CheckoutStopUrl(
+          scheme: 'https',
+          host: 'shop.example',
+          port: 443,
+          path: '/success',
+        ),
+        CheckoutStopUrl(
+          scheme: 'http',
+          host: 'shop.example',
+          port: 8080,
+          path: '/cancel',
+        ),
+      ]);
+    });
 
     test('forwards allowInsecureUrl true unchanged', () async {
       final hostApi = _RecordingHostApi();
@@ -118,45 +115,36 @@ void main() {
     expect(hostApi.dismissed, isTrue);
   });
 
-  test(
-    'onWindowEvent republishes on windowEvents, unchanged, exactly once per event',
-    () async {
-      final platform = MethodChannelVpayCheckoutPlatform(
-        hostApi: _RecordingHostApi(),
-      );
+  test('onWindowEvent republishes on windowEvents, unchanged, exactly once per event', () async {
+    final platform = MethodChannelVpayCheckoutPlatform(
+      hostApi: _RecordingHostApi(),
+    );
 
-      final events = <CheckoutWindowEvent>[];
-      final subscription = platform.windowEvents.listen(events.add);
+    final events = <CheckoutWindowEvent>[];
+    final subscription = platform.windowEvents.listen(events.add);
 
-      platform.onWindowEvent(
-        CheckoutWindowEvent(
-          outcome: CheckoutWindowOutcome.stopUrlReached,
-          reachedUrl: 'https://shop.example/success?order=1',
-        ),
-      );
-      // Pump the microtask queue so the broadcast stream's listener runs.
-      await Future<void>.delayed(Duration.zero);
+    platform.onWindowEvent(
+      CheckoutWindowEvent(
+        outcome: CheckoutWindowOutcome.stopUrlReached,
+        reachedUrl: 'https://shop.example/success?order=1',
+      ),
+    );
+    // Pump the microtask queue so the broadcast stream's listener runs.
+    await Future<void>.delayed(Duration.zero);
 
-      expect(events, hasLength(1));
-      expect(events.single.outcome, CheckoutWindowOutcome.stopUrlReached);
-      expect(
-        events.single.reachedUrl,
-        'https://shop.example/success?order=1',
-      );
+    expect(events, hasLength(1));
+    expect(events.single.outcome, CheckoutWindowOutcome.stopUrlReached);
+    expect(events.single.reachedUrl, 'https://shop.example/success?order=1');
 
-      await subscription.cancel();
-    },
-  );
+    await subscription.cancel();
+  });
 
-  test(
-    'registerWith sets VpayCheckoutPlatform.instance to a MethodChannelVpayCheckoutPlatform',
-    () {
-      MethodChannelVpayCheckoutPlatform.registerWith();
+  test('registerWith sets VpayCheckoutPlatform.instance to a MethodChannelVpayCheckoutPlatform', () {
+    MethodChannelVpayCheckoutPlatform.registerWith();
 
-      expect(
-        VpayCheckoutPlatform.instance,
-        isA<MethodChannelVpayCheckoutPlatform>(),
-      );
-    },
-  );
+    expect(
+      VpayCheckoutPlatform.instance,
+      isA<MethodChannelVpayCheckoutPlatform>(),
+    );
+  });
 }
