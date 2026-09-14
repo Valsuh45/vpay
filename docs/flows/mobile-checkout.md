@@ -78,11 +78,17 @@ mechanism.
   driven inside one — vpay has only ever talked to a WireMock stub serving two
   links, and "Orange's page inside a WebView is unproven" is named as the
   single biggest technical risk in the design. `VpayCheckoutMode.externalBrowser`
-  (D8) is the answer if it turns out to be true: Custom Tabs on Android,
-  `SFSafariViewController` on iOS below 17.4. Because the outcome is always
-  polled (D1), the external mode degrades correctly with **no merchant
-  deployment work at all** — the payer finishes in the system browser, closes
-  it, and the plugin polls on resume.
+  (D8) is the designed answer if it turns out to be true: Custom Tabs on
+  Android, `SFSafariViewController` on iOS below 17.4. Because the outcome is
+  always polled (D1), the external mode would degrade correctly with **no
+  merchant deployment work at all** — the payer finishes in the system
+  browser, closes it, and the plugin polls on resume. **It is not built.**
+  `pigeons/checkout.dart`'s `ShowCheckoutRequest` carries no `mode` field, so
+  no host has anything to act on; `VpayCheckout.start` throws
+  `UnimplementedError` for that mode rather than silently opening the in-app
+  WebView, which is what it did until the 2026-09-14 review. So this risk
+  currently has **no mitigation in code** — only a designed one, with a dated
+  ⛔ row in [`../sdks/parity.md`](../sdks/parity.md) and an owner.
 - **The payer dismisses the window mid-flow.** Handled by D4's short poll
   before reporting anything (above); `VpayCheckoutPending` exists precisely so
   the plugin never has to choose between lying and throwing.
@@ -190,35 +196,49 @@ default. This document does not touch
 
 ## Status
 
-**Lane B only, 2026-09-13 (this commit).** No Dart file exists in this
-repository yet — `sdks/flutter/vpay_checkout_flutter/` does not exist on this
-branch, and this document does not create it. What this lane actually built:
+**2026-09-14, after the review of Lanes A, B and C.** All three lanes have
+landed on one branch and been reviewed adversarially; this section replaces
+the Lane-B-only text that stood here, which said "no Dart file exists in this
+repository yet" and was true when it was written and false the moment Lane A
+merged.
 
-- `cargo xtask verify-sdk-parity` reads Dart `test('…')`/`testWidgets('…')`/
-  `group('…')` titles, dropping any carrying `skip: true` or a string `skip:`
-  reason, the same way it already drops a Rust `#[ignore]`d test or a
-  TypeScript `it.skip(…)`. Proven against a synthetic fixture tree, not
-  against this repository's own `sdks/`, in `.xtask/src/main.rs`'s
-  `sdk_parity_tests` module.
-- `just install-flutter`, `just analyze-flutter` (`dart analyze
-  --fatal-infos`) and `just test-flutter` exist and each refuses clearly —
-  naming the missing directory or the missing SDK, not a stack trace three
-  commands deep — because `sdks/flutter/vpay_checkout_flutter/` is not there
-  yet. **None of the three is in `just ci`** (D-M3): a Flutter SDK in the CI
-  image and the `vpay-ci` VM is a prerequisite this repository does not have.
-- `flutter-toolchain.toml` pins Flutter 3.47.2 / Dart 3.13.2, the version this
-  lane was authored and verified against — a version actually installed on
-  one host, not a floor computed from a `pubspec.yaml` this repository does
-  not have yet, and its own comment says so.
-- [ADR-0021](../adr/0021-flutter-checkout-plugin.md) records the design
-  decisions above as accepted.
+What exists and is verified on this host:
 
-**Not built by this lane, and not claimed here:** the plugin itself (`lib/`,
-`pigeons/checkout.dart`, `android/`, `ios/`, `macos/`, `example/` — Lane A and
-Lane C), the third table in [`../sdks/parity.md`](../sdks/parity.md) (Lane A;
-the dated ⛔ rows for "not run by `just ci`," "no platform host exists" and
-"nothing has run against a real rail" are owed there, not here), a CI gate,
-any device, any App Store or Play Store review, and any call to a real MTN or
-Orange endpoint from a handset. See
-[`../plans/2026-09-13-flutter-plugin.md`](../plans/2026-09-13-flutter-plugin.md)'s
-"What will not be true when this ships" for the complete list.
+- **The Dart core** — `sdks/flutter/vpay_checkout_flutter/lib/`: the browser
+  client, the pure state machine, the result and error types, redaction, the
+  pigeon seam. `flutter test` is green; the counts and skips are on the dated
+  verification page below, which is also where every mutation this was proven
+  by is recorded.
+- **The Android host** — `VpayCheckoutActivity` (`android:exported="false"`,
+  `onReceivedSslError` not overridden, no `addJavascriptInterface`) and
+  `VpayCheckoutFlutterPlugin`. Proven by compiling: `flutter build apk
+  --debug` on `example/`, and the merged manifest carries the Activity with
+  `exported="false"`. **No device, no emulator, no instrumentation test.**
+- **The web host** — `WebVpayCheckoutPlatform`, `window.open` plus the
+  `vpay:complete` message and a `closed` poll. Proven by compiling:
+  `flutter build web` on `example/`. **No browser has driven it.**
+- **The gate** — `cargo xtask verify-sdk-parity` reads Dart, drops skipped
+  tests, and since 2026-09-14 drops a skipped group's tests, commented-out
+  declarations and titles quoted inside strings.
+
+What does **not** exist, and is a dated ⛔ in
+[`../sdks/parity.md`](../sdks/parity.md) rather than a silence:
+
+- **`VpayCheckoutMode.externalBrowser` (D8)** — designed, not built; the
+  public API refuses it with `UnimplementedError`.
+- **iOS and macOS** — the Swift exists under `ios/` and `macos/` and is
+  **compiled by nobody**: this repository runs on Linux and has no
+  `xcodebuild`. It has been reviewed by reading, and that is all.
+- **A CI gate** — `install-flutter`/`analyze-flutter`/`test-flutter` exist
+  and none of them is in `just ci` (D-M3). Every count this repository quotes
+  for this package is a human running `just test-flutter` by hand.
+- **A real rail, or even a running vpay.** Every server in this package's
+  suite is `package:http/testing.dart`'s `MockClient`. Nothing here has been
+  driven against `compose.demo.yml`, let alone MTN or Orange.
+- **A device, an App Store or Play review, and the Android 21 / iOS 12
+  floor**, which is a claim nobody has tested.
+
+Evidence:
+[`../status/verification/2026-09-14-flutter-review.md`](../status/verification/2026-09-14-flutter-review.md),
+and the area page
+[`../status/mobile-flutter-plugin.md`](../status/mobile-flutter-plugin.md).

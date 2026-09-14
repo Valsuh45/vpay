@@ -6,22 +6,28 @@ intent actually settles. Design:
 [`docs/plans/2026-09-13-flutter-plugin.md`](../../../docs/plans/2026-09-13-flutter-plugin.md).
 Decisions: [ADR-0021](../../../docs/adr/0021-flutter-checkout-plugin.md).
 
-**Status (2026-09-13).** Android and web hosts exist and are wired up
+**Status (2026-09-14).** Android and web hosts exist and are wired up
 (`android/`, and the web implementation in
 `lib/src/platform/web_checkout_platform.dart`) — Android compiles for real
 (`flutter build apk --debug` on `example/`) and web compiles for real
 (`flutter build web` on `example/`). **iOS and macOS Swift also exist
 (`ios/`, `macos/`) but are compiled by nobody** — this repository has no
 macOS/iOS toolchain (Linux host), so that Swift is reviewed by reading only,
-never built, never run. **`VpayCheckoutMode.externalBrowser` is not wired to
-any platform host on any platform**: `pigeons/checkout.dart`'s
-`ShowCheckoutRequest` (frozen, owned by the Dart-core lane) carries no
-`mode` field, so there is nothing a platform host could act on to choose
-Custom Tabs or `SFSafariViewController` over the in-app WebView — every
-`VpayCheckout.start(mode: VpayCheckoutMode.externalBrowser)` call opens the
-in-app WebView exactly as `VpayCheckoutMode.inApp` does today. See
-[`docs/sdks/parity.md`](../../../docs/sdks/parity.md)'s table for this
-package for what is and is not proven today.
+never built, never run.
+
+**`VpayCheckoutMode.externalBrowser` is not implemented on any platform, and
+passing it throws `UnimplementedError`.** `pigeons/checkout.dart`'s
+`ShowCheckoutRequest` carries no `mode` field, so there is nothing a
+platform host could act on to choose Custom Tabs or
+`SFSafariViewController` over the in-app WebView. Until the 2026-09-14
+review this package accepted the parameter and **silently gave you the
+in-app WebView instead** — which is the worst of both, because the one
+reason to reach for this mode is a rail whose page refuses an embedded
+WebView (design doc D8: Orange), and you would have got exactly the thing
+you were avoiding, with no error. Use `VpayCheckoutMode.inApp`, which is
+the default, until the ⛔ row in
+[`docs/sdks/parity.md`](../../../docs/sdks/parity.md) closes. That table is
+also where the rest of what is and is not proven today lives.
 
 ## What this is not
 
@@ -84,7 +90,14 @@ for the fuller quotes and sources read.
   secret or an intent secret (`PaymentIntent`, `CheckoutSession`) —
   `[N chars redacted]`, never the value.
 - No `print`, `debugPrint` or `log` call anywhere in `lib/` — asserted by
-  `test/no_logging_test.dart`, which reads the package's own source.
+  `test/no_logging_test.dart`, which reads the package's own source,
+  qualified calls (`developer.log(…)`) included.
+- The **pigeon-generated** channel types redact too. `ShowCheckoutRequest`
+  holds the session URL, whose fragment *is* the session's `client_secret`,
+  and pigeon's generated `toString`/`description` rendered it verbatim in
+  Dart, Kotlin and Swift alike until 2026-09-14. All three are hand-edited;
+  `test/messages_redaction_test.dart` is what keeps the Dart one edited
+  across a `dart run pigeon` that would overwrite it.
 - `BrowserClient` refuses a non-`https` base URL unless the named
   `allowInsecureBaseUrl` opt-in is passed — for `compose.demo.yml` only,
   never inferred from a debug build.
@@ -117,8 +130,9 @@ dated ⛔ row.
   `VpayCheckoutFlutterPlugin` exist under `ios/` and `macos/` and read the
   same way the Android host does, but **are compiled by nobody**: this
   repository has no macOS/iOS toolchain. Reviewed by reading only.
-- **`VpayCheckoutMode.externalBrowser` has no platform wiring on any
-  platform** — see the Status paragraph above. Custom Tabs
-  (`androidx.browser`) and `SFSafariViewController` are not dependencies of
-  any of the hosts above, on purpose: a dependency with no code path that
-  could ever run is its own kind of false claim.
+- **`VpayCheckoutMode.externalBrowser` is not implemented on any platform**
+  and `VpayCheckout.start` throws `UnimplementedError` for it — see the
+  Status paragraph above. Custom Tabs (`androidx.browser`) and
+  `SFSafariViewController` are not dependencies of any of the hosts above,
+  on purpose: a dependency with no code path that could ever run is its own
+  kind of false claim.

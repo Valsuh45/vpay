@@ -21,31 +21,67 @@ on `claude/flutter-lane-b-gate`:
 | ADR-0021 | ✅ [docs/adr/0021-flutter-checkout-plugin.md](../adr/0021-flutter-checkout-plugin.md) — records D1–D9 and D-M1–D-M6 as accepted. |
 | `docs/flows/mobile-checkout.md` | ✅ the flow doc, carrying D9's Apple 3.1.3(e) and 3.1.1 quotes verbatim (not paraphrased) as a constraint on adoption, and naming — rather than deciding — the one open documentation-structure question against `hosted-checkout/page-memory-and-protocols.md`'s popup table. |
 
-## What is not real yet, and whose it is to build
+## What Lanes A and C added, and the 2026-09-14 review
 
-- **No Dart file exists in this repository.** `sdks/flutter/vpay_checkout_flutter/`
-  does not exist on `claude/flutter-lane-b-gate`; Lane A of the brief creates
-  it (`lib/`, `pigeons/checkout.dart`, `test/`, `example/`).
-- **No platform host exists.** No `android/`, `ios/`, `macos/` directory, no
-  Android `Activity`, no `WKWebView` controller. Lane C, after Lane A.
-- **The plugin's own parity table.** `docs/sdks/parity.md` gains a third
-  table under Lane A's ownership — Lane B does not touch that file. **The
-  dated ⛔ row that the plugin's tests are not run by `just ci` is owed there,
-  by Lane A** — this page does not carry it, because the row belongs next to
-  the table it qualifies, not on a status page describing the gate that would
-  read it.
-- **`docs/status.md`'s gate table is unchanged.** It lists what `just verify`
-  refuses (twelve gates); Flutter's recipes are not one of them and this page
-  does not claim otherwise. Nothing on `docs/status.md` itself was touched by
-  this lane.
-- **No CI gate, no device, no real rail, no store review.** Every payment this
-  plugin will ever complete, once Lane A and Lane C land, will settle against
-  WireMock — exactly like every other payment in this repository's history —
-  until stated otherwise with evidence.
+Lane B's table above described the gate and the docs. The plugin itself
+landed afterwards, and until 2026-09-14 this page still said "No Dart file
+exists in this repository" — true when Lane B wrote it, false from Lane A's
+merge onward. Corrected here by the review.
+
+| Piece | State |
+| --- | --- |
+| The Dart core (`lib/`) | ✅ browser client, pure state machine, result/error types, redaction, the pigeon seam. `flutter test` green; counts and skips on the dated verification page. |
+| The Android host | ✅ exists and **compiles**: `flutter build apk --debug` on `example/`, and the merged manifest carries `VpayCheckoutActivity` with `android:exported="false"`. `onReceivedSslError` is not overridden and there is no `addJavascriptInterface` call. No device, no emulator, no instrumentation test. |
+| The web host | ✅ exists and **compiles**: `flutter build web` on `example/`, and Flutter's generated `web_plugin_registrant.dart` calls `WebVpayCheckoutPlatform.registerWith`. No browser has driven the popup. |
+| iOS and macOS hosts | ⛔ the Swift exists and is **compiled by nobody** — Linux host, no `xcodebuild`, reviewed by reading only. |
+| `VpayCheckoutMode.externalBrowser` (D8) | ⛔ designed, not built. Until 2026-09-14 the parameter was accepted and silently ignored — the caller got the in-app WebView. It now throws `UnimplementedError`. |
+| The parity table | ✅ `docs/sdks/parity.md`'s third table, 550 proving tests across the file, every Flutter ✅ cell naming a Dart test that actually ran. |
+
+### What the review found and fixed
+
+Each was measured by mutation; the before/after exit codes are on the dated
+page below.
+
+1. **`externalBrowser` was silently ignored** — the public API accepted a
+   mode it did not have and handed back the in-app WebView.
+2. **The pigeon-generated `toString` rendered the session secret.**
+   `ShowCheckoutRequest.url`'s fragment *is* the session `client_secret`, and
+   the generated Dart, Kotlin and Swift all interpolated it. The design doc
+   predicted this by name ("generated code is how this regresses") and the
+   D6 parity row was ✅ with no test over that file.
+3. **`no_logging_test.dart` excluded member calls**, so
+   `developer.log(secret)` in `lib/` passed it.
+4. **The gate's Dart reader collected tests that never run** — a skipped
+   group's tests, commented-out declarations, and titles quoted in strings.
+5. **The window's one event could be dropped**, hanging `start()` forever,
+   because the broadcast stream was subscribed only after `show()` returned.
+6. **A malformed 200 escaped as a bare `TypeError`** out of a poll, against
+   this package's own stated contract.
+7. **`allowInsecureUrl` was hard-coded `false`** and never reached the host.
+
+## What is still not real
+
+- **No `just ci` gate** (D-M3). `install-flutter`/`analyze-flutter`/
+  `test-flutter` exist; none is in `just ci` or `just verify`, and
+  `docs/status.md`'s gate table does not claim otherwise. Every count this
+  repository quotes for this package is a human running it by hand.
+- **No iOS or macOS compile.** Not "not yet run" — there is no toolchain on
+  this host and there cannot be.
+- **No device, no emulator, no browser.** Android is proven by compiling and
+  web by compiling; neither has been opened.
+- **No real rail, and no running vpay.** Every server in this package's suite
+  is `MockClient`. Nothing here has been driven against `compose.demo.yml`.
+- **No App Store or Play review.** ADR-0021 and D9 read the published rules;
+  a reviewer's verdict is a different thing this repository will not have.
+- **The Android 21 / iOS 12 floor is a claim nobody will test.**
+- **No desktop Linux or Windows.**
 
 ## Verification
 
 - [verification/2026-09-13-flutter-lane-b-gate.md](verification/2026-09-13-flutter-lane-b-gate.md)
-  — this lane's `cargo test -p xtask`, `cargo clippy --all-targets`,
+  — Lane B's `cargo test -p xtask`, `cargo clippy --all-targets`,
   `just verify-links` and `just verify-sdk-parity` runs, and the literal
   before/after of the decisive skip mutation.
+- [verification/2026-09-14-flutter-review.md](verification/2026-09-14-flutter-review.md)
+  — the review's gate output on the merged head, and every mutation it
+  measured, with the exit code read from a file in each case.
