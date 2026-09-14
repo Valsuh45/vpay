@@ -218,9 +218,12 @@ final class VpayCheckout {
         );
       }
 
-      return event.outcome == CheckoutWindowOutcome.stopUrlReached
+      // Awaited inside the `try` on purpose: the `finally` below cancels
+      // the subscription, and cancelling it while the poll is still running
+      // would be a live window with nothing listening to it.
+      return await (event.outcome == CheckoutWindowOutcome.stopUrlReached
           ? _controller.resolveAfterStopUrlReached(ready)
-          : _controller.resolveAfterDismissal(ready);
+          : _controller.resolveAfterDismissal(ready));
     } finally {
       await subscription.cancel();
     }

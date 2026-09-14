@@ -67,9 +67,18 @@ class _FakeClock extends VpayClock {
 class _FakePlatform extends VpayCheckoutPlatform {
   _FakePlatform(this.outcome);
 
-  final CheckoutWindowOutcome outcome;
+  final CheckoutWindowOutcome? outcome;
   bool shown = false;
+  bool? lastAllowInsecureUrl;
 
+  /// A **broadcast** controller, exactly as both real platform
+  /// implementations use — so a test can reproduce the hazard those have:
+  /// an event added while nobody is listening is dropped, not buffered.
+  final StreamController<CheckoutWindowEvent> _events =
+      StreamController<CheckoutWindowEvent>.broadcast();
+
+  /// What a real host does: the outcome is reported *after* `show`'s future
+  /// resolves, not before.
   @override
   Future<void> show({
     required String url,
@@ -77,14 +86,50 @@ class _FakePlatform extends VpayCheckoutPlatform {
     required bool allowInsecureUrl,
   }) async {
     shown = true;
+    lastAllowInsecureUrl = allowInsecureUrl;
+    final CheckoutWindowOutcome? outcome = this.outcome;
+    if (outcome == null) {
+      // A host that opened a window and then never reported anything.
+      unawaited(Future<void>.microtask(_events.close));
+      return;
+    }
+    unawaited(
+      Future<void>.microtask(
+        () => _events.add(CheckoutWindowEvent(outcome: outcome)),
+      ),
+    );
   }
 
   @override
   Future<void> dismiss() async {}
 
   @override
-  Stream<CheckoutWindowEvent> get windowEvents =>
-      Stream.value(CheckoutWindowEvent(outcome: outcome));
+  Stream<CheckoutWindowEvent> get windowEvents => _events.stream;
+}
+
+/// A host whose `show` fails — a browser that refused the popup, an
+/// `Activity` that would not start.
+class _RefusingPlatform extends VpayCheckoutPlatform {
+  final StreamController<CheckoutWindowEvent> _events =
+      StreamController<CheckoutWindowEvent>.broadcast();
+
+  @override
+  Future<void> show({
+    required String url,
+    required List<StopUrlSpec> stopUrls,
+    required bool allowInsecureUrl,
+  }) async {
+    throw StateError(
+      'the browser refused to open https://checkout.example/c/cs_123'
+      '#$_csSecret',
+    );
+  }
+
+  @override
+  Future<void> dismiss() async {}
+
+  @override
+  Stream<CheckoutWindowEvent> get windowEvents => _events.stream;
 }
 
 void main() {
@@ -181,6 +226,167 @@ void main() {
       );
       expect(fake.shown, isFalse);
     });
+  });
+
+  group('VpayCheckout.start — VpayCheckoutMode.externalBrowser (D8)', () {
+    test('is refused with UnimplementedError, never silently downgraded to the in-app WebView', () async {
+      final fake = _FakePlatform(CheckoutWindowOutcome.stopUrlReached);
+      VpayCheckoutPlatform.instance = fake;
+      var called = false;
+      final checkout = VpayCheckout(
+        baseUrl: 'https://api.example',
+        publishableKey: 'pk_test_1',
+        httpClient: MockClient((request) async {
+          called = true;
+          return _json(_sessionJson());
+        }),
+      );
+
+      await expectLater(
+        checkout.start(_sessionUrl, mode: VpayCheckoutMode.externalBrowser),
+        throwsA(isA<UnimplementedError>()),
+      );
+      // Refused before the pre-flight, so before anything at all happens.
+      expect(called, isFalse);
+      expect(fake.shown, isFalse);
+    });
+
+    test('the default mode is inApp and does open the window', () async {
+      final fake = _FakePlatform(CheckoutWindowOutcome.stopUrlReached);
+      VpayCheckoutPlatform.instance = fake;
+      final checkout = VpayCheckout(
+        baseUrl: 'https://api.example',
+        publishableKey: 'pk_test_1',
+        httpClient: MockClient(
+          (request) async => request.url.path.contains('checkout/sessions')
+              ? _json(_sessionJson())
+              : _json(_paymentIntentJson('succeeded')),
+        ),
+      );
+
+      await checkout.start(_sessionUrl);
+
+      expect(fake.shown, isTrue);
+    });
+  });
+
+  group('VpayCheckout.start — the window event cannot be lost', () {
+    test('an outcome reported after show() resolves is still received, though the stream is broadcast', () async {
+      VpayCheckoutPlatform.instance = _FakePlatform(
+        CheckoutWindowOutcome.stopUrlReached,
+      );
+      final checkout = VpayCheckout(
+        baseUrl: 'https://api.example',
+        publishableKey: 'pk_test_1',
+        httpClient: MockClient(
+          (request) async => request.url.path.contains('checkout/sessions')
+              ? _json(_sessionJson())
+              : _json(_paymentIntentJson('succeeded')),
+        ),
+      );
+
+      final result = await checkout
+          .start(_sessionUrl)
+          .timeout(
+            const Duration(seconds: 5),
+            onTimeout: () => fail(
+              'start() hung: the window event was dropped, not delivered',
+            ),
+          );
+
+      expect(result, isA<VpayCheckoutSucceeded>());
+    });
+
+    test('a window that closes without reporting an outcome resolves unresolved rather than hanging', () async {
+      VpayCheckoutPlatform.instance = _FakePlatform(null);
+      final checkout = VpayCheckout(
+        baseUrl: 'https://api.example',
+        publishableKey: 'pk_test_1',
+        httpClient: MockClient(
+          (request) async => request.url.path.contains('checkout/sessions')
+              ? _json(_sessionJson())
+              : _json(_paymentIntentJson('succeeded')),
+        ),
+      );
+
+      final result = await checkout
+          .start(_sessionUrl)
+          .timeout(
+            const Duration(seconds: 5),
+            onTimeout: () =>
+                fail('start() hung on a host that reported nothing'),
+          );
+
+      expect(result, isA<VpayCheckoutUnresolved>());
+      expect(
+        (result as VpayCheckoutUnresolved).error.code,
+        VpayClientErrorCodes.platformWindowFailed,
+      );
+      expect(result, isNot(isA<VpayCheckoutSucceeded>()));
+    });
+  });
+
+  group('VpayCheckout.start — a platform window that will not open', () {
+    test('resolves unresolved with a fixed message that never quotes the thrown value', () async {
+      VpayCheckoutPlatform.instance = _RefusingPlatform();
+      final checkout = VpayCheckout(
+        baseUrl: 'https://api.example',
+        publishableKey: 'pk_test_1',
+        httpClient: MockClient((request) async => _json(_sessionJson())),
+      );
+
+      final result = await checkout.start(_sessionUrl);
+
+      expect(result, isA<VpayCheckoutUnresolved>());
+      final error = (result as VpayCheckoutUnresolved).error;
+      expect(error.code, VpayClientErrorCodes.platformWindowFailed);
+      // D6: the StateError's own message quoted the session URL, and the
+      // session URL carries the session secret in its fragment.
+      expect(error.message, isNot(contains(_csSecret)));
+      expect(result.toString(), isNot(contains(_csSecret)));
+    });
+  });
+
+  group('VpayCheckout.start — the insecure-base opt-in reaches the host', () {
+    test('allowInsecureUrl mirrors allowInsecureBaseUrl instead of being hard-coded false', () async {
+      final fake = _FakePlatform(CheckoutWindowOutcome.dismissed);
+      VpayCheckoutPlatform.instance = fake;
+      final checkout = VpayCheckout(
+        baseUrl: 'http://localhost:8081',
+        publishableKey: 'pk_test_1',
+        allowInsecureBaseUrl: true,
+        httpClient: MockClient(
+          (request) async => request.url.path.contains('checkout/sessions')
+              ? _json(_sessionJson())
+              : _json(_paymentIntentJson('canceled')),
+        ),
+      );
+
+      await checkout.start(_sessionUrl);
+
+      expect(fake.lastAllowInsecureUrl, isTrue);
+    });
+
+    test(
+      'and stays false for an https base, which is every non-demo deployment',
+      () async {
+        final fake = _FakePlatform(CheckoutWindowOutcome.dismissed);
+        VpayCheckoutPlatform.instance = fake;
+        final checkout = VpayCheckout(
+          baseUrl: 'https://api.example',
+          publishableKey: 'pk_test_1',
+          httpClient: MockClient(
+            (request) async => request.url.path.contains('checkout/sessions')
+                ? _json(_sessionJson())
+                : _json(_paymentIntentJson('canceled')),
+          ),
+        );
+
+        await checkout.start(_sessionUrl);
+
+        expect(fake.lastAllowInsecureUrl, isFalse);
+      },
+    );
   });
 
   group('VpayCheckout.start — a malformed sessionUrl', () {
