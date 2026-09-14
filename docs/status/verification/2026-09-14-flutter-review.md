@@ -22,7 +22,7 @@ measured a background run reporting exit 0 for a run that exited 1.
 | `cargo test -p xtask` | `0` | **249 passed, 0 failed, 0 ignored** |
 | `cargo clippy --all-targets -- -D warnings` | `0` | clean |
 | `cargo run -p xtask -- verify-sdk-parity` | `0` | **551 proving tests, 35 dated gaps, 32 methods across 35 rows** |
-| `cargo run -p xtask -- verify-links` | `0` | 1 601 links in 352 tracked markdown files |
+| `cargo run -p xtask -- verify-links` | `0` | 1 600 links in 352 tracked markdown files |
 | `cargo run -p xtask -- verify-docs` | `0` | advisory report, never fails |
 | `flutter build apk --debug` (`example/`) | `0` | and the **app's** merged manifest carries `dev.vpay.checkout_flutter.VpayCheckoutActivity` with `android:exported="false"` |
 | `flutter build web` (`example/`) | `0` | and Flutter's generated `web_plugin_registrant.dart` calls `WebVpayCheckoutPlatform.registerWith` |
