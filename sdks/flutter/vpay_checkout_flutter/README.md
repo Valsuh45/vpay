@@ -65,7 +65,7 @@ neither is a way around anything.
   This plugin is exactly such a method. Google Play is the same shape from
   the other side: Play Billing is for digital items only.
 
-- **Unlocking something *within* the app** — a subscription, in-app credits,
+- **Unlocking something _within_ the app** — a subscription, in-app credits,
   game levels, premium content, a digital gift card? Apple's **3.1.1**
   requires In-App Purchase for that, and a vpay checkout for any of it is a
   rejection — in-app `WebView` or `externalBrowser` alike.
@@ -93,7 +93,7 @@ for the fuller quotes and sources read.
   `test/no_logging_test.dart`, which reads the package's own source,
   qualified calls (`developer.log(…)`) included.
 - The **pigeon-generated** channel types redact too. `ShowCheckoutRequest`
-  holds the session URL, whose fragment *is* the session's `client_secret`,
+  holds the session URL, whose fragment _is_ the session's `client_secret`,
   and pigeon's generated `toString`/`description` rendered it verbatim in
   Dart, Kotlin and Swift alike until 2026-09-14. All three are hand-edited;
   `test/messages_redaction_test.dart` is what keeps the Dart one edited

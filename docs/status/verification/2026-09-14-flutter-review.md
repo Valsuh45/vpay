@@ -14,18 +14,18 @@ measured a background run reporting exit 0 for a run that exited 1.
 
 ## Gates on the final head
 
-| Gate | Exit code | What it printed |
-| --- | --- | --- |
-| `flutter test` (in the package) | `0` | **80 passed, 0 skipped** |
-| `dart analyze --fatal-infos` | `0` | No issues found |
-| `dart format --set-exit-if-changed lib test example` | `0` | 22 files, 0 changed |
-| `cargo test -p xtask` | `0` | **249 passed, 0 failed, 0 ignored** |
-| `cargo clippy --all-targets -- -D warnings` | `0` | clean |
-| `cargo run -p xtask -- verify-sdk-parity` | `0` | **551 proving tests, 35 dated gaps, 32 methods across 35 rows** |
-| `cargo run -p xtask -- verify-links` | `0` | 1 600 links in 352 tracked markdown files |
-| `cargo run -p xtask -- verify-docs` | `0` | advisory report, never fails |
-| `flutter build apk --debug` (`example/`) | `0` | and the **app's** merged manifest carries `dev.vpay.checkout_flutter.VpayCheckoutActivity` with `android:exported="false"` |
-| `flutter build web` (`example/`) | `0` | and Flutter's generated `web_plugin_registrant.dart` calls `WebVpayCheckoutPlatform.registerWith` |
+| Gate                                                 | Exit code | What it printed                                                                                                            |
+| ---------------------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `flutter test` (in the package)                      | `0`       | **80 passed, 0 skipped**                                                                                                   |
+| `dart analyze --fatal-infos`                         | `0`       | No issues found                                                                                                            |
+| `dart format --set-exit-if-changed lib test example` | `0`       | 22 files, 0 changed                                                                                                        |
+| `cargo test -p xtask`                                | `0`       | **249 passed, 0 failed, 0 ignored**                                                                                        |
+| `cargo clippy --all-targets -- -D warnings`          | `0`       | clean                                                                                                                      |
+| `cargo run -p xtask -- verify-sdk-parity`            | `0`       | **551 proving tests, 35 dated gaps, 32 methods across 35 rows**                                                            |
+| `cargo run -p xtask -- verify-links`                 | `0`       | 1 600 links in 352 tracked markdown files                                                                                  |
+| `cargo run -p xtask -- verify-docs`                  | `0`       | advisory report, never fails                                                                                               |
+| `flutter build apk --debug` (`example/`)             | `0`       | and the **app's** merged manifest carries `dev.vpay.checkout_flutter.VpayCheckoutActivity` with `android:exported="false"` |
+| `flutter build web` (`example/`)                     | `0`       | and Flutter's generated `web_plugin_registrant.dart` calls `WebVpayCheckoutPlatform.registerWith`                          |
 
 `just ci` is the orchestrator's gate and is not run here, by instruction.
 `flutter test` is **not** in `just ci` or `just verify` (D-M3) — it is a
@@ -36,16 +36,16 @@ human running it, and the 80 above is that run.
 A passing suite is also what a suite that asserts nothing looks like. Each
 row is a real edit to the tree, the gate re-run, and the tree restored.
 
-| # | Mutation | Before | After |
-| --- | --- | --- | --- |
-| A | `VpayCheckout.start` ignores `mode` again (the defect as shipped) | `flutter test` rc `0` | rc `1`, failing `is refused with UnimplementedError, never silently downgraded to the in-app WebView` |
-| B | `windowEvents` subscribed after `show()` resolves (the code as shipped) | rc `0` | rc `1`, failing `an outcome reported after show() resolves is still received…` — `start()` hung and the test's own timeout named it |
-| C | `_decode` lets `fromJson` throw again (the code as shipped) | rc `0` | rc `1`, four cases |
-| D | The Dart reader stops skipping comments and skipped groups (the code as shipped) | `cargo test -p xtask` rc `0`, 249 passed | rc `101`, 247 passed / **2 failed**: `a_skipped_group_takes_its_tests_with_it`, `commented_out_and_quoted_declarations_are_not_collected` |
-| E | `messages.g.dart`'s `toString` restored to what pigeon generates | `flutter test` rc `0` | rc `1`, three cases naming the session secret |
-| F | `skip: true` on a newly cited Dart test | `verify-sdk-parity` rc `0` | rc `1`, naming the cell, the column and the test |
-| G | `developer.log(secret)` added to `lib/`, **old** `no_logging_test.dart` | rc **`0` — the leak passed** | with the fixed regex, rc `1` |
-| H | `_resolve` stops checking the polled intent's id against the one asked for (the code as shipped) | `flutter test` rc `0` | rc `1`, failing `a succeeded intent with a different id is unresolved, never succeeded` |
+| #   | Mutation                                                                                         | Before                                   | After                                                                                                                                     |
+| --- | ------------------------------------------------------------------------------------------------ | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| A   | `VpayCheckout.start` ignores `mode` again (the defect as shipped)                                | `flutter test` rc `0`                    | rc `1`, failing `is refused with UnimplementedError, never silently downgraded to the in-app WebView`                                     |
+| B   | `windowEvents` subscribed after `show()` resolves (the code as shipped)                          | rc `0`                                   | rc `1`, failing `an outcome reported after show() resolves is still received…` — `start()` hung and the test's own timeout named it       |
+| C   | `_decode` lets `fromJson` throw again (the code as shipped)                                      | rc `0`                                   | rc `1`, four cases                                                                                                                        |
+| D   | The Dart reader stops skipping comments and skipped groups (the code as shipped)                 | `cargo test -p xtask` rc `0`, 249 passed | rc `101`, 247 passed / **2 failed**: `a_skipped_group_takes_its_tests_with_it`, `commented_out_and_quoted_declarations_are_not_collected` |
+| E   | `messages.g.dart`'s `toString` restored to what pigeon generates                                 | `flutter test` rc `0`                    | rc `1`, three cases naming the session secret                                                                                             |
+| F   | `skip: true` on a newly cited Dart test                                                          | `verify-sdk-parity` rc `0`               | rc `1`, naming the cell, the column and the test                                                                                          |
+| G   | `developer.log(secret)` added to `lib/`, **old** `no_logging_test.dart`                          | rc **`0` — the leak passed**             | with the fixed regex, rc `1`                                                                                                              |
+| H   | `_resolve` stops checking the polled intent's id against the one asked for (the code as shipped) | `flutter test` rc `0`                    | rc `1`, failing `a succeeded intent with a different id is unresolved, never succeeded`                                                   |
 
 Mutation G is the one worth reading twice: the D6 parity row was ✅ on a test
 that a real credential leak walked straight past, because its lookbehind
@@ -55,7 +55,7 @@ excluded `.` and so excluded every member call.
 
 **Credential exposure.** The pigeon-generated `ShowCheckoutRequest.toString`
 (Dart), `toString` (Kotlin) and `description` (Swift) all interpolated
-`url` — whose fragment *is* the checkout session's `client_secret`. The
+`url` — whose fragment _is_ the checkout session's `client_secret`. The
 design doc predicted exactly this ("generated code is how this regresses")
 and the D6 row was ✅ with no test over that file. All three redact now; the
 Dart one is pinned by `test/messages_redaction_test.dart`, the Kotlin one is

@@ -106,7 +106,7 @@ decides nothing.
    system-consent alert reading the wrong sentence for a payment.
 9. **D9 — store-policy bounds on adoption are a documentation obligation,
    not a code change.** Apple's App Store Review Guidelines 3.1.3(e) requires
-   physical-goods/real-world-service merchants to use a method *other than*
+   physical-goods/real-world-service merchants to use a method _other than_
    In-App Purchase — which is what this plugin is — while 3.1.1 still flags a
    digital-goods merchant regardless of which window mode is used, and
    3.1.1(a) means the external-browser mode is not a neutral escape hatch for

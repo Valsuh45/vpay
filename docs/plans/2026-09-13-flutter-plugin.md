@@ -96,8 +96,8 @@ machine in a pure reducer with React as wiring.
 **The plugin resolves the result by polling the payment intent. A navigation to
 `success_url` closes the window; it does not decide anything.**
 
-Interception tells you the *page forwarded*. Only the intent tells you *money
-moved*. The two normally agree — `forwardKindFor` picks `success_url` on a paid
+Interception tells you the _page forwarded_. Only the intent tells you _money
+moved_. The two normally agree — `forwardKindFor` picks `success_url` on a paid
 session — but a plugin that reads success off a URL is the first item on this
 repository's own list of ways to damage it: something that returns a plausible
 hard-coded success. The merchant also controls those URLs, and a merchant whose
@@ -295,11 +295,11 @@ in v1 rather than a second integration contract.
 
 Three tiers, and a merchant may stop at the first:
 
-| Tier | What the merchant does | What the payer sees |
-| --- | --- | --- |
-| **0 — always available** | nothing | finishes on the merchant's page, taps Done/Back; the plugin polls on resume |
-| **1 — Android App Links** | serve `assetlinks.json` on the `success_url` host | Android hands the return straight to the app; the tab closes itself |
-| **1 — iOS 17.4+ Associated Domains** | `apple-app-site-association` on the same host | the same, through `ASWebAuthenticationSession`'s https callback |
+| Tier                                 | What the merchant does                            | What the payer sees                                                         |
+| ------------------------------------ | ------------------------------------------------- | --------------------------------------------------------------------------- |
+| **0 — always available**             | nothing                                           | finishes on the merchant's page, taps Done/Back; the plugin polls on resume |
+| **1 — Android App Links**            | serve `assetlinks.json` on the `success_url` host | Android hands the return straight to the app; the tab closes itself         |
+| **1 — iOS 17.4+ Associated Domains** | `apple-app-site-association` on the same host     | the same, through `ASWebAuthenticationSession`'s https callback             |
 
 **No custom URL scheme, and no bounce page — recommended against.** A bounce
 page at `https://shop/return` redirecting to `myapp://vpay/return` would make
@@ -344,14 +344,14 @@ Apple 3.1.3(e), verbatim:
 > in-app purchase to collect those payments, such as Apple Pay or traditional
 > credit card entry.
 
-*Must use methods other than IAP.* A shop selling physical goods, or a service
+_Must use methods other than IAP._ A shop selling physical goods, or a service
 consumed in the real world, paid with MTN MoMo or Orange Money, is required to
 do exactly what this plugin does — and would be rejected for using IAP. Google
 Play is the same shape from the other direction: Play Billing is only for
 digital items, and physical goods and physical services are not supported by it.
 
 **Where a merchant is flagged, and no architecture here saves them.** Apple
-3.1.1 requires IAP to unlock features or functionality *within* the app —
+3.1.1 requires IAP to unlock features or functionality _within_ the app —
 subscriptions, in-app credits, game levels, premium content, full-version
 unlocks, and digital gift cards or vouchers redeemable for digital goods. A
 vpay checkout for any of those is a rejection.
@@ -371,8 +371,8 @@ and someone will use it as one.
 changes. What is owed:
 
 1. A section in `vpay_checkout_flutter`'s README — a short decision tree
-   ("what are you selling?") landing on *use this plugin* or *use IAP / Play
-   Billing*, with 3.1.3(e) and 3.1.1 quoted rather than paraphrased.
+   ("what are you selling?") landing on _use this plugin_ or _use IAP / Play
+   Billing_, with 3.1.3(e) and 3.1.1 quoted rather than paraphrased.
 2. The same in `docs/flows/mobile-checkout.md`, as a constraint on adoption.
 3. The pub.dev description must not suggest unlocking in-app content.
 
@@ -403,7 +403,7 @@ whole capability row was measured to pass).
    package actually uses — or the new table is unchecked. **This is in scope for
    the implementation, not a follow-up.**
 3. **`just` recipes**: `install-flutter`, `analyze-flutter` (`dart analyze
-   --fatal-infos`), `test-flutter`.
+--fatal-infos`), `test-flutter`.
 4. **They do not join `just ci` yet** (D-M3, decided 2026-09-13). A Flutter SDK
    in the CI image and in the `vpay-ci` VM is a prerequisite, and the plugin
    should not wait on it. **The honest form of "later" is a dated ⛔ row in
@@ -448,19 +448,19 @@ Written now, at design time, so it cannot be forgotten at summary time:
 
 ## Decisions taken, and by whom
 
-| # | Decision | Taken |
-| --- | --- | --- |
-| D1 | The outcome is polled from `/v1/browser`, never read off a URL | design |
-| D2 | One pre-flight session read; stop URLs derived, not configured | design |
-| D3 | No JavaScript bridge; no native peer added to the checkout page | design |
-| D4 | Dismissal polls before it reports; `pending` is a first-class result | design |
-| D-M1 | Published as `vpay_checkout_flutter` | maintainer, 2026-09-13 |
-| D-M2 | An external-browser mode ships in v1 (D8) | maintainer, 2026-09-13 |
-| D-M3 | Recipes now, `just ci` gate later, with a dated ⛔ | maintainer, 2026-09-13 |
-| D-M4 | Android `minSdk` 21, iOS 12.0 | maintainer, 2026-09-13 |
-| D-M5 | Persistent WebView storage, so page memory works | maintainer, 2026-09-13 |
-| D-M6 | The checkout page gets **no** native peer | design (D3), open to reversal |
-| D9 | Store-policy bounds on adoption; a README obligation, not a code change | design, from the maintainer's question 2026-09-13 |
+| #    | Decision                                                                | Taken                                             |
+| ---- | ----------------------------------------------------------------------- | ------------------------------------------------- |
+| D1   | The outcome is polled from `/v1/browser`, never read off a URL          | design                                            |
+| D2   | One pre-flight session read; stop URLs derived, not configured          | design                                            |
+| D3   | No JavaScript bridge; no native peer added to the checkout page         | design                                            |
+| D4   | Dismissal polls before it reports; `pending` is a first-class result    | design                                            |
+| D-M1 | Published as `vpay_checkout_flutter`                                    | maintainer, 2026-09-13                            |
+| D-M2 | An external-browser mode ships in v1 (D8)                               | maintainer, 2026-09-13                            |
+| D-M3 | Recipes now, `just ci` gate later, with a dated ⛔                      | maintainer, 2026-09-13                            |
+| D-M4 | Android `minSdk` 21, iOS 12.0                                           | maintainer, 2026-09-13                            |
+| D-M5 | Persistent WebView storage, so page memory works                        | maintainer, 2026-09-13                            |
+| D-M6 | The checkout page gets **no** native peer                               | design (D3), open to reversal                     |
+| D9   | Store-policy bounds on adoption; a README obligation, not a code change | design, from the maintainer's question 2026-09-13 |
 
 One decision remains genuinely open and is **not** taken here: whether
 `docs/flows/mobile-checkout.md` supersedes or sits beside

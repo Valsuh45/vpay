@@ -68,13 +68,13 @@ Copy these into each agent's prompt verbatim; they are not preamble.
 
 Stated up front because it decides what any lane may claim:
 
-| | Verifiable here | How |
-| --- | --- | --- |
-| Dart / Flutter core | **yes, fully** | Flutter 3.47.2 is installed |
-| `.xtask` gate change | **yes, fully** | cargo, pinned 1.98.0 |
-| Flutter web build | yes | `flutter build web` |
-| Android host | partly | Android SDK at `~/Android/Sdk`, but `ANDROID_HOME` is unset and `adb`/`gradle` are absent. Treat a Gradle compile as best-effort |
-| **iOS / macOS host** | **never** | this is a Linux host; there is no `xcodebuild` and there cannot be. Swift here is **reviewed by reading only** |
+|                      | Verifiable here | How                                                                                                                              |
+| -------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Dart / Flutter core  | **yes, fully**  | Flutter 3.47.2 is installed                                                                                                      |
+| `.xtask` gate change | **yes, fully**  | cargo, pinned 1.98.0                                                                                                             |
+| Flutter web build    | yes             | `flutter build web`                                                                                                              |
+| Android host         | partly          | Android SDK at `~/Android/Sdk`, but `ANDROID_HOME` is unset and `adb`/`gradle` are absent. Treat a Gradle compile as best-effort |
+| **iOS / macOS host** | **never**       | this is a Linux host; there is no `xcodebuild` and there cannot be. Swift here is **reviewed by reading only**                   |
 
 No lane may describe iOS or macOS code as verified. Lane C's report must say
 "compiled by nobody" in those words.

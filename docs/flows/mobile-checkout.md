@@ -156,7 +156,7 @@ are not supported by it.
 
 **Where a merchant is flagged, and no architecture here saves them.** Apple's
 **3.1.1** requires In-App Purchase to unlock features or functionality
-*within* the app — subscriptions, in-app credits, game levels, premium
+_within_ the app — subscriptions, in-app credits, game levels, premium
 content, full-version unlocks, digital gift cards or vouchers redeemable for
 digital goods. A vpay checkout for any of those is a rejection, in-app WebView
 or external browser alike.
@@ -212,7 +212,7 @@ What exists and is verified on this host:
 - **The Android host** — `VpayCheckoutActivity` (`android:exported="false"`,
   `onReceivedSslError` not overridden, no `addJavascriptInterface`) and
   `VpayCheckoutFlutterPlugin`. Proven by compiling: `flutter build apk
-  --debug` on `example/`, and the merged manifest carries the Activity with
+--debug` on `example/`, and the merged manifest carries the Activity with
   `exported="false"`. **No device, no emulator, no instrumentation test.**
 - **The web host** — `WebVpayCheckoutPlatform`, `window.open` plus the
   `vpay:complete` message and a `closed` poll. Proven by compiling:

@@ -17,12 +17,12 @@ command wrote itself (`; echo $? > file`), never from a harness banner.
 
 ## The required gates
 
-| # | Command | Exit | Notes |
-| --- | --- | --- | --- |
-| 1 | `cargo test -p xtask` | **0** | **245 passed, 0 failed, 0 ignored, 0 measured, 0 filtered out.** Ten of those are the new Dart tests (`sdk_parity_tests::dart_*` and `sdk_parity_tests::a_dart_column_reads_test_titles_and_a_skipped_one_cannot_satisfy_a_tick`, `sdk_parity_tests::dart_tool_and_build_directories_are_skipped_like_node_modules`); the rest are the pre-existing suite, unchanged and still green. |
-| 2 | `cargo clippy -p xtask --all-targets -- -D warnings` | **0** | One finding during development, fixed before this run: `chars[start]` in `skip_dart_string_literal` tripped `clippy::indexing_slicing` (a workspace `warn`, promoted to deny by `-D warnings`); replaced with `chars.get(start)` and an early return. `--all-targets` was used throughout, per the standing rule that `verify` never compiling tests has cost this project two CI rounds before. |
-| 3 | `cargo run -p xtask -- verify-links` | **0**, after one real catch | First run (before this file and its cross-reference existed): `xtask: 1 broken link(s) — docs/status/README.md:27: mobile-flutter-plugin.md -> …` (the new status page was untracked; `verify-links` reads `git ls-files`) and, once staged, a second miss naming this very file before it existed. Green once both were written and staged. |
-| 4 | `cargo run -p xtask -- verify-sdk-parity` (the real, unmodified `docs/sdks/parity.md`) | **0** | `verify-sdk-parity: ok — 469 proving test(s) named in docs/sdks/parity.md all exist, 31 dated gap(s), 32 SDK method(s) enumerated across 35 row(s)`. Unchanged behaviour on the existing two tables (Rust/Node) — this lane added no third column to the real document, and neither `sdks/rust` nor `sdks/nodejs` contains a `.dart_tool`/`build` directory for the new skip list to matter to. |
+| #   | Command                                                                                | Exit                        | Notes                                                                                                                                                                                                                                                                                                                                                                                            |
+| --- | -------------------------------------------------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | `cargo test -p xtask`                                                                  | **0**                       | **245 passed, 0 failed, 0 ignored, 0 measured, 0 filtered out.** Ten of those are the new Dart tests (`sdk_parity_tests::dart_*` and `sdk_parity_tests::a_dart_column_reads_test_titles_and_a_skipped_one_cannot_satisfy_a_tick`, `sdk_parity_tests::dart_tool_and_build_directories_are_skipped_like_node_modules`); the rest are the pre-existing suite, unchanged and still green.            |
+| 2   | `cargo clippy -p xtask --all-targets -- -D warnings`                                   | **0**                       | One finding during development, fixed before this run: `chars[start]` in `skip_dart_string_literal` tripped `clippy::indexing_slicing` (a workspace `warn`, promoted to deny by `-D warnings`); replaced with `chars.get(start)` and an early return. `--all-targets` was used throughout, per the standing rule that `verify` never compiling tests has cost this project two CI rounds before. |
+| 3   | `cargo run -p xtask -- verify-links`                                                   | **0**, after one real catch | First run (before this file and its cross-reference existed): `xtask: 1 broken link(s) — docs/status/README.md:27: mobile-flutter-plugin.md -> …` (the new status page was untracked; `verify-links` reads `git ls-files`) and, once staged, a second miss naming this very file before it existed. Green once both were written and staged.                                                     |
+| 4   | `cargo run -p xtask -- verify-sdk-parity` (the real, unmodified `docs/sdks/parity.md`) | **0**                       | `verify-sdk-parity: ok — 469 proving test(s) named in docs/sdks/parity.md all exist, 31 dated gap(s), 32 SDK method(s) enumerated across 35 row(s)`. Unchanged behaviour on the existing two tables (Rust/Node) — this lane added no third column to the real document, and neither `sdks/rust` nor `sdks/nodejs` contains a `.dart_tool`/`build` directory for the new skip list to matter to.  |
 
 ## The decisive mutation (B1)
 
@@ -41,10 +41,10 @@ the same technique every other decisive mutation already proven in this file
 uses (e.g. `an_ignored_or_skipped_test_cannot_satisfy_a_tick`,
 `a_tick_naming_a_test_that_does_not_exist_fails_and_names_the_cell`).
 
-| Step | Fixture | `verify_sdk_parity(dir.path())` | Test |
-| --- | --- | --- | --- |
-| Before | `test('starts idle', () {});` cited by a ✅ cell | `Ok(())` | `dart_decisive_mutation_a_live_test_passes_verify_sdk_parity` |
-| After | the same test, `skip: true` added, nothing else changed | `Err(message)` | `dart_decisive_mutation_skip_true_fails_verify_sdk_parity_naming_the_cell` |
+| Step   | Fixture                                                 | `verify_sdk_parity(dir.path())` | Test                                                                       |
+| ------ | ------------------------------------------------------- | ------------------------------- | -------------------------------------------------------------------------- |
+| Before | `test('starts idle', () {});` cited by a ✅ cell        | `Ok(())`                        | `dart_decisive_mutation_a_live_test_passes_verify_sdk_parity`              |
+| After  | the same test, `skip: true` added, nothing else changed | `Err(message)`                  | `dart_decisive_mutation_skip_true_fails_verify_sdk_parity_naming_the_cell` |
 
 `cargo test -p xtask sdk_parity_tests::dart_decisive_mutation_a_live_test_passes_verify_sdk_parity -- --exact`
 exits **0** (the `Ok(())` assertion holds). `cargo test -p xtask
