@@ -6,12 +6,21 @@ intent actually settles. Design:
 [`docs/plans/2026-09-13-flutter-plugin.md`](../../../docs/plans/2026-09-13-flutter-plugin.md).
 Decisions: [ADR-0021](../../../docs/adr/0021-flutter-checkout-plugin.md).
 
-**Status (2026-09-13): pure-Dart core only.** No `android/`, `ios/`,
-`macos/` implementation exists in this repository yet — every call to
-[`VpayCheckoutPlatform.instance`] throws `UnimplementedError` until a
-platform host registers itself (Lane C of
-[the implementation brief](../../../docs/plans/2026-09-13-flutter-plugin-brief.md)).
-See [`docs/sdks/parity.md`](../../../docs/sdks/parity.md)'s table for this
+**Status (2026-09-13).** Android and web hosts exist and are wired up
+(`android/`, and the web implementation in
+`lib/src/platform/web_checkout_platform.dart`) — Android compiles for real
+(`flutter build apk --debug` on `example/`) and web compiles for real
+(`flutter build web` on `example/`). **iOS and macOS Swift also exist
+(`ios/`, `macos/`) but are compiled by nobody** — this repository has no
+macOS/iOS toolchain (Linux host), so that Swift is reviewed by reading only,
+never built, never run. **`VpayCheckoutMode.externalBrowser` is not wired to
+any platform host on any platform**: `pigeons/checkout.dart`'s
+`ShowCheckoutRequest` (frozen, owned by the Dart-core lane) carries no
+`mode` field, so there is nothing a platform host could act on to choose
+Custom Tabs or `SFSafariViewController` over the in-app WebView — every
+`VpayCheckout.start(mode: VpayCheckoutMode.externalBrowser)` call opens the
+in-app WebView exactly as `VpayCheckoutMode.inApp` does today. See
+[`docs/sdks/parity.md`](../../../docs/sdks/parity.md)'s table for this
 package for what is and is not proven today.
 
 ## What this is not
@@ -90,3 +99,26 @@ just test-flutter      # flutter test (unit tests only, no device)
 
 None of the three is in `just ci` yet (D-M3) — see `docs/sdks/parity.md`'s
 dated ⛔ row.
+
+## Platform hosts (design doc D5)
+
+- **Android** — `VpayCheckoutActivity` (plain `Activity` + `WebView`,
+  `android:exported="false"`) and `VpayCheckoutFlutterPlugin`. Compiled for
+  real: `flutter build apk --debug` in `example/`.
+- **Web** — `WebVpayCheckoutPlatform` opens the session's `url` in a popup
+  (`window.open`), the same surface `sdks/stripe-js/src/popup.ts` treats as
+  a first-class peer. There is no navigation to watch across a popup's
+  cross-origin boundary, so the only two signals are a
+  `{type: 'vpay:complete', …}` `postMessage` from the popup's own page (the
+  merchant's own return page has to send it — see the module doc comment)
+  and the popup's `closed` property, polled. Compiled for real:
+  `flutter build web` in `example/`.
+- **iOS / macOS** — `VpayCheckoutViewController` /
+  `VpayCheckoutFlutterPlugin` exist under `ios/` and `macos/` and read the
+  same way the Android host does, but **are compiled by nobody**: this
+  repository has no macOS/iOS toolchain. Reviewed by reading only.
+- **`VpayCheckoutMode.externalBrowser` has no platform wiring on any
+  platform** — see the Status paragraph above. Custom Tabs
+  (`androidx.browser`) and `SFSafariViewController` are not dependencies of
+  any of the hosts above, on purpose: a dependency with no code path that
+  could ever run is its own kind of false claim.
