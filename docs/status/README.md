@@ -24,6 +24,7 @@ rules that used to separate two sections which now live in two files.
 | what the sqlx 0.8 → 0.9 bump cost, and which OP stores pinned 0.8                                     | [sqlx-and-op-stores.md](sqlx-and-op-stores.md)                 |
 | how far CrateStack adoption has got, and what each step measured                                      | [cratestack.md](cratestack.md) and [cratestack/](cratestack/)  |
 | what each merchant SDK ships, and which gaps are dated                                                | [merchant-sdks.md](merchant-sdks.md)                           |
+| what the Flutter checkout plugin's gate/recipes/pin actually do, and what is still unbuilt            | [mobile-flutter-plugin.md](mobile-flutter-plugin.md)           |
 | what would have to be true before any of this is an MVP                                               | [mvp.md](mvp.md)                                               |
 | how the "vpay is a scaffold" banner was narrowed, step by step                                        | [overall-history.md](overall-history.md)                       |
 | what `just ci` actually printed on a given day                                                        | [verification/](verification/)                                 |
@@ -34,6 +35,12 @@ Named by the newest date in each block, not by a single date: entries were
 appended to `docs/status.md` in the order branches landed, which is not always
 the order they were measured.
 
+- [verification/2026-09-13-flutter-lane-b-gate.md](verification/2026-09-13-flutter-lane-b-gate.md) —
+  Lane B of the Flutter plugin brief: `verify-sdk-parity` learns Dart
+  (245 xtask tests, 0 ignored; clippy `--all-targets -D warnings` clean; the
+  real `docs/sdks/parity.md` unaffected, still 469 proving tests), and the
+  decisive `skip: true` mutation run against `verify_sdk_parity` itself on a
+  synthetic fixture, with the literal error text it returned
 - [verification/2026-09-13-dash-cratestack-transport.md](verification/2026-09-13-dash-cratestack-transport.md) —
   mounting CrateStack's read-only procedure transport (nav plan Lane C):
   `POST /dash/v1/$procs/searchPaymentIntents` answers over a real Postgres, an
