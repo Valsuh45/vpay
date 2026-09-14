@@ -225,20 +225,18 @@ describe("the More drawer", () => {
     // { name: /sign out/i })` unambiguous, which would otherwise throw
     // "found multiple elements" the moment a case opened the drawer.
     renderShell();
-    // TWO when closed, and that is the design rather than a regression:
-    // the account block is mounted in `SideNav`'s `accountSlot` (which that
-    // component renders ONLY at >=1280px) and again in `<main>` behind
-    // `xl:hidden`. The two are mutually exclusive **by CSS**, so a browser
-    // shows exactly one at every width — but jsdom applies no stylesheet, so
-    // both are in the tree here. Asserting `1` would be asserting jsdom's
-    // blindness, so this asserts the mechanism instead: one of the two is
-    // inside an `xl:hidden` container, which is what makes them exclusive.
+    // ONE when closed. The account block is mounted in `<main>` behind
+    // `xl:hidden`, and `SideNav`'s `accountSlot` is given content only when
+    // the sidebar is actually shown (>=1280px) — `app-shell.tsx` says why
+    // at length. jsdom's `matchMedia` reports no match, so the rail copy is
+    // not in this tree at all.
+    //
+    // That gating exists because the slot is rendered at EVERY width and
+    // merely hidden by CSS, so a second copy would be FIRST in the DOM and
+    // invisible — which is exactly how `dashboard.cy.ts` came to click a
+    // sign-out it could not see.
     const closed = screen.getAllByRole("button", { name: /sign out/i });
-    expect(closed, "closed: the rail copy and the <main> copy").toHaveLength(2);
-    expect(
-      closed.filter((b) => b.closest(".xl\\:hidden") !== null),
-      "exactly one of the two is hidden from xl up",
-    ).toHaveLength(1);
+    expect(closed, "closed: only the <main> copy").toHaveLength(1);
 
     await openDrawer();
     expect(

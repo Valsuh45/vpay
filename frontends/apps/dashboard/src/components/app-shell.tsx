@@ -6,6 +6,7 @@ import { MoreMenu } from "./more-menu";
 import { SignedInBar } from "./signed-in-bar";
 import { CreditCard } from "lucide-react";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 
 import { NAV_ENTRIES } from "../dash/resources";
 
@@ -49,6 +50,34 @@ export function AppShell({
   children,
 }: AppShellProps) {
   const pathname = usePathname();
+  /*
+    `SideNav` renders `accountSlot` at EVERY width and hides it with CSS
+    below `xl` — its wrapper is `px-3 lg:hidden xl:block hidden`. It does not
+    omit the node, which is what this component assumed for one revision and
+    what CI caught:
+
+        This element <strong> is not visible because its parent
+        <div.px-3.lg:hidden.xl:block.hidden> has CSS property: display: none
+
+    A hidden copy of the account block is not harmless, because it is FIRST
+    in the DOM. `cy.contains(staffEmail())` and `cy.click()` take the first
+    match, so at `dashboard.cy.ts`'s 1000px viewport they found the invisible
+    rail copy rather than the visible one in `<main>` — two real failures,
+    including a sign-out that could not be clicked.
+
+    So the slot is given content only when the sidebar is actually shown.
+    This is a JS media query and not a class because the fix has to remove
+    the node, not hide it; `false` on the server and on the first client
+    render means the markup Next sends never contains the duplicate either.
+  */
+  const [sidebarShown, setSidebarShown] = useState(false);
+  useEffect(() => {
+    const query = window.matchMedia("(min-width: 1280px)");
+    const sync = () => setSidebarShown(query.matches);
+    sync();
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  }, []);
   const first = NAV_ENTRIES[0];
 
   return (
@@ -175,14 +204,16 @@ export function AppShell({
           `SideNav`'s pill shows four destinations and its own overflow.
         */
           accountSlot={
-            <div className="flex flex-col gap-3">
-              <SignedInBar
-                email={email}
-                merchantId={merchantId}
-                signOut={signOut}
-              />
-              <ThemeSwitcher />
-            </div>
+            sidebarShown ? (
+              <div className="flex flex-col gap-3">
+                <SignedInBar
+                  email={email}
+                  merchantId={merchantId}
+                  signOut={signOut}
+                />
+                <ThemeSwitcher />
+              </div>
+            ) : null
           }
         />
       </div>
