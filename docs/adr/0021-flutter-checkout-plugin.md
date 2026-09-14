@@ -172,6 +172,21 @@ device, or a store review process — every payment it completes today would
 settle against WireMock, exactly like every other payment in this
 repository's history.
 
+**Status of that paragraph, 2026-09-14.** It was written before any lane
+started and two of its four clauses have since stopped being true, so they
+are corrected here rather than left to read as current. The Dart source
+exists (`sdks/flutter/vpay_checkout_flutter/lib/`), and so do the Android and
+web hosts — both compiled, neither ever opened on a device or in a browser.
+The parity table and its dated ⛔ rows exist. What has **not** changed: iOS
+and macOS are **compiled by nobody** (no `xcodebuild` on this repository's
+host), `VpayCheckoutMode.externalBrowser` (D8) is designed and unbuilt — the
+API throws `UnimplementedError` for it — none of the plugin's tests are in
+`just ci` (D-M3), and nothing here has been driven against a real MTN or
+Orange endpoint, a real device, or a store review. The decisions above are
+unchanged; only this paragraph's account of what exists is.
+[`../status/verification/2026-09-14-flutter-review.md`](../status/verification/2026-09-14-flutter-review.md)
+carries the evidence.
+
 **Reversible, at the cost this repository always pays for a reversal: a new
 ADR, not an edit to this one.** The clearest candidate is D3 (no native peer
 on the checkout page) — the design doc calls it "open to reversal" if a
