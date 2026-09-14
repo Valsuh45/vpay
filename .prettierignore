@@ -56,3 +56,19 @@ pnpm-lock.yaml
 # `backends/migrations/README.md` is deliberately NOT ignored: it is prose,
 # nothing hashes it, and it is already prettier-clean.
 backends/migrations/*.sql
+
+# Flutter/Dart tooling output (`sdks/flutter/*/build/`, `.dart_tool/`).
+# Unlike every other generated tree named at the top of this file, these are
+# NOT covered by the root `.gitignore`: git ignores them through the package's
+# own nested file (`sdks/flutter/vpay_checkout_flutter/.gitignore`), and
+# prettier reads only the ROOT `.gitignore`. So the "already out of scope"
+# sentence above does not reach them, and an entry here is the guarantee
+# rather than an observation.
+#
+# Measured 2026-09-14: after a `flutter test` and a `flutter build apk`,
+# `just fmt-check-web` reported style issues in 150 files, of which 139 were
+# generated JSON/manifests under these two trees and 12 were real source.
+# CI never sees them — it runs no Flutter recipe (D-M3) — so this is a local
+# papercut, not a CI failure, and it is real for anyone who builds the plugin.
+sdks/flutter/**/build/
+sdks/flutter/**/.dart_tool/

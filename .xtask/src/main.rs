@@ -3138,7 +3138,20 @@ const PARITY_TABLE_MARKER: &str = "Capability";
 /// Directories that hold no first-party source and would only slow the walk
 /// down — or, worse, contribute a test name from a vendored dependency and
 /// let a ✅ cell be satisfied by somebody else's test.
-const PARITY_SKIPPED_DIRS: [&str; 5] = ["node_modules", "dist", "target", ".git", "coverage"];
+///
+/// `.dart_tool` and `build` joined the list for the Flutter plugin
+/// (2026-09-13): both hold generated or vendored Dart, and left unskipped
+/// either would let a package's own tooling — or a dependency pulled in by
+/// `pub get` — satisfy a ✅ cell nobody wrote.
+const PARITY_SKIPPED_DIRS: [&str; 7] = [
+    "node_modules",
+    "dist",
+    "target",
+    ".git",
+    "coverage",
+    ".dart_tool",
+    "build",
+];
 
 /// Extensions [`test_names_in`] knows how to read.
 const PARITY_TS_EXTENSIONS: [&str; 5] = ["ts", "tsx", "mts", "mjs", "js"];
@@ -3174,9 +3187,11 @@ struct ParityRow {
 ///   are for.
 /// * a `✅` cell names the test(s) that prove the capability **in that SDK**,
 ///   and every one of them must exist there — a Rust `#[test]`/`#[tokio::test]`
-///   function or a TypeScript `it("…")`/`test("…")` with that exact name.
-///   Renaming a test without updating the matrix is the ordinary way a
-///   proof-of-parity claim rots, and it fails here instead.
+///   function, a TypeScript `it("…")`/`test("…")`, or (2026-09-13) a Dart
+///   `test('…')`/`testWidgets('…')`/`group('…')` with that exact name, and
+///   not carrying `skip: true` or a string `skip:` reason. Renaming a test
+///   without updating the matrix is the ordinary way a proof-of-parity claim
+///   rots, and it fails here instead.
 /// * a `⛔` cell must carry a date. ADR-0015 allows a capability to be
 ///   missing from one SDK; it does not allow the absence to be undated,
 ///   because an undated gap is indistinguishable from one nobody has looked
@@ -3469,9 +3484,10 @@ fn check_parity_cell(
             } else {
                 problems.push(format!(
                     "{at}: names the test `{name}`, which does not exist under `{column}` \
-                     (looked for a Rust `#[test]`/`#[tokio::test]` fn or a TypeScript \
-                     `it(\"…\")`/`test(\"…\")` with exactly that name, ignoring anything \
-                     `#[ignore]`d)"
+                     (looked for a Rust `#[test]`/`#[tokio::test]` fn, a TypeScript \
+                     `it(\"…\")`/`test(\"…\")`, or a Dart `test('…')`/`testWidgets('…')`/ \
+                     `group('…')` with exactly that name, ignoring anything `#[ignore]`d or \
+                     `skip:`ped)"
                 ));
             }
         }
@@ -4321,6 +4337,7 @@ fn test_names_in(dir: &Path) -> BTreeSet<String> {
         };
         match path.extension().and_then(|e| e.to_str()) {
             Some("rs") => rust_test_names(&text, &mut out),
+            Some("dart") => dart_test_names(&text, &mut out),
             Some(extension) if PARITY_TS_EXTENSIONS.contains(&extension) => {
                 ts_test_names(&text, &mut out);
             }
@@ -4515,6 +4532,288 @@ fn ts_test_keyword_at(chars: &[char], i: usize) -> Option<usize> {
         return Some(end + 1);
     }
     None
+}
+
+/// Every `test('…')`, `testWidgets('…')` and `group('…')` title in `text`.
+///
+/// Modelled on [`ts_test_names`] — a character walk, not a regex, for the
+/// same reason. Handles both quote characters, backslash escapes, and Dart's
+/// raw strings (`r'…'`, `r"…"`), where a backslash is literal rather than an
+/// escape.
+///
+/// **A skipped test is not collected**, and neither is anything inside a
+/// skipped `group`. `test('x', skip: true)` and `test('x', skip: 'reason')`
+/// are Dart's spelling of Rust's `#[ignore]`, and [`rust_test_names`]' doc
+/// comment says why an ignored test must not satisfy a ✅ cell: the behaviour
+/// it names never actually runs. `skip: false` is not a skip and does not
+/// suppress collection.
+///
+/// `package:test` skips a whole `group`'s contents when the *group* carries
+/// `skip:`, so this walk skips past a skipped call's entire argument list
+/// rather than only dropping its own title. Until 2026-09-14 it dropped only
+/// the title: `group('g', () { test('t', …); }, skip: true)` still offered
+/// `t` to a ✅ cell, and `t` never ran. Measured on this repository's own
+/// reader on that date.
+///
+/// **Comments and string literals are not code.** A `// test('x', …)` left
+/// behind by somebody disabling a test, or a `test('…')` quoted inside a
+/// Dart string, used to be collected the same way a live declaration was —
+/// the same class of false positive, reached by an easier route.
+fn dart_test_names(text: &str, out: &mut BTreeSet<String>) {
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0usize;
+
+    while i < chars.len() {
+        if let Some(next) = dart_skip_comment(&chars, i) {
+            i = next;
+            continue;
+        }
+        let Some(after_keyword) = dart_test_keyword_at(&chars, i) else {
+            // Not a declaration: a string literal here is data, and its
+            // contents must not be walked as though they were source.
+            if matches!(chars.get(i), Some('\'') | Some('"')) {
+                i = skip_dart_string_literal(&chars, i, dart_is_raw_quote(&chars, i));
+                continue;
+            }
+            i += 1;
+            continue;
+        };
+        let mut j = after_keyword;
+        while chars.get(j).is_some_and(|c| c.is_whitespace()) {
+            j += 1;
+        }
+
+        let mut raw = false;
+        if chars.get(j) == Some(&'r') && matches!(chars.get(j + 1), Some('\'') | Some('"')) {
+            raw = true;
+            j += 1;
+        }
+
+        let Some(&quote) = chars.get(j) else {
+            break;
+        };
+        if quote != '\'' && quote != '"' {
+            i += 1;
+            continue;
+        }
+        j += 1;
+
+        let mut title = String::new();
+        let mut closed = false;
+        while let Some(&c) = chars.get(j) {
+            j += 1;
+            if !raw && c == '\\' {
+                if let Some(&escaped) = chars.get(j) {
+                    j += 1;
+                    title.push(match escaped {
+                        'n' => '\n',
+                        't' => '\t',
+                        'r' => '\r',
+                        other => other,
+                    });
+                }
+                continue;
+            }
+            if c == quote {
+                closed = true;
+                break;
+            }
+            if c == '\n' {
+                break; // An unterminated single-line string is not a title.
+            }
+            title.push(c);
+        }
+
+        if closed && !title.is_empty() {
+            if dart_call_is_skipped(&chars, j) {
+                // Past the whole call, not just past the title: a skipped
+                // `group`'s own `test(…)` calls are skipped with it.
+                i = dart_end_of_call(&chars, j).max(i + 1);
+                continue;
+            }
+            out.insert(title);
+        }
+        i = j.max(i + 1);
+    }
+}
+
+/// If a `//` or `/* … */` comment starts at `i`, the index just past it.
+fn dart_skip_comment(chars: &[char], i: usize) -> Option<usize> {
+    if chars.get(i) != Some(&'/') {
+        return None;
+    }
+    match chars.get(i + 1) {
+        Some('/') => {
+            let mut j = i + 2;
+            while chars.get(j).is_some_and(|c| *c != '\n') {
+                j += 1;
+            }
+            Some(j)
+        }
+        Some('*') => {
+            let mut j = i + 2;
+            while j < chars.len() {
+                if chars.get(j) == Some(&'*') && chars.get(j + 1) == Some(&'/') {
+                    return Some(j + 2);
+                }
+                j += 1;
+            }
+            Some(chars.len())
+        }
+        _ => None,
+    }
+}
+
+/// Whether the quote at `i` opens one of Dart's raw strings (`r'…'`).
+fn dart_is_raw_quote(chars: &[char], i: usize) -> bool {
+    i.checked_sub(1)
+        .and_then(|p| chars.get(p))
+        .is_some_and(|&prev| {
+            prev == 'r'
+                && !i
+                    .checked_sub(2)
+                    .and_then(|p| chars.get(p))
+                    .is_some_and(|c| is_ident_char(*c))
+        })
+}
+
+/// The index just past the `)` closing the call whose argument list continues
+/// at `start` — used to step over a skipped call's whole body, including any
+/// `test(…)` declarations nested in it.
+fn dart_end_of_call(chars: &[char], start: usize) -> usize {
+    let mut depth: i32 = 0;
+    let mut i = start;
+    while let Some(&c) = chars.get(i) {
+        if let Some(next) = dart_skip_comment(chars, i) {
+            i = next;
+            continue;
+        }
+        if c == '\'' || c == '"' {
+            i = skip_dart_string_literal(chars, i, dart_is_raw_quote(chars, i));
+            continue;
+        }
+        match c {
+            '(' | '{' | '[' => depth += 1,
+            ')' if depth == 0 => return i + 1,
+            ')' | '}' | ']' => depth -= 1,
+            _ => {}
+        }
+        i += 1;
+    }
+    chars.len()
+}
+
+/// If `test(`, `testWidgets(` or `group(` starts at `i` and is not part of a
+/// longer identifier or a member expression, the index just past the `(`.
+fn dart_test_keyword_at(chars: &[char], i: usize) -> Option<usize> {
+    for keyword in ["testWidgets", "test", "group"] {
+        let letters: Vec<char> = keyword.chars().collect();
+        let end = i + letters.len();
+        if chars.get(i..end) != Some(letters.as_slice()) {
+            continue;
+        }
+        if chars.get(end) != Some(&'(') {
+            continue;
+        }
+        let preceded = i
+            .checked_sub(1)
+            .and_then(|p| chars.get(p))
+            .is_some_and(|c| is_ident_char(*c) || *c == '.');
+        if preceded {
+            continue;
+        }
+        return Some(end + 1);
+    }
+    None
+}
+
+/// Whether the call whose argument list continues at `start` (just past the
+/// title argument's closing quote) carries a top-level `skip:` argument whose
+/// value is not `false`.
+///
+/// Walks the rest of the argument list tracking bracket depth so that a
+/// nested call's own `skip:` — or a `skip` string inside a tag list — does
+/// not get mistaken for this call's own named argument, and skips over every
+/// string literal it passes so a stray `)` or `:` inside one cannot desync
+/// the depth count. Stops at the `)` that closes the call itself.
+fn dart_call_is_skipped(chars: &[char], start: usize) -> bool {
+    let mut depth: i32 = 0;
+    let mut i = start;
+
+    while let Some(&c) = chars.get(i) {
+        // A `skip:` written in a comment is not an argument, and an
+        // apostrophe in one ("the payer's window") is not a string.
+        if let Some(next) = dart_skip_comment(chars, i) {
+            i = next;
+            continue;
+        }
+        if c == '\'' || c == '"' {
+            i = skip_dart_string_literal(chars, i, dart_is_raw_quote(chars, i));
+            continue;
+        }
+        match c {
+            '(' | '{' | '[' => {
+                depth += 1;
+                i += 1;
+                continue;
+            }
+            ')' if depth == 0 => return false, // The call's own closing paren.
+            ')' | '}' | ']' => {
+                depth -= 1;
+                i += 1;
+                continue;
+            }
+            _ => {}
+        }
+
+        let preceded_by_ident = i
+            .checked_sub(1)
+            .and_then(|p| chars.get(p))
+            .is_some_and(|c2| is_ident_char(*c2));
+        if depth == 0
+            && !preceded_by_ident
+            && chars.get(i..i + 4) == Some(['s', 'k', 'i', 'p'].as_slice())
+            && !chars.get(i + 4).is_some_and(|c2| is_ident_char(*c2))
+        {
+            let mut k = i + 4;
+            while chars.get(k).is_some_and(|c2| c2.is_whitespace()) {
+                k += 1;
+            }
+            if chars.get(k) == Some(&':') {
+                k += 1;
+                while chars.get(k).is_some_and(|c2| c2.is_whitespace()) {
+                    k += 1;
+                }
+                if chars.get(k) == Some(&'\'') || chars.get(k) == Some(&'"') {
+                    return true; // A reason string means "skipped".
+                }
+                return chars.get(k..k + 4) == Some(['t', 'r', 'u', 'e'].as_slice());
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+/// The index just past the string literal (single- or double-quoted) that
+/// starts at `start`, honouring Dart's raw-string rule that a backslash
+/// inside `r'…'`/`r"…"` is literal rather than an escape.
+fn skip_dart_string_literal(chars: &[char], start: usize, raw: bool) -> usize {
+    let Some(&quote) = chars.get(start) else {
+        return start;
+    };
+    let mut i = start + 1;
+    while let Some(&c) = chars.get(i) {
+        if !raw && c == '\\' {
+            i += 2;
+            continue;
+        }
+        i += 1;
+        if c == quote || c == '\n' {
+            break;
+        }
+    }
+    i
 }
 
 // ---------------------------------------------------------------------------
@@ -9148,6 +9447,138 @@ mod sdk_parity_tests {
         assert_eq!(found.len(), 2, "{found:?}");
     }
 
+    /// A Dart cell behaves exactly like the Rust/TypeScript ones: a live
+    /// `test('…')` satisfies a ✅, and `skip: true` on the same test does not.
+    #[test]
+    fn a_dart_column_reads_test_titles_and_a_skipped_one_cannot_satisfy_a_tick() {
+        let dir = TempDir::new("parity-dart");
+        let flutter = dir.path().join("sdks/flutter/vpay_checkout_flutter/test");
+        fs::create_dir_all(&flutter).expect("the flutter fixture directory is creatable");
+        fs::write(
+            flutter.join("checkout_controller_test.dart"),
+            "void main() {\n  \
+               group('checkout controller', () {\n    \
+                 test('starts idle', () {});\n    \
+                 test('reports pending, never succeeded, off a bare redirect', () {},\n      \
+                   skip: true);\n  \
+               });\n\
+             }\n",
+        )
+        .expect("the flutter fixture is writable");
+
+        let doc = "| Capability | `sdks/flutter/vpay_checkout_flutter` |\n|---|---|\n\
+             | idle start | ✅ `starts idle` |\n\
+             | pending outcome | ✅ `reports pending, never succeeded, off a bare redirect` |\n";
+        let found = problems(&dir, doc);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(
+            found.first().is_some_and(
+                |m| m.contains("reports pending, never succeeded, off a bare redirect")
+            ),
+            "{found:?}"
+        );
+    }
+
+    /// `.dart_tool` and `build` hold generated/vendored Dart, exactly like
+    /// `node_modules` holds vendored TypeScript, and must not let a
+    /// dependency's own test satisfy a ✅ cell.
+    #[test]
+    fn dart_tool_and_build_directories_are_skipped_like_node_modules() {
+        let dir = TempDir::new("parity-dart-skipped-dirs");
+        let flutter = dir.path().join("sdks/flutter/vpay_checkout_flutter");
+        let dart_tool = flutter.join(".dart_tool/pub/deps");
+        let build = flutter.join("build/generated");
+        fs::create_dir_all(&flutter).expect("the flutter fixture directory is creatable");
+        fs::create_dir_all(&dart_tool).expect("the .dart_tool fixture directory is creatable");
+        fs::create_dir_all(&build).expect("the build fixture directory is creatable");
+        fs::write(
+            dart_tool.join("vendor_test.dart"),
+            "void main() { test('a vendored dependency owns this', () {}); }\n",
+        )
+        .expect("the .dart_tool fixture is writable");
+        fs::write(
+            build.join("generated_test.dart"),
+            "void main() { test('generated code owns this', () {}); }\n",
+        )
+        .expect("the build fixture is writable");
+
+        let doc = "| Capability | `sdks/flutter/vpay_checkout_flutter` |\n|---|---|\n\
+             | vendored | ✅ `a vendored dependency owns this` |\n";
+        let found = problems(&dir, doc);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(
+            found
+                .first()
+                .is_some_and(|m| m.contains("a vendored dependency owns this")),
+            "{found:?}"
+        );
+    }
+
+    /// The decisive property: calling [`verify_sdk_parity`] itself — the
+    /// exact function `main()` dispatches `verify-sdk-parity` to, and the one
+    /// whose `Ok`/`Err` [`main`] turns into `ExitCode::SUCCESS`/`FAILURE` —
+    /// against a synthetic Flutter-shaped fixture flips from `Ok` to an `Err`
+    /// naming the cell the moment the cited test gains `skip: true`.
+    ///
+    /// This does not shell out to the compiled binary: `repo_root` is fixed
+    /// to this checkout at compile time (`env!("CARGO_MANIFEST_DIR")`), and
+    /// the hard rule for this lane forbids creating anything under
+    /// `sdks/flutter/` or editing the real `docs/sdks/parity.md` to fake a
+    /// real invocation. Calling [`verify_sdk_parity`] directly with a
+    /// synthetic `root` is the same function, with the same
+    /// `Ok(())`/`Err(String)` contract `main` reads to choose an exit code,
+    /// so the flip below *is* the flip `cargo run -p xtask -- verify-sdk-parity`
+    /// would show, minus the process boundary a fixed compile-time root
+    /// makes impossible to cross here.
+    fn synthetic_flutter_fixture_root(label: &str, skip: bool) -> TempDir {
+        let dir = TempDir::new(label);
+        let test_dir = dir.path().join("sdks/flutter-fixture/test");
+        fs::create_dir_all(&test_dir).expect("the flutter fixture directory is creatable");
+        let skip_clause = if skip { ", skip: true" } else { "" };
+        fs::write(
+            test_dir.join("checkout_controller_test.dart"),
+            format!("void main() {{\n  test('starts idle'{skip_clause}, () {{}});\n}}\n"),
+        )
+        .expect("the flutter fixture is writable");
+
+        let docs_dir = dir.path().join("docs/sdks");
+        fs::create_dir_all(&docs_dir).expect("the docs/sdks fixture directory is creatable");
+        fs::write(
+            docs_dir.join("parity.md"),
+            "| Capability | `sdks/flutter-fixture` |\n|---|---|\n\
+             | checkout controller starts idle | ✅ `starts idle` |\n",
+        )
+        .expect("the parity doc fixture is writable");
+
+        dir
+    }
+
+    #[test]
+    fn dart_decisive_mutation_a_live_test_passes_verify_sdk_parity() {
+        let dir = synthetic_flutter_fixture_root("dart-mutation-before", false);
+        let result = verify_sdk_parity(dir.path());
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
+    fn dart_decisive_mutation_skip_true_fails_verify_sdk_parity_naming_the_cell() {
+        let dir = synthetic_flutter_fixture_root("dart-mutation-after", true);
+        let result = verify_sdk_parity(dir.path());
+        let Err(message) = result else {
+            panic!(
+                "verify_sdk_parity must fail once the cited test carries `skip: true` \
+                 — a reader that still collects a skipped test passes every other test \
+                 this file could write, and this is the one that catches it; got {result:?}"
+            );
+        };
+        assert!(message.contains("starts idle"), "{message}");
+        assert!(
+            message.contains("checkout controller starts idle"),
+            "{message}"
+        );
+        assert!(message.contains("sdks/flutter-fixture"), "{message}");
+    }
+
     /// A vendored dependency's tests are not this SDK's proof.
     #[test]
     fn a_test_inside_node_modules_does_not_satisfy_a_tick() {
@@ -9187,6 +9618,146 @@ mod sdk_parity_tests {
             &mut names,
         );
         assert!(names.is_empty(), "{names:?}");
+    }
+
+    #[test]
+    fn dart_test_testwidgets_and_group_titles_are_collected() {
+        let mut names = BTreeSet::new();
+        dart_test_names(
+            "void main() {\n  \
+               group('checkout controller', () {\n    \
+                 test('starts idle', () {});\n    \
+                 testWidgets('renders a spinner', (tester) async {});\n  \
+               });\n\
+             }\n",
+            &mut names,
+        );
+        assert_eq!(
+            names,
+            BTreeSet::from([
+                "checkout controller".to_owned(),
+                "starts idle".to_owned(),
+                "renders a spinner".to_owned(),
+            ])
+        );
+    }
+
+    #[test]
+    fn dart_test_skip_true_is_not_collected_but_skip_false_is() {
+        let mut names = BTreeSet::new();
+        dart_test_names(
+            "test('a skipped one', () {}, skip: true);\n\
+             test('a not-skipped one', () {}, skip: false);\n",
+            &mut names,
+        );
+        assert_eq!(names, BTreeSet::from(["a not-skipped one".to_owned()]));
+    }
+
+    #[test]
+    fn dart_test_skip_with_a_reason_string_is_not_collected() {
+        let mut names = BTreeSet::new();
+        dart_test_names(
+            "test('flaky on ci', () {}, skip: 'orange rail is down');\n",
+            &mut names,
+        );
+        assert!(names.is_empty(), "{names:?}");
+    }
+
+    /// `skip:` on a *nested* call inside the body must not be mistaken for
+    /// the outer test's own `skip:` argument.
+    #[test]
+    fn a_nested_calls_skip_argument_does_not_skip_the_outer_test() {
+        let mut names = BTreeSet::new();
+        dart_test_names(
+            "test('still runs', () {\n  \
+               configure(skip: true);\n\
+             });\n",
+            &mut names,
+        );
+        assert_eq!(names, BTreeSet::from(["still runs".to_owned()]));
+    }
+
+    /// `package:test` skips a whole group's contents when the *group*
+    /// carries `skip:`. Before 2026-09-14 this reader dropped only the
+    /// group's own title and still offered every `test(…)` inside it to a
+    /// ✅ cell — a capability proven by a test that never runs, which is the
+    /// exact failure `verify-sdk-parity` exists to refuse.
+    #[test]
+    fn a_skipped_group_takes_its_tests_with_it() {
+        let mut names = BTreeSet::new();
+        dart_test_names(
+            "group('a skipped group', () {\n                 test('a test inside it', () {});\n                 testWidgets('and a widget test', (t) async {});\n             }, skip: true);\n             test('a live one outside it', () {});\n",
+            &mut names,
+        );
+        assert_eq!(names, BTreeSet::from(["a live one outside it".to_owned()]));
+    }
+
+    #[test]
+    fn a_live_group_still_yields_its_tests() {
+        let mut names = BTreeSet::new();
+        dart_test_names(
+            "group('a live group', () {\n                 test('a test inside it', () {});\n             }, skip: false);\n",
+            &mut names,
+        );
+        assert_eq!(
+            names,
+            BTreeSet::from(["a live group".to_owned(), "a test inside it".to_owned(),])
+        );
+    }
+
+    /// A test somebody disabled by commenting it out is not a test, and a
+    /// `test('…')` quoted inside a Dart string is data.
+    #[test]
+    fn commented_out_and_quoted_declarations_are_not_collected() {
+        let mut names = BTreeSet::new();
+        dart_test_names(
+            "// test('commented out with a line comment', () {});\n             /* test('commented out with a block comment', () {}); */\n             const snippet = \"test('quoted inside a string', () {});\";\n             test('the only live one', () {});\n",
+            &mut names,
+        );
+        assert_eq!(names, BTreeSet::from(["the only live one".to_owned()]));
+    }
+
+    /// The comment skipper must not swallow a division or a URL's `//`
+    /// inside a string, which would hide every declaration after it.
+    #[test]
+    fn a_url_in_a_string_is_not_read_as_a_comment() {
+        let mut names = BTreeSet::new();
+        dart_test_names(
+            "const base = 'https://api.example/v1';\n             test('still collected after a url literal', () {});\n",
+            &mut names,
+        );
+        assert_eq!(
+            names,
+            BTreeSet::from(["still collected after a url literal".to_owned()])
+        );
+    }
+
+    #[test]
+    fn dart_raw_strings_are_read_without_escape_processing() {
+        let mut names = BTreeSet::new();
+        dart_test_names("test(r'a raw \\n title', () {});\n", &mut names);
+        assert_eq!(names, BTreeSet::from(["a raw \\n title".to_owned()]));
+    }
+
+    #[test]
+    fn dart_double_quoted_titles_and_escapes_are_read() {
+        let mut names = BTreeSet::new();
+        dart_test_names("test(\"a \\\"quoted\\\" title\", () {});\n", &mut names);
+        assert_eq!(names, BTreeSet::from(["a \"quoted\" title".to_owned()]));
+    }
+
+    #[test]
+    fn dart_a_plain_function_call_named_test_something_is_not_a_test() {
+        let mut names = BTreeSet::new();
+        dart_test_names(
+            "testHarness('not a test framework call', () {});\nawait test('word boundary needed');\n",
+            &mut names,
+        );
+        // `testHarness(` fails the keyword-boundary check (next char after
+        // `test` is `H`, not `(`); `await test(` is a real `test(` call and
+        // is collected — the leading `await` on the wrong keyword must not
+        // hide the correct one.
+        assert_eq!(names, BTreeSet::from(["word boundary needed".to_owned()]));
     }
 
     // ----------------------------------------------------------- code → doc
