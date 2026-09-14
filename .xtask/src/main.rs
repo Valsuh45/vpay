@@ -4541,17 +4541,40 @@ fn ts_test_keyword_at(chars: &[char], i: usize) -> Option<usize> {
 /// raw strings (`r'…'`, `r"…"`), where a backslash is literal rather than an
 /// escape.
 ///
-/// **A skipped test is not collected.** `test('x', skip: true)` and
-/// `test('x', skip: 'reason')` are Dart's spelling of Rust's `#[ignore]`, and
-/// [`rust_test_names`]' doc comment says why an ignored test must not satisfy
-/// a ✅ cell: the behaviour it names never actually runs. `skip: false` is not
-/// a skip and does not suppress collection.
+/// **A skipped test is not collected**, and neither is anything inside a
+/// skipped `group`. `test('x', skip: true)` and `test('x', skip: 'reason')`
+/// are Dart's spelling of Rust's `#[ignore]`, and [`rust_test_names`]' doc
+/// comment says why an ignored test must not satisfy a ✅ cell: the behaviour
+/// it names never actually runs. `skip: false` is not a skip and does not
+/// suppress collection.
+///
+/// `package:test` skips a whole `group`'s contents when the *group* carries
+/// `skip:`, so this walk skips past a skipped call's entire argument list
+/// rather than only dropping its own title. Until 2026-09-14 it dropped only
+/// the title: `group('g', () { test('t', …); }, skip: true)` still offered
+/// `t` to a ✅ cell, and `t` never ran. Measured on this repository's own
+/// reader on that date.
+///
+/// **Comments and string literals are not code.** A `// test('x', …)` left
+/// behind by somebody disabling a test, or a `test('…')` quoted inside a
+/// Dart string, used to be collected the same way a live declaration was —
+/// the same class of false positive, reached by an easier route.
 fn dart_test_names(text: &str, out: &mut BTreeSet<String>) {
     let chars: Vec<char> = text.chars().collect();
     let mut i = 0usize;
 
     while i < chars.len() {
+        if let Some(next) = dart_skip_comment(&chars, i) {
+            i = next;
+            continue;
+        }
         let Some(after_keyword) = dart_test_keyword_at(&chars, i) else {
+            // Not a declaration: a string literal here is data, and its
+            // contents must not be walked as though they were source.
+            if matches!(chars.get(i), Some('\'') | Some('"')) {
+                i = skip_dart_string_literal(&chars, i, dart_is_raw_quote(&chars, i));
+                continue;
+            }
             i += 1;
             continue;
         };
@@ -4601,11 +4624,83 @@ fn dart_test_names(text: &str, out: &mut BTreeSet<String>) {
             title.push(c);
         }
 
-        if closed && !title.is_empty() && !dart_call_is_skipped(&chars, j) {
+        if closed && !title.is_empty() {
+            if dart_call_is_skipped(&chars, j) {
+                // Past the whole call, not just past the title: a skipped
+                // `group`'s own `test(…)` calls are skipped with it.
+                i = dart_end_of_call(&chars, j).max(i + 1);
+                continue;
+            }
             out.insert(title);
         }
         i = j.max(i + 1);
     }
+}
+
+/// If a `//` or `/* … */` comment starts at `i`, the index just past it.
+fn dart_skip_comment(chars: &[char], i: usize) -> Option<usize> {
+    if chars.get(i) != Some(&'/') {
+        return None;
+    }
+    match chars.get(i + 1) {
+        Some('/') => {
+            let mut j = i + 2;
+            while chars.get(j).is_some_and(|c| *c != '\n') {
+                j += 1;
+            }
+            Some(j)
+        }
+        Some('*') => {
+            let mut j = i + 2;
+            while j < chars.len() {
+                if chars.get(j) == Some(&'*') && chars.get(j + 1) == Some(&'/') {
+                    return Some(j + 2);
+                }
+                j += 1;
+            }
+            Some(chars.len())
+        }
+        _ => None,
+    }
+}
+
+/// Whether the quote at `i` opens one of Dart's raw strings (`r'…'`).
+fn dart_is_raw_quote(chars: &[char], i: usize) -> bool {
+    i.checked_sub(1)
+        .and_then(|p| chars.get(p))
+        .is_some_and(|&prev| {
+            prev == 'r'
+                && !i
+                    .checked_sub(2)
+                    .and_then(|p| chars.get(p))
+                    .is_some_and(|c| is_ident_char(*c))
+        })
+}
+
+/// The index just past the `)` closing the call whose argument list continues
+/// at `start` — used to step over a skipped call's whole body, including any
+/// `test(…)` declarations nested in it.
+fn dart_end_of_call(chars: &[char], start: usize) -> usize {
+    let mut depth: i32 = 0;
+    let mut i = start;
+    while let Some(&c) = chars.get(i) {
+        if let Some(next) = dart_skip_comment(chars, i) {
+            i = next;
+            continue;
+        }
+        if c == '\'' || c == '"' {
+            i = skip_dart_string_literal(chars, i, dart_is_raw_quote(chars, i));
+            continue;
+        }
+        match c {
+            '(' | '{' | '[' => depth += 1,
+            ')' if depth == 0 => return i + 1,
+            ')' | '}' | ']' => depth -= 1,
+            _ => {}
+        }
+        i += 1;
+    }
+    chars.len()
 }
 
 /// If `test(`, `testWidgets(` or `group(` starts at `i` and is not part of a
@@ -4646,18 +4741,14 @@ fn dart_call_is_skipped(chars: &[char], start: usize) -> bool {
     let mut i = start;
 
     while let Some(&c) = chars.get(i) {
+        // A `skip:` written in a comment is not an argument, and an
+        // apostrophe in one ("the payer's window") is not a string.
+        if let Some(next) = dart_skip_comment(chars, i) {
+            i = next;
+            continue;
+        }
         if c == '\'' || c == '"' {
-            let raw = i
-                .checked_sub(1)
-                .and_then(|p| chars.get(p))
-                .is_some_and(|&prev| {
-                    prev == 'r'
-                        && !i
-                            .checked_sub(2)
-                            .and_then(|p| chars.get(p))
-                            .is_some_and(|c2| is_ident_char(*c2))
-                });
-            i = skip_dart_string_literal(chars, i, raw);
+            i = skip_dart_string_literal(chars, i, dart_is_raw_quote(chars, i));
             continue;
         }
         match c {
@@ -9584,6 +9675,61 @@ mod sdk_parity_tests {
             &mut names,
         );
         assert_eq!(names, BTreeSet::from(["still runs".to_owned()]));
+    }
+
+    /// `package:test` skips a whole group's contents when the *group*
+    /// carries `skip:`. Before 2026-09-14 this reader dropped only the
+    /// group's own title and still offered every `test(…)` inside it to a
+    /// ✅ cell — a capability proven by a test that never runs, which is the
+    /// exact failure `verify-sdk-parity` exists to refuse.
+    #[test]
+    fn a_skipped_group_takes_its_tests_with_it() {
+        let mut names = BTreeSet::new();
+        dart_test_names(
+            "group('a skipped group', () {\n                 test('a test inside it', () {});\n                 testWidgets('and a widget test', (t) async {});\n             }, skip: true);\n             test('a live one outside it', () {});\n",
+            &mut names,
+        );
+        assert_eq!(names, BTreeSet::from(["a live one outside it".to_owned()]));
+    }
+
+    #[test]
+    fn a_live_group_still_yields_its_tests() {
+        let mut names = BTreeSet::new();
+        dart_test_names(
+            "group('a live group', () {\n                 test('a test inside it', () {});\n             }, skip: false);\n",
+            &mut names,
+        );
+        assert_eq!(
+            names,
+            BTreeSet::from(["a live group".to_owned(), "a test inside it".to_owned(),])
+        );
+    }
+
+    /// A test somebody disabled by commenting it out is not a test, and a
+    /// `test('…')` quoted inside a Dart string is data.
+    #[test]
+    fn commented_out_and_quoted_declarations_are_not_collected() {
+        let mut names = BTreeSet::new();
+        dart_test_names(
+            "// test('commented out with a line comment', () {});\n             /* test('commented out with a block comment', () {}); */\n             const snippet = \"test('quoted inside a string', () {});\";\n             test('the only live one', () {});\n",
+            &mut names,
+        );
+        assert_eq!(names, BTreeSet::from(["the only live one".to_owned()]));
+    }
+
+    /// The comment skipper must not swallow a division or a URL's `//`
+    /// inside a string, which would hide every declaration after it.
+    #[test]
+    fn a_url_in_a_string_is_not_read_as_a_comment() {
+        let mut names = BTreeSet::new();
+        dart_test_names(
+            "const base = 'https://api.example/v1';\n             test('still collected after a url literal', () {});\n",
+            &mut names,
+        );
+        assert_eq!(
+            names,
+            BTreeSet::from(["still collected after a url literal".to_owned()])
+        );
     }
 
     #[test]
