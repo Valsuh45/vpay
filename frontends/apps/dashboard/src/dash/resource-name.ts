@@ -25,13 +25,15 @@ export const PAYMENT_INTENTS = "payment_intents";
 export const REFUNDS = "refunds";
 export const WEBHOOK_DELIVERIES = "webhook_deliveries";
 export const CUSTOMERS = "customers";
+export const CHECKOUT_SESSIONS = "checkout_sessions";
 
 /** Every resource this app may ask for. */
 export type DashResource =
   | typeof PAYMENT_INTENTS
   | typeof REFUNDS
   | typeof WEBHOOK_DELIVERIES
-  | typeof CUSTOMERS;
+  | typeof CUSTOMERS
+  | typeof CHECKOUT_SESSIONS;
 
 /**
  * Which procedure serves which resource.
@@ -46,4 +48,5 @@ export const PROCEDURE_OF: Readonly<Record<string, string>> = {
   [REFUNDS]: "searchRefunds",
   [WEBHOOK_DELIVERIES]: "searchWebhookDeliveries",
   [CUSTOMERS]: "searchCustomers",
+  [CHECKOUT_SESSIONS]: "searchCheckoutSessions",
 };

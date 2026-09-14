@@ -2577,3 +2577,88 @@ type CustomerListFilter {
 // `backends/crates/vpay-db/src/schema/search_customers.rs`.
 procedure searchCustomers(page: PageInput, filter: CustomerListFilter): Page<CustomerSummary>
   @allow(auth() != null)
+
+// --- checkout sessions (Lane D, slice: checkout sessions) -----------------
+//
+// The dashboard's answer to "what happened to this checkout, and why did it
+// not convert?" — one row per session.
+
+// One row of the checkout sessions list.
+//
+// WHAT IS DELIBERATELY NOT ON THIS TYPE, and it is the whole of this
+// slice's care:
+//
+//   * `client_secret_suffix` and `return_token`. Both are `@sensitive` and
+//     both are LIVE PAYER CREDENTIALS — the client secret authorises the
+//     payer's browser against this checkout, the return token authorises
+//     the return leg. A list carrying either hands them to everyone who can
+//     read the list. Note that `@sensitive` does NOT protect them: it is
+//     read in exactly one place, `cratestack-macros`' `is_sensitive_field`,
+//     to redact a value from the AUDIT LOG. It excludes nothing from a
+//     response.
+//   * the three URLs (`success_url`, `cancel_url`, `return_url`).
+//     Merchant-supplied and up to 2 048 characters each; three of them
+//     would be the widest thing in the table and none is what an operator
+//     reads a list for. They belong to a detail read, which does not exist
+//     yet — the same call `PaymentIntentSummary` makes for
+//     `last_payment_error_message` and `RefundSummary` for `failure_raw`.
+//   * `publishable_key`. Public by construction, and still nothing a list
+//     answers: every row of one merchant's page carries the same value.
+//   * `seq`, for `PaymentIntentSummary`'s reason — vpay's internal counter
+//     is not part of the answer.
+type CheckoutSessionSummary {
+  id String
+  merchant_id String
+  payment_intent_id String
+  livemode Boolean
+  // `hosted` or `embedded` (`ui_mode_is_known`, migration 0028).
+  ui_mode String
+  // `open`, `complete` or `expired` (`status_is_known`, migration 0028).
+  status String
+  // `unpaid`, `paid` or `failed` (`payment_status_is_known`, migration 0028).
+  //
+  // The pair is what makes this list worth reading: a session `complete`
+  // with `payment_status` `unpaid` is a checkout the payer finished and the
+  // rail did not, which is a different operator question from one still
+  // `open`.
+  payment_status String
+  customer_id String?
+  expires_at DateTime
+  created_at DateTime
+  updated_at DateTime
+}
+
+// The filters `searchCheckoutSessions` accepts.
+//
+// HAND-ROLLED, NOT `FindMany<CheckoutSession>`, and here the reason is
+// sharper than it was for `PaymentIntentListFilter`. A `FindMany` publishes
+// a filter over every filterable scalar, and this model carries TWO live
+// payer credentials as `String` — so it would carry `eq`, `startsWith`, `lt`
+// and `gt` over `client_secret_suffix` and `return_token`. That is a prefix
+// oracle against a credential that authorises a payer's browser, offered to
+// anyone who can call the procedure.
+type CheckoutSessionListFilter {
+  // One `status` wire value, as TEXT. An unknown one is a 400 naming the
+  // parameter and listing the vocabulary, not an empty page — the
+  // vocabulary is closed and the database says so (`status_is_known`).
+  status String?
+  // One `payment_status` wire value (`payment_status_is_known`).
+  payment_status String?
+  // Inclusive bounds on `created_at`.
+  created_gte DateTime?
+  created_lte DateTime?
+}
+
+// The dashboard's checkout sessions list, paginated by offset.
+//
+// `@allow(auth() != null)`: authentication is all the POLICY decides. The
+// tenancy predicate is not here and cannot be — `inTenant(...)` takes a
+// string literal and cannot name the caller's own tenant — so the body reads
+// `ctx.tenant_id()` and refuses when there is none, exactly as
+// `searchPaymentIntents` does.
+//
+// `model CheckoutSession` HAS `merchant_id`, so the predicate is direct
+// rather than a join. It also carries a `seq` with a UNIQUE index
+// (migration 0028), so `ORDER BY seq DESC` is a total order.
+procedure searchCheckoutSessions(page: PageInput, filter: CheckoutSessionListFilter): Page<CheckoutSessionSummary>
+  @allow(auth() != null)

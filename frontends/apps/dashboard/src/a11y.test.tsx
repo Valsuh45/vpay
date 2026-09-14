@@ -153,12 +153,20 @@ describe("the rendered app", () => {
     // the same way `app-shell.test.tsx` mocks it.
     const html = renderToStaticMarkup(
       RootLayout({
-        children: AppShell({
-          email: "ops@example.test",
-          merchantId: "acct_test",
-          signOut: () => Promise.resolve(),
-          children: <PaymentsTable rows={[INTENT]} />,
-        }) as ReactElement,
+        // An ELEMENT, not `AppShell({...})` called as a plain function.
+        // That worked while the component's only hook was the mocked
+        // `usePathname`; it now holds real `useState`/`useEffect` (to keep
+        // `SideNav`'s always-rendered `accountSlot` empty below `xl`), and a
+        // hook outside a render is `Cannot read properties of null`.
+        children: (
+          <AppShell
+            email="ops@example.test"
+            merchantId="acct_test"
+            signOut={() => Promise.resolve()}
+          >
+            <PaymentsTable rows={[INTENT]} />
+          </AppShell>
+        ),
       }) as ReactElement,
     );
     const body = html
