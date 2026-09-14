@@ -245,6 +245,20 @@ final class CheckoutController {
         );
       }
       final PaymentIntent intent = result.paymentIntent!;
+      if (intent.id != ready.paymentIntentId) {
+        // The request was addressed by `ready.intentClientSecret`, whose own
+        // prefix *is* `ready.paymentIntentId`, so these can only disagree if
+        // the server answered about a different object. Reporting that
+        // object's `succeeded` as this session's outcome is precisely the
+        // "claims success it did not observe" failure D1 exists to refuse,
+        // so it is an unresolved, not a result. No id is interpolated: one
+        // of them came off the wire.
+        return VpayCheckoutUnresolved(
+          sessionId: ready.sessionId,
+          paymentIntentId: ready.paymentIntentId,
+          error: VpayError.unexpectedResponse(200),
+        );
+      }
       if (intent.hasStoppedMoving) {
         return _resultFor(ready, intent);
       }

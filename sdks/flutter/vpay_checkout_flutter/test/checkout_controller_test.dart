@@ -171,6 +171,37 @@ void main() {
     );
   });
 
+  group('resolve — the answer must be about the intent that was asked for', () {
+    test(
+      'a succeeded intent with a different id is unresolved, never succeeded',
+      () async {
+        final ready = _readyFixture();
+        final controller = CheckoutController(
+          client: BrowserClient(
+            baseUrl: 'https://api.example',
+            publishableKey: 'pk_test_1',
+            httpClient: MockClient(
+              (request) async => _json({
+                ..._paymentIntentJson('succeeded'),
+                'id': 'pi_somebody_elses',
+              }),
+            ),
+          ),
+        );
+
+        final result = await controller.resolveAfterStopUrlReached(ready);
+
+        expect(result, isNot(isA<VpayCheckoutSucceeded>()));
+        expect(result, isA<VpayCheckoutUnresolved>());
+        expect(
+          (result as VpayCheckoutUnresolved).error.code,
+          VpayClientErrorCodes.unexpectedResponse,
+        );
+        expect(result.paymentIntentId, 'pi_123');
+      },
+    );
+  });
+
   group('resolve — failure mapping', () {
     test('requires_payment_method with a last_payment_error reports failed with the rail code', () async {
       final ready = _readyFixture();

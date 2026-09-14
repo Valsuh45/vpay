@@ -21,8 +21,11 @@ enum PaymentIntentStatus {
 
   /// A status this package does not recognise — a future server value an
   /// older client should not crash on. Never produced server-side today;
-  /// carried so a poll loop degrades to `VpayCheckoutUnresolved` rather than
-  /// throwing when it eventually is.
+  /// carried so a poll loop keeps polling and then answers
+  /// `VpayCheckoutPending` when its budget elapses, rather than throwing.
+  /// (This comment said `VpayCheckoutUnresolved` until 2026-09-14 and was
+  /// wrong: `hasStoppedMoving` is `false` here, so `_resolve` never reaches
+  /// its mapping with an unknown status and the budget decides.)
   unknown;
 
   static PaymentIntentStatus fromWire(String value) => switch (value) {
