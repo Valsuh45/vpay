@@ -9,6 +9,9 @@ import 'dart:typed_data' show Float64List, Int32List, Int64List;
 import 'package:flutter/services.dart';
 import 'package:meta/meta.dart' show immutable, protected, visibleForTesting;
 
+// Hand-added after generation (2026-09-14): see ShowCheckoutRequest.toString.
+import '../redaction.dart';
+
 Object? _extractReplyValueOrThrow(
   List<Object?>? replyList,
   String channelName, {
@@ -247,9 +250,25 @@ class ShowCheckoutRequest {
   // ignore: avoid_equals_and_hash_code_on_mutable_classes
   int get hashCode => _deepHash(<Object?>[runtimeType, ..._toList()]);
 
+  /// **Hand-edited after generation (2026-09-14), and it must stay edited.**
+  ///
+  /// Pigeon generates `'… url: $url …'` here. [url] is the session's own
+  /// hosted URL, whose fragment *is* the checkout session's `client_secret`
+  /// (D6) — so the generated form renders a live credential into whatever
+  /// printed it: a `debugPrint` of the request, a Flutter error dump that
+  /// quotes its arguments, a crash reporter's breadcrumb. The design doc
+  /// named this exact regression path: "a `copyWith`-style data class with
+  /// a generated `toString` is not [safe], and generated code is how this
+  /// regresses."
+  ///
+  /// `dart run pigeon --input pigeons/checkout.dart` overwrites this file
+  /// and will undo it. `test/messages_redaction_test.dart` fails when that
+  /// happens; re-apply it here and in the Kotlin and Swift copies rather
+  /// than relaxing the test.
   @override
   String toString() {
-    return 'ShowCheckoutRequest(url: $url, stopUrls: $stopUrls, allowInsecureUrl: $allowInsecureUrl)';
+    return 'ShowCheckoutRequest(url: ${redacted(url)}, stopUrls: $stopUrls, '
+        'allowInsecureUrl: $allowInsecureUrl)';
   }
 }
 
@@ -298,9 +317,14 @@ class CheckoutWindowEvent {
   // ignore: avoid_equals_and_hash_code_on_mutable_classes
   int get hashCode => _deepHash(<Object?>[runtimeType, ..._toList()]);
 
+  /// **Hand-edited after generation (2026-09-14)** — see
+  /// [ShowCheckoutRequest.toString]. [reachedUrl] is the full URL the
+  /// window navigated to, merchant query string and all; this package never
+  /// reads anything off it (D1) and has no business rendering it either.
   @override
   String toString() {
-    return 'CheckoutWindowEvent(outcome: $outcome, reachedUrl: $reachedUrl)';
+    return 'CheckoutWindowEvent(outcome: $outcome, reachedUrl: '
+        '${redacted(reachedUrl)})';
   }
 }
 

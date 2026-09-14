@@ -338,8 +338,17 @@ data class ShowCheckoutRequest (
     result = 31 * result + MessagesPigeonUtils.deepHash(this.allowInsecureUrl)
     return result
   }
+  /**
+   * Hand-edited after generation (2026-09-14), and it must stay edited: `url`'s
+   * fragment is the checkout session's own `client_secret` (design doc D6), and
+   * Kotlin's generated `toString` would render it into any `Log.d(TAG, request)`
+   * or crash-reporter breadcrumb. Regenerating this file undoes it; re-apply it
+   * here and in the Dart and Swift copies. The Dart copy is the one under test
+   * (`test/messages_redaction_test.dart`); this one is not compiled by any test
+   * in this repository.
+   */
   override fun toString(): String {
-    return "ShowCheckoutRequest(url=$url, stopUrls=$stopUrls, allowInsecureUrl=$allowInsecureUrl)"
+    return "ShowCheckoutRequest(url=[${url.length} chars redacted], stopUrls=$stopUrls, allowInsecureUrl=$allowInsecureUrl)"
   }
 }
 
@@ -389,8 +398,10 @@ data class CheckoutWindowEvent (
     result = 31 * result + MessagesPigeonUtils.deepHash(this.reachedUrl)
     return result
   }
+  /** Hand-edited after generation (2026-09-14) — see [ShowCheckoutRequest.toString]. */
   override fun toString(): String {
-    return "CheckoutWindowEvent(outcome=$outcome, reachedUrl=$reachedUrl)"
+    val redacted = reachedUrl?.let { "[${it.length} chars redacted]" } ?: "null"
+    return "CheckoutWindowEvent(outcome=$outcome, reachedUrl=$redacted)"
   }
 }
 private open class MessagesPigeonCodec : StandardMessageCodec() {

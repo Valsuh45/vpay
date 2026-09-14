@@ -308,8 +308,13 @@ struct ShowCheckoutRequest: Hashable, CustomStringConvertible {
     MessagesPigeonInternal.deepHash(value: allowInsecureUrl, hasher: &hasher)
   }
 
+  /// Hand-edited after generation (2026-09-14), and it must stay edited:
+  /// `url`'s fragment is the checkout session's own `client_secret` (design
+  /// doc D6). Regenerating this file undoes it; re-apply it here and in the
+  /// Dart and Kotlin copies. **Compiled by nobody** — this repository has no
+  /// Xcode; the Dart copy is the one a test pins.
   public var description: String {
-    return "ShowCheckoutRequest(url: \(String(describing: url)), stopUrls: \(String(describing: stopUrls)), allowInsecureUrl: \(String(describing: allowInsecureUrl)))"
+    return "ShowCheckoutRequest(url: [\(url.count) chars redacted], stopUrls: \(String(describing: stopUrls)), allowInsecureUrl: \(String(describing: allowInsecureUrl)))"
   }
 }
 
@@ -354,8 +359,11 @@ struct CheckoutWindowEvent: Hashable, CustomStringConvertible {
     MessagesPigeonInternal.deepHash(value: reachedUrl, hasher: &hasher)
   }
 
+  /// Hand-edited after generation (2026-09-14) — see
+  /// `ShowCheckoutRequest.description`. **Compiled by nobody.**
   public var description: String {
-    return "CheckoutWindowEvent(outcome: \(String(describing: outcome)), reachedUrl: \(String(describing: reachedUrl)))"
+    let redactedUrl = reachedUrl.map { "[\($0.count) chars redacted]" } ?? "null"
+    return "CheckoutWindowEvent(outcome: \(String(describing: outcome)), reachedUrl: \(redactedUrl))"
   }
 }
 
