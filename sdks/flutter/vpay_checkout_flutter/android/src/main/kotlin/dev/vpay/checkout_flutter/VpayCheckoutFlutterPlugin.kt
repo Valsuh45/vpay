@@ -49,7 +49,7 @@ class VpayCheckoutFlutterPlugin :
     onAttachedToActivity(binding)
   }
 
-  override fun onDetachFromActivityForConfigChanges() {
+  override fun onDetachedFromActivityForConfigChanges() {
     onDetachedFromActivity()
   }
 
