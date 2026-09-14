@@ -36,6 +36,13 @@ abstract final class VpayClientErrorCodes {
   /// any window opens.
   static const String embeddedSessionNotSupported =
       'embedded_session_not_supported';
+
+  /// The platform window never opened, or closed without ever reporting
+  /// which of its two signals occurred — a browser that refused the popup,
+  /// an `Activity` that would not start, a host that dropped the event.
+  /// Distinct from every status this package reads off an intent: it means
+  /// the *window* failed, so nothing was observed either way.
+  static const String platformWindowFailed = 'platform_window_failed';
 }
 
 /// vpay's error envelope (`vpay_api::error_envelope_with_param`), narrowed to
@@ -93,6 +100,19 @@ final class VpayError {
         'Checkout session $sessionId is ui_mode "embedded"; '
         'vpay_checkout_flutter only opens a hosted session in a native '
         'window.',
+  );
+
+  /// The platform window could not be opened, or ended without reporting an
+  /// outcome. A **fixed** message on purpose: the thrown value this replaces
+  /// is a `PlatformException`/`StateError` whose own message can quote the
+  /// URL it failed on, and that URL carries the session's `client_secret` in
+  /// its fragment (D6). Nothing from it is interpolated here.
+  factory VpayError.platformWindow() => const VpayError(
+    type: 'api_error',
+    code: VpayClientErrorCodes.platformWindowFailed,
+    message:
+        'The native checkout window could not be opened, or closed without '
+        'reporting an outcome.',
   );
 
   /// The polling budget elapsed before the intent reached a terminal state,

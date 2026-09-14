@@ -19,6 +19,26 @@ import 'package:http/http.dart' as http;
 import 'errors.dart';
 import 'models.dart';
 
+/// Runs a `fromJson` and answers `null` rather than letting it throw.
+///
+/// This file's whole contract (`errors.dart`, rule 1) is that **nothing
+/// throws out of a poll**: the two reads answer a result object, never a
+/// rejected `Future`. `isPaymentIntentJson`/`isCheckoutSessionJson` only
+/// check `object` and `id`, so a 200 carrying the right `object` but a
+/// missing or wrongly-typed `amount`, `created` or `client_secret` — a
+/// version skew, a proxy that rewrote a body — used to escape both reads as
+/// a bare `TypeError` and unwind `CheckoutController._resolve` and
+/// `VpayCheckout.start` with it. The thrown value is deliberately not
+/// inspected or carried: a cast error's message quotes the offending value,
+/// and one of these fields *is* a `client_secret` (D6).
+T? _decode<T>(T Function() parse) {
+  try {
+    return parse();
+  } on Object {
+    return null;
+  }
+}
+
 /// `{prefix}abc_secret_xyz` split into the object's id — mirrors
 /// `sdks/stripe-js/src/client.ts`'s `parseClientSecret`. Deliberately not a
 /// regex over the suffix alphabet, for the same reason that file gives: the
@@ -160,8 +180,14 @@ final class BrowserClient {
       return PaymentIntentResult.err(outcome.error!);
     }
     if (outcome.ok! && PaymentIntent.isPaymentIntentJson(outcome.body)) {
-      return PaymentIntentResult.ok(
-        PaymentIntent.fromJson((outcome.body! as Map).cast()),
+      final PaymentIntent? intent = _decode(
+        () => PaymentIntent.fromJson((outcome.body! as Map).cast()),
+      );
+      if (intent != null) {
+        return PaymentIntentResult.ok(intent);
+      }
+      return PaymentIntentResult.err(
+        VpayError.unexpectedResponse(outcome.status!),
       );
     }
     if (outcome.ok!) {
@@ -202,8 +228,14 @@ final class BrowserClient {
       return CheckoutSessionResult.err(outcome.error!);
     }
     if (outcome.ok! && CheckoutSession.isCheckoutSessionJson(outcome.body)) {
-      return CheckoutSessionResult.ok(
-        CheckoutSession.fromJson((outcome.body! as Map).cast()),
+      final CheckoutSession? session = _decode(
+        () => CheckoutSession.fromJson((outcome.body! as Map).cast()),
+      );
+      if (session != null) {
+        return CheckoutSessionResult.ok(session);
+      }
+      return CheckoutSessionResult.err(
+        VpayError.unexpectedResponse(outcome.status!),
       );
     }
     if (outcome.ok!) {

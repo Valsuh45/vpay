@@ -28,9 +28,16 @@ void main() {
           .replaceAll(RegExp(r'/\*[\s\S]*?\*/'), '')
           .replaceAll(RegExp(r'(^|[^:])//.*$', multiLine: true), r'$1');
 
-      if (RegExp(r'(?<![A-Za-z0-9_.])print\s*\(').hasMatch(code) ||
-          RegExp(r'(?<![A-Za-z0-9_.])debugPrint\s*\(').hasMatch(code) ||
-          RegExp(r'(?<![A-Za-z0-9_.])log\s*\(').hasMatch(code)) {
+      // The lookbehind excludes a longer identifier (`dialog(`, `sprint(`)
+      // but deliberately **not** a member expression. Until 2026-09-14 `.`
+      // was in this character class, which meant the one spelling a
+      // developer actually reaches for — `import 'dart:developer' as
+      // developer; developer.log(url)`, or `foundation.debugPrint(url)` —
+      // walked straight past this gate. A qualified call puts exactly the
+      // same `client_secret` in exactly the same logcat.
+      if (RegExp(r'(?<![A-Za-z0-9_])print\s*\(').hasMatch(code) ||
+          RegExp(r'(?<![A-Za-z0-9_])debugPrint\s*\(').hasMatch(code) ||
+          RegExp(r'(?<![A-Za-z0-9_])log\s*\(').hasMatch(code)) {
         offenders.add(entity.path);
       }
     }

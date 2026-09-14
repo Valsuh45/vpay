@@ -65,7 +65,19 @@ final class WebVpayCheckoutPlatform extends VpayCheckoutPlatform {
   }
 
   web.Window? _popup;
-  StreamController<CheckoutWindowEvent>? _events;
+
+  /// One long-lived broadcast controller for the life of this object, not
+  /// one per [show].
+  ///
+  /// Until 2026-09-14 this was created inside `show`, and [windowEvents]
+  /// threw a `StateError` when read before it. That forced every caller to
+  /// subscribe *after* `show` returned — and `show` returns with the popup
+  /// already open, so a payer who closed it in that gap had their event
+  /// added to a broadcast stream with no listener, which drops it silently
+  /// and hangs the caller forever. A stream that exists before the window
+  /// does is what lets `VpayCheckout.start` subscribe first.
+  final StreamController<CheckoutWindowEvent> _events =
+      StreamController<CheckoutWindowEvent>.broadcast();
   Timer? _closePoll;
   JSFunction? _messageListener;
   bool _settled = false;
@@ -86,9 +98,6 @@ final class WebVpayCheckoutPlatform extends VpayCheckoutPlatform {
   }) async {
     _teardown();
     _settled = false;
-    final StreamController<CheckoutWindowEvent> events =
-        StreamController<CheckoutWindowEvent>.broadcast();
-    _events = events;
 
     final web.Window? popup = web.window.open(
       url,
@@ -96,7 +105,6 @@ final class WebVpayCheckoutPlatform extends VpayCheckoutPlatform {
       'popup=yes,location=yes,resizable=yes,scrollbars=yes',
     );
     if (popup == null) {
-      _events = null;
       throw StateError(
         'vpay_checkout_flutter (web): the browser refused to open the '
         'checkout popup. Call VpayCheckout.start from a click handler, or '
@@ -112,7 +120,7 @@ final class WebVpayCheckoutPlatform extends VpayCheckoutPlatform {
       }
       final Object? data = messageEvent.data?.dartify();
       if (data is Map && data['type'] == _completeMessageType) {
-        _reportOnce(events, CheckoutWindowOutcome.stopUrlReached);
+        _reportOnce(CheckoutWindowOutcome.stopUrlReached);
       }
     }
 
@@ -122,20 +130,17 @@ final class WebVpayCheckoutPlatform extends VpayCheckoutPlatform {
 
     _closePoll = Timer.periodic(_closePollInterval, (_) {
       if (_popup?.closed ?? true) {
-        _reportOnce(events, CheckoutWindowOutcome.dismissed);
+        _reportOnce(CheckoutWindowOutcome.dismissed);
       }
     });
   }
 
-  void _reportOnce(
-    StreamController<CheckoutWindowEvent> events,
-    CheckoutWindowOutcome outcome,
-  ) {
-    if (_settled || events.isClosed) {
+  void _reportOnce(CheckoutWindowOutcome outcome) {
+    if (_settled || _events.isClosed) {
       return;
     }
     _settled = true;
-    events.add(CheckoutWindowEvent(outcome: outcome));
+    _events.add(CheckoutWindowEvent(outcome: outcome));
     _popup?.close();
     _teardown();
   }
@@ -156,15 +161,7 @@ final class WebVpayCheckoutPlatform extends VpayCheckoutPlatform {
     _popup?.close();
   }
 
+  /// Readable at any time, including before [show] — see [_events].
   @override
-  Stream<CheckoutWindowEvent> get windowEvents {
-    final StreamController<CheckoutWindowEvent>? events = _events;
-    if (events == null) {
-      throw StateError(
-        'vpay_checkout_flutter (web): windowEvents was read before show() '
-        'opened a popup.',
-      );
-    }
-    return events.stream;
-  }
+  Stream<CheckoutWindowEvent> get windowEvents => _events.stream;
 }

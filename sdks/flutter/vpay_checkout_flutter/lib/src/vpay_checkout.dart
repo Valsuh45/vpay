@@ -3,19 +3,39 @@
 /// answer.
 library;
 
+import 'dart:async';
+
 import 'package:http/http.dart' as http;
 
 import 'browser_client.dart';
 import 'checkout_controller.dart';
 import 'errors.dart';
 import 'platform/checkout_platform.dart';
-import 'platform/messages.g.dart' show CheckoutWindowOutcome;
+import 'platform/messages.g.dart'
+    show CheckoutWindowEvent, CheckoutWindowOutcome;
 import 'result.dart';
 
 /// D8: the in-app WebView (default) or the external-browser mode. Both are
 /// resolved identically by [CheckoutController] — the mode only changes
 /// what the platform host shows, never how the outcome is decided (D1).
-enum VpayCheckoutMode { inApp, externalBrowser }
+enum VpayCheckoutMode {
+  /// The in-app `WebView`/`WKWebView`/popup (design doc D5). The default,
+  /// and the only mode any platform host in this repository implements.
+  inApp,
+
+  /// Custom Tabs on Android, `SFSafariViewController` on iOS below 17.4
+  /// (design doc D8) — **not implemented on any platform.**
+  ///
+  /// [VpayCheckout.start] throws [UnimplementedError] when this is passed.
+  /// It is deliberately not silently downgraded to [inApp]: until
+  /// 2026-09-14 it was, which made the public API claim a mode that did
+  /// not exist and handed the caller an in-app `WebView` for the one rail
+  /// case (design doc D8: Orange) the mode exists to serve. The value is
+  /// kept in the enum rather than removed because D-M2 is a maintainer
+  /// decision that this mode ships — see `docs/sdks/parity.md`'s dated ⛔
+  /// row for who owns closing it.
+  externalBrowser,
+}
 
 /// `{base}/c/{cs_id}?key={pk}#{cs_secret}` (D6), split into the one thing
 /// this package needs out of it: the fragment. The query's `key` is not
@@ -78,6 +98,22 @@ final class VpayCheckout {
     String sessionUrl, {
     VpayCheckoutMode mode = VpayCheckoutMode.inApp,
   }) async {
+    if (mode == VpayCheckoutMode.externalBrowser) {
+      // D8 is designed but unwired: `pigeons/checkout.dart`'s
+      // `ShowCheckoutRequest` carries no `mode` field, so no platform host
+      // has anything to act on. Refusing loudly is the honest form of that
+      // gap — silently opening the in-app WebView instead would be this
+      // repository's own first-listed failure mode (CLAUDE.md, "The failure
+      // mode to avoid"): an API that returns something plausible for a
+      // capability it does not have.
+      throw UnimplementedError(
+        'vpay_checkout_flutter: VpayCheckoutMode.externalBrowser is not '
+        'implemented on any platform. pigeons/checkout.dart\'s '
+        'ShowCheckoutRequest carries no mode field, so Custom Tabs / '
+        'SFSafariViewController (design doc D8) are unreachable. Use '
+        'VpayCheckoutMode.inApp; see docs/sdks/parity.md for the dated gap.',
+      );
+    }
     final _SessionUrl? parsed = _SessionUrl.parse(sessionUrl);
     if (parsed == null) {
       return VpayCheckoutUnresolved(
@@ -101,25 +137,99 @@ final class VpayCheckout {
           error: error,
         );
       case CheckoutPreflightSuccess(:final ready):
-        // D5/D7: the platform host shows the URL and reports one of two
-        // signals. `VpayCheckoutPlatform.instance` is
-        // `UnimplementedVpayCheckoutPlatform` until Lane C registers a real
-        // one — this call throws `UnimplementedError` on this branch today,
-        // deliberately: see docs/sdks/parity.md's dated ⛔ row for this
-        // package.
-        await VpayCheckoutPlatform.instance.show(
-          url: sessionUrl,
-          stopUrls: ready.stopUrls,
-          allowInsecureUrl: false,
-        );
-        final CheckoutWindowOutcome outcome = await VpayCheckoutPlatform
-            .instance
-            .windowEvents
-            .first
-            .then((event) => event.outcome);
-        return outcome == CheckoutWindowOutcome.stopUrlReached
-            ? _controller.resolveAfterStopUrlReached(ready)
-            : _controller.resolveAfterDismissal(ready);
+        return _showAndResolve(sessionUrl, ready);
     }
   }
+
+  /// D5/D7: the platform host shows the URL and reports one of two signals.
+  ///
+  /// The subscription is taken **before** [VpayCheckoutPlatform.show] is
+  /// called, not after. Both platform implementations publish onto a
+  /// broadcast stream, which drops anything added while nobody is listening;
+  /// subscribing after `show` resolved left a window — small on Android,
+  /// where the event cannot arrive before `startActivityForResult` returns,
+  /// and real on web, where `show` completes with a popup already open and a
+  /// payer who closes it instantly — in which the one event this flow waits
+  /// for could be lost and `start` would never return.
+  Future<VpayCheckoutResult> _showAndResolve(
+    String sessionUrl,
+    CheckoutPreflightReady ready,
+  ) async {
+    // `VpayCheckoutPlatform.instance` is `UnimplementedVpayCheckoutPlatform`
+    // unless a host registered itself; reading `windowEvents` off it throws
+    // `UnimplementedError`, deliberately — see docs/sdks/parity.md.
+    final VpayCheckoutPlatform platform = VpayCheckoutPlatform.instance;
+    final Completer<CheckoutWindowEvent> settled =
+        Completer<CheckoutWindowEvent>();
+    final StreamSubscription<CheckoutWindowEvent> subscription = platform
+        .windowEvents
+        .listen(
+          (CheckoutWindowEvent event) {
+            if (!settled.isCompleted) {
+              settled.complete(event);
+            }
+          },
+          onError: (Object _) {
+            // Deliberately not interpolated: a platform error can carry the
+            // URL it failed on, and that URL carries the session secret
+            // (D6).
+            if (!settled.isCompleted) {
+              settled.completeError(const _WindowNeverReported());
+            }
+          },
+          onDone: () {
+            if (!settled.isCompleted) {
+              settled.completeError(const _WindowNeverReported());
+            }
+          },
+        );
+
+    try {
+      try {
+        await platform.show(
+          url: sessionUrl,
+          stopUrls: ready.stopUrls,
+          allowInsecureUrl: _controller.client.allowInsecureBaseUrl,
+        );
+      } on UnimplementedError {
+        // The honest "no host here" gap, not a runtime failure — it must
+        // reach the caller as itself.
+        rethrow;
+      } on Object {
+        // A popup the browser refused, an Android `Activity` that would not
+        // start: the window never opened, so no money can have moved. A
+        // typed result, and never the thrown value's own message, which on
+        // Android or web can quote the URL (D6).
+        return VpayCheckoutUnresolved(
+          sessionId: ready.sessionId,
+          paymentIntentId: ready.paymentIntentId,
+          error: VpayError.platformWindow(),
+        );
+      }
+
+      final CheckoutWindowEvent event;
+      try {
+        event = await settled.future;
+      } on _WindowNeverReported {
+        return VpayCheckoutUnresolved(
+          sessionId: ready.sessionId,
+          paymentIntentId: ready.paymentIntentId,
+          error: VpayError.platformWindow(),
+        );
+      }
+
+      return event.outcome == CheckoutWindowOutcome.stopUrlReached
+          ? _controller.resolveAfterStopUrlReached(ready)
+          : _controller.resolveAfterDismissal(ready);
+    } finally {
+      await subscription.cancel();
+    }
+  }
+}
+
+/// The window's event stream ended, or errored, without ever reporting an
+/// outcome — a platform-host bug. Private: it never leaves this file, it is
+/// mapped to [VpayError.platformWindow] at the one place it is caught.
+final class _WindowNeverReported implements Exception {
+  const _WindowNeverReported();
 }
