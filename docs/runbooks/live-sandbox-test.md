@@ -74,10 +74,11 @@ cargo xtask gen-signing-key --out .e2e/live-merchant # -> .e2e/live-merchant/oau
 
 `cargo xtask gen-signing-key --out <dir>` writes `<dir>/oauth-signing-key.pem`
 (the private half, mode 0600) and prints the matching `kid` + public JWK.
-`config/application-live.yml` bakes the **public** half only — vpay never holds
-the private half (ADR-0010). Paste **your** public JWK into that file's
-`merchant_clients[0].jwks.keys` array, replacing the committed example's
-`keys`. `.e2e/` and `secrets/` are git-ignored.
+`config/application-live.yml` references the **public** half only — vpay never
+holds the private half (ADR-0010) — through two `${VAR}` placeholders. Put
+**your** key's `kid` and modulus `n` (both printed by `gen-signing-key`) into
+`.env.live` as `LIVE_MERCHANT_JWK_KID` and `LIVE_MERCHANT_JWK_N`, replacing the
+example values. `.e2e/` and `secrets/` are git-ignored.
 
 ### The credentials
 

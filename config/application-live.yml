@@ -75,6 +75,12 @@ providers:
 # (private half at .e2e/live-merchant/oauth-signing-key.pem). vpay holds only
 # the public half; the merchant signs client_credentials assertions with the
 # private half (ADR-0010).
+#
+# The key-specific halves (`kid` and the RSA modulus `n`) are ${VAR}
+# placeholders resolved from the environment, not literals — set
+# LIVE_MERCHANT_JWK_KID / LIVE_MERCHANT_JWK_N in `.env.live` (git-ignored) to
+# the values `cargo xtask gen-signing-key` prints. `kty`/`use`/`alg`/`e` are
+# fixed and not key-specific (the generator always emits 3072-bit RSA, e = AQAB).
 merchant_clients:
   - client_id: live-merchant
     merchant_id: live-merchant
@@ -83,9 +89,9 @@ merchant_clients:
       keys:
         - kty: RSA
           use: sig
-          kid: K0sW_FgKYbVwWf91FcTy4d3I54H5f9LvLkYhMNQQcwk
+          kid: ${LIVE_MERCHANT_JWK_KID}
           alg: RS256
-          n: 0JMDvAsjk2yNeI2W7yb7MXScO-OmvxzVsSqRj-Hi5XRahyqCTwtmvu9YvpjCiF7BFB-5TPLpC5Kse7ibUWBCV3B84LAmHbjfVfQ3wQr1hNXFdPCNdzw6lvZ8aVK4bhAq7HcvHeMJiKkT-nfPIqRdPfJzLnn0mKVxXSKXk0TEJ78GXht8ecmIWxizcgksLjujQAq30aDoRXZZ5DZ1I8GEJc4RZc9-_Ysli_UNIAJadUDjm7WIDcHRNsndhC24iGuExPRMfNtjvBlSlWWuUf-IzqClBGg353jInz5EH0DuAZgGJ4iw_ijdrkVPnJVNVB3uWUArsXW6E1JEdWDMdudpW1oXR6obuIxQRd_5HodkS8oyeibeg9F2qMSkYMTM0WY6zbKZ0Gd0zC-BMFaCrcGW-h-LmBJtDNZABZHzUazBcyhzVdlzcsNbL-A7tb4_5_ndIFfV76pFFfirTg0zaUGTcFC_qAgKVweAaQ9svLuhkVOoJo18U33wxAkfWPORwx7l
+          n: ${LIVE_MERCHANT_JWK_N}
           e: AQAB
     grant_types: [client_credentials]
     # Both scopes, so a single merchant can read its own intents too.
