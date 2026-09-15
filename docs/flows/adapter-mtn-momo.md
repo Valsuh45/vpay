@@ -198,11 +198,11 @@ never treat 500 as blind-retry.
 
 ## Environment values (all just config)
 
-|                      | Sandbox                                 | Cameroon production                              |
-| -------------------- | --------------------------------------- | ------------------------------------------------ |
+|                      | Sandbox                                                        | Cameroon production                              |
+| -------------------- | -------------------------------------------------------------- | ------------------------------------------------ |
 | `base_url`           | `https://sandbox.momodeveloper.mtn.com` ✅ (called 2026-09-15) | `https://proxy.momoapi.mtn.com` — **confirm**    |
-| `target_environment` | `sandbox` ✅ (called 2026-09-15) | `mtncameroon` — **confirm; subsidiary-specific** |
-| `currency`           | **EUR only** ✅ (the 2026-09-15 payment was EUR) | XAF                                              |
+| `target_environment` | `sandbox` ✅ (called 2026-09-15)                               | `mtncameroon` — **confirm; subsidiary-specific** |
+| `currency`           | **EUR only** ✅ (the 2026-09-15 payment was EUR)               | XAF                                              |
 
 ## Status
 
