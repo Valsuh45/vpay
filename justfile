@@ -343,6 +343,419 @@ analyze-flutter: _flutter-preflight
 test-flutter: _flutter-preflight
     cd {{ flutter_plugin_dir }} && flutter test
 
+# The plugin's Dart core against a REAL, RUNNING vpay stack — Lane D,
+# `docs/plans/2026-09-14-flutter-e2e-real-stack.md`. No `MockClient` anywhere
+# in the path: `sdks/flutter/vpay_checkout_flutter/test_e2e/
+# real_stack_e2e_test.dart` drives the package's own `BrowserClient` and
+# `CheckoutController` against real HTTP, on a session minted through
+# `examples/shop`'s real server (a real `POST /v1/payment_intents` + `POST
+# /v1/checkout/sessions`, authenticated with a real `private_key_jwt`
+# exchange).
+#
+# Separate from `test-flutter`, the way `test-e2e` is separate from
+# `test-web`: `test-flutter` stays stack-independent and MUST keep passing —
+# 80 passed, 0 skipped — with the stack down. This recipe needs a stack and
+# refuses LOUDLY, never a skip, the moment one is not reachable: a green run
+# against nothing listening would be worse than no test at all.
+#
+# Does NOT bring the stack up and does NOT tear it down — `just demo-up` may
+# already be running, shared with other work on this host. It reads two new
+# orders through the shop and expires the second one's session; it never
+# touches anything else already on the stack.
+#
+# The one merchant-only call this needs — expiring the second session, to
+# prove a session that is not `open` refuses the confirm — is made with a
+# real access token this recipe mints itself, the same `private_key_jwt`
+# exchange `examples/merchant-demo` and `just sdk-conformance-node` already
+# do: it reads WHICHEVER private key the running shop container already has
+# baked in (`docker cp`, never generated or committed here) and signs an
+# assertion with `sdks/nodejs`'s own `mintClientAssertion` via
+# `sdks/nodejs/scripts/mint-assertion.mjs`.
+test-flutter-e2e: _flutter-preflight
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for tool in curl docker jq node pnpm; do
+        command -v "$tool" >/dev/null 2>&1 || { echo "test-flutter-e2e: FAIL — needs '$tool' on PATH" >&2; exit 1; }
+    done
+
+    base_url="http://localhost:{{demo_port}}"
+    shop_url="http://localhost:{{demo_shop_port}}"
+
+    # THE DECISIVE CHECK. Everything below assumes a real stack; this is
+    # where a down stack is refused LOUDLY rather than the rest of this
+    # script failing three tools deep with a message that names neither.
+    echo "test-flutter-e2e: checking $base_url/healthz"
+    if ! curl -fsS -o /dev/null --max-time 5 "$base_url/healthz"; then
+        echo "test-flutter-e2e: FAIL — nothing answers $base_url/healthz." >&2
+        echo "test-flutter-e2e: this is a REAL end-to-end test and refuses to fake one." >&2
+        echo "test-flutter-e2e: bring a stack up first: just demo-up" >&2
+        exit 1
+    fi
+    if ! curl -fsS -o /dev/null --max-time 5 "$shop_url/healthz"; then
+        echo "test-flutter-e2e: FAIL — nothing answers $shop_url/healthz (examples/shop)." >&2
+        echo "test-flutter-e2e: bring a stack up first: just demo-up" >&2
+        exit 1
+    fi
+    echo "test-flutter-e2e: stack is up"
+
+    export VPAY_DEMO_PROJECT={{demo_project}}
+    export VPAY_DEMO_PORT={{demo_port}}
+    export VPAY_DEMO_RECEIVER_PORT={{demo_receiver_port}}
+    export VPAY_DEMO_ORANGE_PORT={{demo_orange_port}}
+    export VPAY_DEMO_CHECKOUT_PORT={{demo_checkout_port}}
+    export VPAY_DEMO_SHOP_PORT={{demo_shop_port}}
+    export VPAY_DEMO_DASHBOARD_PORT={{demo_dashboard_port}}
+
+    shop_container="$(docker compose {{demo_compose}} ps -q vpay-shop)"
+    if [ -z "$shop_container" ]; then
+        echo "test-flutter-e2e: FAIL — no running 'vpay-shop' container under project {{demo_project}}." >&2
+        exit 1
+    fi
+
+    shop_env="$(docker inspect "$shop_container" --format '{{{{range .Config.Env}}{{{{println .}}{{{{end}}')"
+    client_id="$(printf '%s\n' "$shop_env" | sed -n 's/^VPAY_CLIENT_ID=//p')"
+    publishable_key="$(printf '%s\n' "$shop_env" | sed -n 's/^VPAY_PUBLISHABLE_KEY=//p')"
+    private_key_path="$(printf '%s\n' "$shop_env" | sed -n 's/^VPAY_PRIVATE_KEY_FILE=//p')"
+    if [ -z "$client_id" ] || [ -z "$publishable_key" ] || [ -z "$private_key_path" ]; then
+        echo "test-flutter-e2e: FAIL — could not read VPAY_CLIENT_ID/VPAY_PUBLISHABLE_KEY/VPAY_PRIVATE_KEY_FILE" >&2
+        echo "test-flutter-e2e:   off the running vpay-shop container's own environment." >&2
+        exit 1
+    fi
+    echo "test-flutter-e2e: shop container is client_id=$client_id"
+
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "$tmp"' EXIT
+    docker cp "$shop_container:$private_key_path" "$tmp/merchant.pem"
+
+    # Two real orders, through the shop's real server — the same
+    # `orders.create` mutation a buyer's browser calls
+    # (`examples/shop/src/server/routers/orders.ts`), which performs the
+    # real `POST /v1/payment_intents` + `POST /v1/checkout/sessions` with
+    # `private_key_jwt` (`examples/shop/src/server/orders.ts:273`,`:295`).
+    mint_order() {
+        curl -sS -X POST "$shop_url/api/trpc/orders.create" \
+            -H 'Content-Type: application/json' \
+            -d "{\"email\":\"$1\",\"lines\":[{\"productId\":\"njangi-tote\",\"quantity\":1}],\"mode\":\"hosted\"}"
+    }
+
+    success_order="$(mint_order flutter-e2e-success@example.test)"
+    success_url="$(printf '%s' "$success_order" | jq -er '.result.data.url')" || {
+        echo "test-flutter-e2e: FAIL — orders.create (success fixture) answered: $success_order" >&2
+        exit 1
+    }
+
+    expiring_order="$(mint_order flutter-e2e-expired@example.test)"
+    expiring_url="$(printf '%s' "$expiring_order" | jq -er '.result.data.url')" || {
+        echo "test-flutter-e2e: FAIL — orders.create (expiry fixture) answered: $expiring_order" >&2
+        exit 1
+    }
+    expiring_cs_id="$(printf '%s' "$expiring_url" | sed -E 's#^[^#]*/c/([a-zA-Z0-9_]+).*#\1#')"
+    expiring_cs_secret="${expiring_url#*#}"
+    echo "test-flutter-e2e: minted 2 real checkout sessions (real private_key_jwt, real cs_… ids)"
+
+    # Read the expiring session ONCE while it is still `open`, to capture
+    # the intent's own client_secret (D2 item 1) BEFORE expiring it below —
+    # the whole point of this fixture
+    # (docs/flows/hosted-checkout.md, "A session that is not open refuses
+    # the confirm").
+    expiring_session="$(curl -fsS "$base_url/v1/browser/checkout/sessions/${expiring_cs_id}?key=${publishable_key}&client_secret=${expiring_cs_secret}")"
+    expiring_intent_id="$(printf '%s' "$expiring_session" | jq -er '.payment_intent.id')"
+    expiring_intent_secret="$(printf '%s' "$expiring_session" | jq -er '.payment_intent.client_secret')"
+
+    # A real merchant access token, minted the same way
+    # `examples/merchant-demo` and `just sdk-conformance-node` do —
+    # `client_credentials` + `private_key_jwt`, signed with whichever key
+    # the running shop container actually has.
+    pnpm install --filter @vaam-apps/vpay-sdk... >/dev/null
+    pnpm --filter @vaam-apps/vpay-sdk build >/dev/null
+    assertion="$(VPAY_CLIENT_ID="$client_id" VPAY_PRIVATE_KEY_FILE="$tmp/merchant.pem" \
+        VPAY_AUDIENCE="$base_url/v1/oauth/token" \
+        node sdks/nodejs/scripts/mint-assertion.mjs | jq -er '.assertion')"
+    token_response="$(curl -sS -X POST "$base_url/v1/oauth/token" \
+        -H 'Content-Type: application/x-www-form-urlencoded' \
+        --data-urlencode 'grant_type=client_credentials' \
+        --data-urlencode "client_assertion=${assertion}" \
+        --data-urlencode 'client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer' \
+        --data-urlencode 'audience=vpay:v1')"
+    merchant_token="$(printf '%s' "$token_response" | jq -er '.access_token')" || {
+        echo "test-flutter-e2e: FAIL — could not mint a merchant access token to expire the fixture session." >&2
+        echo "test-flutter-e2e:   token endpoint answered: $token_response" >&2
+        exit 1
+    }
+
+    expire_status="$(curl -sS -o "$tmp/expire.json" -w '%{http_code}' -X POST \
+        "$base_url/v1/checkout/sessions/${expiring_cs_id}/expire" \
+        -H "Authorization: Bearer ${merchant_token}" \
+        -H "Idempotency-Key: test-flutter-e2e-expire-$(date +%s)-$$")"
+    if [ "$expire_status" != "200" ]; then
+        echo "test-flutter-e2e: FAIL — expiring the fixture session answered HTTP $expire_status:" >&2
+        cat "$tmp/expire.json" >&2
+        exit 1
+    fi
+    echo "test-flutter-e2e: expired session $expiring_cs_id (real private_key_jwt token, real 200)"
+
+    fixture="$tmp/fixture.json"
+    jq -n \
+        --arg baseUrl "$base_url" \
+        --arg publishableKey "$publishable_key" \
+        --arg successSessionUrl "$success_url" \
+        --arg expiredSessionUrl "$expiring_url" \
+        --arg expiredIntentId "$expiring_intent_id" \
+        --arg expiredIntentClientSecret "$expiring_intent_secret" \
+        '{baseUrl: $baseUrl, publishableKey: $publishableKey, successSessionUrl: $successSessionUrl, expiredSessionUrl: $expiredSessionUrl, expiredIntentId: $expiredIntentId, expiredIntentClientSecret: $expiredIntentClientSecret}' \
+        > "$fixture"
+
+    echo "test-flutter-e2e: fixture written — driving the plugin's own BrowserClient/CheckoutController"
+    cd {{ flutter_plugin_dir }}
+    VPAY_E2E_FIXTURE_FILE="$fixture" flutter test test_e2e
+
+# Lane E (docs/plans/2026-09-13-flutter-plugin.md D1/D5) — the ONLY recipe in
+# this file that drives the real `VpayCheckoutActivity` and its real
+# `WebView` on a real (headless) Android emulator. Everything above this
+# line proves the Dart core; nothing above it has ever opened the native
+# window at all — `docs/sdks/parity.md`'s dated ⛔ rows say so.
+#
+# Separate from `test-flutter` (stack-independent, MUST keep passing with
+# nothing running) and from `test-flutter-e2e` (no device, no window —
+# `test_e2e/real_stack_e2e_test.dart`'s own header names exactly this gap).
+# THE DECISIVE PROPERTY: this recipe refuses LOUDLY, never a skip, the
+# moment no Android device answers `adb` — a green run with nothing
+# connected would be worse than no test at all.
+#
+# Needs, on top of `test-flutter-e2e`'s own tools, `adb` on PATH and an
+# emulator or device already running. It does not boot one itself — booting
+# is slow, this host is shared, and a recipe that silently starts an
+# emulator is a recipe that silently leaves one running. Point it at a
+# specific device with `VPAY_EMULATOR_SERIAL=emulator-5566 just
+# test-flutter-emulator`; left unset, it looks for exactly one attached
+# device whose own AVD name is `vpay_e2e_avd` (Lane E's own AVD, never
+# `webank_kyc` or any other device already on this host) and refuses if it
+# finds zero or more than one.
+#
+# Does NOT bring the stack up and does NOT tear it down, the same contract
+# `test-flutter-e2e` has — this host runs `just demo-up` shared with other
+# work. It DOES call `adb reverse` on the device it selected, for the two
+# ports the checkout page needs reachable from inside the emulator's own
+# network namespace as plain "localhost" (`EmulatorFixture.baseUrl`'s own
+# doc comment explains why `adb reverse` rather than rewriting the URL to
+# `10.0.2.2`: the checkout page's OWN client-side JS calls
+# `NEXT_PUBLIC_VPAY_API_URL`, baked into the container as `localhost:8080`,
+# and `adb reverse` is the one fix that makes that string resolve correctly
+# for both this recipe's own HTTP calls and the WebView's).
+test-flutter-emulator: _flutter-preflight
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for tool in adb curl docker jq; do
+        command -v "$tool" >/dev/null 2>&1 || { echo "test-flutter-emulator: FAIL — needs '$tool' on PATH" >&2; exit 1; }
+    done
+
+    # THE DECISIVE CHECK, first and loud — see this recipe's own comment.
+    device="${VPAY_EMULATOR_SERIAL:-}"
+    if [ -z "$device" ]; then
+        candidates=""
+        while IFS=$'\t' read -r serial state; do
+            [ "$state" = "device" ] || continue
+            case "$serial" in emulator-*) ;; *) continue ;; esac
+            avd_name="$(adb -s "$serial" emu avd name 2>/dev/null | head -1 | tr -d '\r')"
+            if [ "$avd_name" = "vpay_e2e_avd" ]; then
+                candidates="$candidates $serial"
+            fi
+        done < <(adb devices | tail -n +2)
+        candidates="$(echo "$candidates" | xargs -n1 2>/dev/null || true)"
+        count="$(echo -n "$candidates" | grep -c . || true)"
+        if [ "$count" -eq 0 ]; then
+            echo "test-flutter-emulator: FAIL — no attached device is running the 'vpay_e2e_avd' AVD." >&2
+            echo "test-flutter-emulator: this is a REAL emulator suite and refuses to fake one." >&2
+            echo "test-flutter-emulator: boot it first, e.g.:" >&2
+            echo "test-flutter-emulator:   \$ANDROID_HOME/emulator/emulator -avd vpay_e2e_avd -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot" >&2
+            echo "test-flutter-emulator: or set VPAY_EMULATOR_SERIAL to name a different attached device." >&2
+            exit 1
+        fi
+        if [ "$count" -gt 1 ]; then
+            echo "test-flutter-emulator: FAIL — more than one attached device is running 'vpay_e2e_avd':$candidates" >&2
+            echo "test-flutter-emulator: set VPAY_EMULATOR_SERIAL to disambiguate." >&2
+            exit 1
+        fi
+        device="$(echo "$candidates" | xargs)"
+    fi
+    if ! adb -s "$device" get-state >/dev/null 2>&1; then
+        echo "test-flutter-emulator: FAIL — '$device' is not answering adb." >&2
+        exit 1
+    fi
+    echo "test-flutter-emulator: driving device $device"
+
+    base_url="http://localhost:{{demo_port}}"
+    checkout_url="http://localhost:{{demo_checkout_port}}"
+    shop_url="http://localhost:{{demo_shop_port}}"
+
+    echo "test-flutter-emulator: checking $base_url/healthz"
+    if ! curl -fsS -o /dev/null --max-time 5 "$base_url/healthz"; then
+        echo "test-flutter-emulator: FAIL — nothing answers $base_url/healthz." >&2
+        echo "test-flutter-emulator: bring a stack up first: just demo-up" >&2
+        exit 1
+    fi
+    if ! curl -fsS -o /dev/null --max-time 5 "$shop_url/healthz"; then
+        echo "test-flutter-emulator: FAIL — nothing answers $shop_url/healthz (examples/shop)." >&2
+        exit 1
+    fi
+    echo "test-flutter-emulator: stack is up"
+
+    # Makes "localhost:8080" and "localhost:3080" inside the emulator's own
+    # network namespace tunnel back to this host's same ports over adb —
+    # see this recipe's own header comment for why this, not 10.0.2.2.
+    adb -s "$device" reverse "tcp:{{demo_port}}" "tcp:{{demo_port}}"
+    adb -s "$device" reverse "tcp:{{demo_checkout_port}}" "tcp:{{demo_checkout_port}}"
+    echo "test-flutter-emulator: adb reverse armed for {{demo_port}} and {{demo_checkout_port}}"
+
+    # Two real, independent hosted sessions through examples/shop's own
+    # real server (D2/D6) — the same `orders.create` mutation a buyer's
+    # browser calls (`examples/shop/src/server/routers/orders.ts`), which
+    # performs a real `POST /v1/payment_intents` + `POST
+    # /v1/checkout/sessions`. Neither is pre-confirmed: unlike
+    # `test-flutter-e2e`'s fixture, this suite drives the REAL page's own
+    # confirm UI, so it needs sessions still `requires_payment_method`, not
+    # ones this recipe already settled with a raw HTTP call.
+    mint_order() {
+        curl -sS -X POST "$shop_url/api/trpc/orders.create" \
+            -H 'Content-Type: application/json' \
+            -d "{\"email\":\"$1\",\"lines\":[{\"productId\":\"njangi-tote\",\"quantity\":1}],\"mode\":\"hosted\"}"
+    }
+
+    window_order="$(mint_order laneE-window@example.test)"
+    window_url="$(printf '%s' "$window_order" | jq -er '.result.data.url')" || {
+        echo "test-flutter-emulator: FAIL — orders.create (window fixture) answered: $window_order" >&2
+        exit 1
+    }
+    dismiss_order="$(mint_order laneE-dismiss@example.test)"
+    dismiss_url="$(printf '%s' "$dismiss_order" | jq -er '.result.data.url')" || {
+        echo "test-flutter-emulator: FAIL — orders.create (dismiss fixture) answered: $dismiss_order" >&2
+        exit 1
+    }
+    publishable_key="$(printf '%s' "$window_url" | sed -E 's/.*[?&]key=([^&#]*).*/\1/')"
+    if [ -z "$publishable_key" ] || [ "$publishable_key" = "$window_url" ]; then
+        echo "test-flutter-emulator: FAIL — could not read ?key=... off the minted session url: $window_url" >&2
+        exit 1
+    fi
+    echo "test-flutter-emulator: minted 2 real, unconfirmed hosted sessions (key=$publishable_key)"
+
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "$tmp"; adb -s "'"$device"'" reverse --remove "tcp:{{demo_port}}" >/dev/null 2>&1 || true; adb -s "'"$device"'" reverse --remove "tcp:{{demo_checkout_port}}" >/dev/null 2>&1 || true' EXIT
+    fixture="$tmp/fixture.json"
+    jq -n \
+        --arg baseUrl "$base_url" \
+        --arg publishableKey "$publishable_key" \
+        --arg sessionUrl "$window_url" \
+        --arg dismissSessionUrl "$dismiss_url" \
+        --arg mtnSucceedsMsisdn "237600000100" \
+        '{baseUrl: $baseUrl, publishableKey: $publishableKey, sessionUrl: $sessionUrl, dismissSessionUrl: $dismissSessionUrl, mtnSucceedsMsisdn: $mtnSucceedsMsisdn}' \
+        > "$fixture"
+    # `--dart-define`, not `VPAY_E2E_FIXTURE_FILE` in the child process's
+    # environment — `integration_test` runs the compiled app ON THE
+    # DEVICE, a separate Android process the host shell's environment
+    # never reaches. See `support/fixture.dart`'s own doc comment.
+    fixture_b64="$(base64 -w0 "$fixture")"
+
+    example_dir="{{ flutter_plugin_dir }}/example"
+    echo "test-flutter-emulator: resolving the example app's own dependencies"
+    (cd "$example_dir" && flutter pub get) >/dev/null
+
+    echo "test-flutter-emulator: === window suite (real Activity, real WebView, full MTN push, real stop-URL interception) ==="
+    window_status=0
+    (cd "$example_dir" && flutter test integration_test/checkout_window_test.dart -d "$device" --dart-define="VPAY_E2E_FIXTURE_B64=$fixture_b64") || window_status=$?
+
+    echo "test-flutter-emulator: === dismiss suite (real back press -> real dismissal) ==="
+    dismiss_log="$tmp/dismiss.log"
+    : > "$dismiss_log"
+    (cd "$example_dir" && flutter test integration_test/checkout_dismiss_test.dart -d "$device" --dart-define="VPAY_E2E_FIXTURE_B64=$fixture_b64" > "$dismiss_log" 2>&1) &
+    dismiss_pid=$!
+
+    # Watched off `$dismiss_log` itself, NOT `adb logcat` — measured on
+    # this host: `print()` inside a `flutter test integration_test/…`
+    # process reaches the flutter tool's own relayed console (what lands
+    # in `$dismiss_log`) but never reaches `adb logcat` at all under this
+    # execution mode, so a logcat-based watch here silently never fires
+    # and every run fell through to the WARNING below and then to the
+    # dismiss suite's own timeout.
+    marker_deadline=$((SECONDS + 90))
+    pressed=0
+    while [ $SECONDS -lt $marker_deadline ]; do
+        if grep -q 'LANE_E_DISMISS_TEST_READY' "$dismiss_log" 2>/dev/null; then
+            activity_deadline=$((SECONDS + 5))
+            while [ $SECONDS -lt $activity_deadline ]; do
+                # Specifically the RESUMED record, not just any mention —
+                # `dumpsys activity activities` keeps a finished Activity's
+                # history entry around too, which matched immediately and
+                # let this loop send the key press before
+                # VpayCheckoutActivity had actually taken focus (measured:
+                # the earlier plain `grep -q 'VpayCheckoutActivity'` broke
+                # out on the first iteration and the resulting keyevent hit
+                # the wrong window).
+                if adb -s "$device" shell dumpsys activity activities 2>/dev/null \
+                    | grep -qE '(mResumedActivity|ResumedActivity:|topResumedActivity=).*VpayCheckoutActivity'; then
+                    break
+                fi
+                sleep 0.2
+            done
+            sleep 0.3
+            adb -s "$device" shell input keyevent 4
+            pressed=1
+            break
+        fi
+        sleep 0.5
+    done
+    if [ "$pressed" -eq 0 ]; then
+        echo "test-flutter-emulator: WARNING — never saw LANE_E_DISMISS_TEST_READY; the dismiss suite will time out and fail on its own" >&2
+    fi
+
+    dismiss_status=0
+    wait "$dismiss_pid" || dismiss_status=$?
+    cat "$dismiss_log"
+
+    echo "test-flutter-emulator: === external browser suite (real Custom Tab, real back press -> real dismissed) ==="
+    external_browser_log="$tmp/external_browser.log"
+    : > "$external_browser_log"
+    (cd "$example_dir" && flutter test integration_test/checkout_external_browser_test.dart -d "$device" --dart-define="VPAY_E2E_FIXTURE_B64=$fixture_b64" > "$external_browser_log" 2>&1) &
+    external_browser_pid=$!
+
+    # Same rationale as the dismiss suite above: watched off the suite's
+    # own relayed console, not `adb logcat`.
+    marker_deadline=$((SECONDS + 90))
+    pressed=0
+    while [ $SECONDS -lt $marker_deadline ]; do
+        if grep -q 'LANE_D8_EXTERNAL_BROWSER_READY' "$external_browser_log" 2>/dev/null; then
+            activity_deadline=$((SECONDS + 5))
+            while [ $SECONDS -lt $activity_deadline ]; do
+                # A Custom Tab is Chrome's own Activity, not
+                # VpayCheckoutActivity — the resumed component belongs to
+                # `com.android.chrome` once the tab has actually taken
+                # focus.
+                if adb -s "$device" shell dumpsys activity activities 2>/dev/null \
+                    | grep -qE '(mResumedActivity|ResumedActivity:|topResumedActivity=).*com\.android\.chrome'; then
+                    break
+                fi
+                sleep 0.2
+            done
+            sleep 0.3
+            adb -s "$device" shell input keyevent 4
+            pressed=1
+            break
+        fi
+        sleep 0.5
+    done
+    if [ "$pressed" -eq 0 ]; then
+        echo "test-flutter-emulator: WARNING — never saw LANE_D8_EXTERNAL_BROWSER_READY; the external browser suite will time out and fail on its own" >&2
+    fi
+
+    external_browser_status=0
+    wait "$external_browser_pid" || external_browser_status=$?
+    cat "$external_browser_log"
+
+    if [ "$window_status" -ne 0 ] || [ "$dismiss_status" -ne 0 ] || [ "$external_browser_status" -ne 0 ]; then
+        echo "test-flutter-emulator: FAIL — window suite exit $window_status, dismiss suite exit $dismiss_status, external browser suite exit $external_browser_status" >&2
+        exit 1
+    fi
+    echo "test-flutter-emulator: all three suites green"
+
 # Vendors `@vaam-apps/vpay-stripe-js`'s build output into
 # `examples/checkout-browser/dist/stripe-js/`, which its `index.html` imports
 # as a plain relative ESM path (no bundler, no import map). A COPY rather

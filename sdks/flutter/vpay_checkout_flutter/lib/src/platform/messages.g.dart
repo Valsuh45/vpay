@@ -114,6 +114,22 @@ int _deepHash(Object? value) {
   return value.hashCode;
 }
 
+/// D8: which window the platform host shows. Mirrors
+/// `vpay_checkout.dart`'s `VpayCheckoutMode` — the two enums are kept
+/// distinct on purpose (one is the public Dart API, one is a wire type) so
+/// the pigeon-generated side can change shape without touching the public
+/// one, but every member here must have a same-named counterpart there.
+enum CheckoutWindowMode {
+  /// The in-app `WebView`/`WKWebView`/popup (design doc D5).
+  inApp,
+
+  /// Custom Tabs on Android, `SFSafariViewController` on iOS below 17.4
+  /// (design doc D8) — no custom URL scheme, ever (D8: schemes are
+  /// first-come-first-served on Android and any installed app could claim
+  /// one).
+  externalBrowser,
+}
+
 /// Which of the two signals `checkout_controller.dart` polls will resolve
 /// happened. Never a `succeeded`/`canceled`/`failed` member — the design's
 /// whole point (D1) is that this interface cannot say that, only Dart's
@@ -202,6 +218,7 @@ class ShowCheckoutRequest {
     required this.url,
     required this.stopUrls,
     required this.allowInsecureUrl,
+    required this.mode,
   });
 
   /// The session's own hosted `url` (D6: carries the session secret in its
@@ -215,8 +232,15 @@ class ShowCheckoutRequest {
   /// to re-derive "is this the demo stack" from the URL's scheme itself.
   bool allowInsecureUrl;
 
+  /// D8: `inApp` (the default) or `externalBrowser`. A platform host that
+  /// has not implemented `externalBrowser` refuses rather than silently
+  /// falling back to `inApp` — see `vpay_checkout.dart`'s doc comment on
+  /// `VpayCheckoutMode.externalBrowser` for why that fallback is the worse
+  /// failure.
+  CheckoutWindowMode mode;
+
   List<Object?> _toList() {
-    return <Object?>[url, stopUrls, allowInsecureUrl];
+    return <Object?>[url, stopUrls, allowInsecureUrl, mode];
   }
 
   Object encode() {
@@ -229,6 +253,7 @@ class ShowCheckoutRequest {
       url: result[0]! as String,
       stopUrls: (result[1]! as List<Object?>).cast<CheckoutStopUrl?>(),
       allowInsecureUrl: result[2]! as bool,
+      mode: result[3]! as CheckoutWindowMode,
     );
   }
 
@@ -243,7 +268,8 @@ class ShowCheckoutRequest {
     }
     return _deepEquals(url, other.url) &&
         _deepEquals(stopUrls, other.stopUrls) &&
-        _deepEquals(allowInsecureUrl, other.allowInsecureUrl);
+        _deepEquals(allowInsecureUrl, other.allowInsecureUrl) &&
+        _deepEquals(mode, other.mode);
   }
 
   @override
@@ -268,7 +294,7 @@ class ShowCheckoutRequest {
   @override
   String toString() {
     return 'ShowCheckoutRequest(url: ${redacted(url)}, stopUrls: $stopUrls, '
-        'allowInsecureUrl: $allowInsecureUrl)';
+        'allowInsecureUrl: $allowInsecureUrl, mode: $mode)';
   }
 }
 
@@ -335,17 +361,20 @@ class _PigeonCodec extends StandardMessageCodec {
     if (value is int) {
       buffer.putUint8(4);
       buffer.putInt64(value);
-    } else if (value is CheckoutWindowOutcome) {
+    } else if (value is CheckoutWindowMode) {
       buffer.putUint8(129);
       writeValue(buffer, value.index);
-    } else if (value is CheckoutStopUrl) {
+    } else if (value is CheckoutWindowOutcome) {
       buffer.putUint8(130);
-      writeValue(buffer, value.encode());
-    } else if (value is ShowCheckoutRequest) {
+      writeValue(buffer, value.index);
+    } else if (value is CheckoutStopUrl) {
       buffer.putUint8(131);
       writeValue(buffer, value.encode());
-    } else if (value is CheckoutWindowEvent) {
+    } else if (value is ShowCheckoutRequest) {
       buffer.putUint8(132);
+      writeValue(buffer, value.encode());
+    } else if (value is CheckoutWindowEvent) {
+      buffer.putUint8(133);
       writeValue(buffer, value.encode());
     } else {
       super.writeValue(buffer, value);
@@ -357,12 +386,15 @@ class _PigeonCodec extends StandardMessageCodec {
     switch (type) {
       case 129:
         final value = readValue(buffer) as int?;
-        return value == null ? null : CheckoutWindowOutcome.values[value];
+        return value == null ? null : CheckoutWindowMode.values[value];
       case 130:
-        return CheckoutStopUrl.decode(readValue(buffer)!);
+        final value = readValue(buffer) as int?;
+        return value == null ? null : CheckoutWindowOutcome.values[value];
       case 131:
-        return ShowCheckoutRequest.decode(readValue(buffer)!);
+        return CheckoutStopUrl.decode(readValue(buffer)!);
       case 132:
+        return ShowCheckoutRequest.decode(readValue(buffer)!);
+      case 133:
         return CheckoutWindowEvent.decode(readValue(buffer)!);
       default:
         return super.readValueOfType(type, buffer);

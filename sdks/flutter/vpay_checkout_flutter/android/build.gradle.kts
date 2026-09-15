@@ -39,6 +39,13 @@ android {
         getByName("main") {
             java.srcDirs("src/main/kotlin")
         }
+        getByName("debug") {
+            // Lane E's JS-evaluation test harness
+            // (VpayCheckoutActivityTestHarness.kt) lives only here, so it
+            // compiles into a debug build and never a release one — see
+            // VpayCheckoutActivity.kt's own file header.
+            java.srcDirs("src/debug/kotlin")
+        }
         getByName("test") {
             java.srcDirs("src/test/kotlin")
         }
@@ -83,12 +90,13 @@ dependencies {
     // (design doc D5: back press is always a dismissal, never a WebView
     // history pop).
     implementation("androidx.activity:activity:1.9.3")
-    // D8's Custom Tabs mode is NOT wired up here — see this package's README
-    // and docs/sdks/parity.md's dated gap: `pigeons/checkout.dart`'s
-    // `ShowCheckoutRequest` (frozen, Lane A) carries no `mode` field, so
-    // there is no signal this host could act on to choose Custom Tabs over
-    // the in-app WebView. `androidx.browser` is deliberately not a
-    // dependency of a code path that could never run.
+    // D8's Custom Tabs mode, wired 2026-09-14: `ShowCheckoutRequest.mode`
+    // carries `EXTERNAL_BROWSER`, and `VpayCheckoutFlutterPlugin.show`
+    // launches a `CustomTabsIntent` for it. No custom URL scheme anywhere
+    // (D8) — return detection is tier 0, `Application
+    // .ActivityLifecycleCallbacks` watching for the host Activity's own
+    // `onResume`, never a scheme callback.
+    implementation("androidx.browser:browser:1.8.0")
 
     testImplementation("org.jetbrains.kotlin:kotlin-test")
     testImplementation("org.mockito:mockito-core:5.0.0")

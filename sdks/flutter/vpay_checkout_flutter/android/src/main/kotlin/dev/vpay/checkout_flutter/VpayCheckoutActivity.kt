@@ -26,6 +26,25 @@
 //   doing anything special to wipe or sandbox it is what keeps it persistent.
 // - Back press is always a dismissal, **never** a WebView history pop — a
 //   history pop would land the payer back on a stale form (design doc D5).
+// - This file lives in `src/main/kotlin`, so it is compiled into EVERY
+//   build variant, including a merchant's release build. Nothing that
+//   calls `WebView.evaluateJavascript`, and nothing that would let outside
+//   code reach `current`/`webView` in order to call it themselves, may
+//   live here. Lane E's JS-driven emulator test harness — briefly a public
+//   `evaluateJavascriptForTests` method on this companion object, which
+//   made a native -> JS injection point into the payer's live checkout
+//   `WebView` reachable from a release build (`docs/sdks/parity.md`) — now
+//   lives entirely in `../../debug/kotlin/dev/vpay/checkout_flutter/
+//   VpayCheckoutActivityTestHarness.kt`, Gradle's own `debug` source set,
+//   and does not read `current` or `webView` at all: it tracks the open
+//   window independently via `Application.ActivityLifecycleCallbacks` and
+//   `Activity.findViewById`, both stock public Android APIs already
+//   available in every build variant regardless of anything this file
+//   does, so moving the harness there adds nothing to what a release build
+//   already exposes. A release build's DEX carries neither that file nor
+//   its `evaluateJavascriptForTests` symbol — see
+//   `docs/sdks/parity.md`'s Flutter row for the `grep -c` count that
+//   proves it, and that file's own doc comment for the full design.
 package dev.vpay.checkout_flutter
 
 import android.content.Context
