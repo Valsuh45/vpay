@@ -286,3 +286,53 @@ Evidence:
 [`../status/verification/2026-09-14-flutter-review.md`](../status/verification/2026-09-14-flutter-review.md),
 and the area page
 [`../status/mobile-flutter-plugin.md`](../status/mobile-flutter-plugin.md).
+
+**Corrected 2026-09-16: the Android/web window ✅ above was earned by a path
+no real app takes.** `example/integration_test/*.dart` registered the
+platform host by hand
+(`support/ensure_platform_registered.dart`); `example/lib/main.dart`, the
+only entrypoint a real merchant app uses, relied on `pubspec.yaml`'s
+`dartPluginClass` mechanism alone, which threw and was silently swallowed
+before the app's own `main()` ran, so a real installed APK never opened the
+window. **A first fix attempt the same day — deferring
+`VpayCheckoutFlutterApi.setUp` out of the constructor and into the first
+call to `show` — was written up here as done but never actually landed in
+the source file; a second pass the same day found the constructor still
+eager and the real device still failing.** The fix that actually landed has
+two parts: the constructor now catches the missing-binding error and
+`show`/`dismiss`/`windowEvents` each retry it (the `dartPluginClass` race
+turned out to be genuinely intermittent, not one-directional), and
+`VpayCheckoutPlatform.instance` is now platform-aware on its own — the
+first read that finds no host registered yet on Android/iOS/macOS resolves
+the method-channel implementation lazily, at a point guaranteed to be after
+the app's own `main()` has run, making `dartPluginClass` registration an
+optimisation rather than a requirement. The hand-registration helper stays
+deleted and the suites rely on the same automatic registration a real app
+depends on. Evidence:
+[`../status/verification/2026-09-16-flutter-real-app-registration.md`](../status/verification/2026-09-16-flutter-real-app-registration.md),
+and the area page's own dated section.
+
+**Revised 2026-09-16: the Android/iOS window is a modal bottom sheet, not a
+full-screen window.** The maintainer's own words: the full-screen `Activity`
+"feels like the user is quitting the app." This revises design D5 —
+[`../plans/2026-09-13-flutter-plugin.md`](../plans/2026-09-13-flutter-plugin.md)'s
+own "D5, revised 2026-09-16" section carries the reasoning and every
+non-negotiable re-checked. In short: Android's `VpayCheckoutActivity` is
+still the same Activity (`android:exported="false"` unchanged) with a
+translucent theme and a Material `BottomSheetBehavior` sheet — a ~90% detent,
+draggable to full height, per the maintainer's explicit decision — instead of
+a full-bleed opaque window; drag-down, a scrim tap and back press all still
+resolve through the one existing dismissal signal (D4), never a second
+"cancel" path. iOS adopts `UISheetPresentationController`'s `.large()` detent
+on 15+ (`.pageSheet`, unchanged, was already card-like on 13/14); iOS 12 — the
+D-M4 floor — has no non-full-screen modal presentation API at all and
+necessarily stays `.fullScreen` there. macOS is unaffected (already presented
+as a sheet) and web is unaffected (the popup was never a full-screen
+takeover). Proven by a hand-driven walk on the maintainer's own
+`emulator-5554` across three cold launches, all three showing the sheet with
+the merchant app visibly behind it, one driven through a real MTN MoMo push
+to a paid outcome and back to the merchant screen, the other two exercising
+drag-down and a scrim tap as dismissal triggers; `just test-flutter-emulator`
+still exits 0, all three suites green. iOS/macOS remain compiled by nobody.
+Evidence:
+[`../status/verification/2026-09-16-flutter-bottom-sheet.md`](../status/verification/2026-09-16-flutter-bottom-sheet.md).

@@ -101,6 +101,94 @@ pre-flight ever ran. That special case is gone.
 Evidence:
 [verification/2026-09-14-flutter-d8-external-browser.md](verification/2026-09-14-flutter-d8-external-browser.md).
 
+## A real installed app never opened the window at all, until 2026-09-16
+
+Every ✅ above for the Android/web window was earned by `example/lib/main.dart`
+compiling and by `example/integration_test/*.dart` suites that called a
+`support/ensure_platform_registered.dart` helper to register the platform
+host **by hand** — the one thing a real app never does. A hand-driven walk
+on a real installed APK (`flutter clean` → `flutter build apk --debug` →
+`adb uninstall` → `adb install` → launch → fill fields → tap "Start
+checkout") threw `UnimplementedError: ... VpayCheckoutPlatform.windowEvents
+has no platform host yet` and never opened `VpayCheckoutActivity`. Root
+cause: the Flutter engine calls `pubspec.yaml`'s `dartPluginClass`-generated
+plugin registrant **before** the app's own `main()`/
+`WidgetsFlutterBinding.ensureInitialized()`/`runApp()` runs, and
+`MethodChannelVpayCheckoutPlatform`'s constructor used to call
+`VpayCheckoutFlutterApi.setUp(this)` eagerly, which touches
+`ServicesBinding.instance` immediately — with no binding yet, that threw
+`Binding has not yet been initialized`, silently swallowed by the engine's
+own generated wrapper.
+
+**A first fix attempt the same day — deferring `VpayCheckoutFlutterApi
+.setUp` out of the constructor into the first call to `show` — was written
+up as done in this section and in the dated verification page below, but
+was never actually applied to `method_channel_checkout_platform.dart`; a
+second pass the same day found the constructor still calling it eagerly and
+the real device still failing exactly as before.** Repeated cold launches
+of the same APK, read through `adb logcat`, then showed the race is real
+but genuinely intermittent: `_PluginRegistrant.register()` sometimes runs
+before `WidgetsFlutterBinding.ensureInitialized()` and sometimes after, so a
+single successful hand-driven walk proves nothing on its own. The fix that
+actually landed has two parts. First, the constructor now catches the
+`FlutterError` `VpayCheckoutFlutterApi.setUp` throws with no binding yet,
+and `show`/`dismiss`/`windowEvents` each retry it — every one of those only
+ever runs after a merchant's own `main()` has, when a binding always
+exists. Second — load-bearing, since the first part alone still depends on
+`dartPluginClass` eventually winning the race — `checkout_platform.dart`'s
+`VpayCheckoutPlatform.instance` getter is now platform-aware on its own,
+via a `dart:io`-vs-web conditional import
+(`native_mobile_host_stub.dart`/`native_mobile_host_io.dart`): the first
+read that finds `UnimplementedVpayCheckoutPlatform` on Android, iOS or
+macOS resolves `MethodChannelVpayCheckoutPlatform` lazily, at a point
+guaranteed to be after the app's own `main()` has run. A
+`defaultTargetPlatform`/`kIsWeb` check was tried first for that and
+rejected: `flutter test` forces `defaultTargetPlatform` to `android`
+whenever `FLUTTER_TEST` is set, which would have silently defeated
+`test/vpay_checkout_test.dart`'s own "no platform host exists yet" case.
+`dartPluginClass` registration winning the race is now purely an
+optimisation, never a requirement. `support/ensure_platform_registered.dart`
+stays deleted; all three `example/integration_test/*.dart` suites rely on
+the same automatic registration a real app depends on, and `just
+test-flutter-emulator` (`VPAY_EMULATOR_SERIAL=emulator-5554`, the
+maintainer's own device) is still exit 0. The regression test,
+`test/method_channel_checkout_platform_registration_test.dart`, is
+unchanged and reproduces the pre-`main()` state; it still fails with
+exactly `Binding has not yet been initialized` against the pre-fix
+constructor (exit 1) and passes against the actual fix (exit 0) — both
+re-measured.
+
+Evidence:
+[verification/2026-09-16-flutter-real-app-registration.md](verification/2026-09-16-flutter-real-app-registration.md).
+
+## Modal checkout sheet, not a full-screen window (2026-09-16)
+
+Requested by the maintainer, verbatim: the full-screen Android/iOS window
+"feels like the user is quitting the app." This revises design D5 —
+[`../plans/2026-09-13-flutter-plugin.md`](../plans/2026-09-13-flutter-plugin.md)'s
+own "D5, revised 2026-09-16" section carries the full reasoning and every
+alternative considered; this page records what was proven.
+
+| Piece                                                              | State                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Android — same Activity, translucent theme                         | ✅ `VpayCheckoutActivity` is unchanged as a class of window — `android:exported="false"` untouched — only `AndroidManifest.xml`'s theme moved from `Theme.NoTitleBar.Fullscreen` to a translucent `Theme.Vpay.CheckoutSheet` (`res/values/styles.xml`), and `onCreate` now builds a scrim + `CoordinatorLayout`/Material `BottomSheetBehavior` sheet around the `WebView` instead of a bare full-bleed one. Deliberately NOT a `BottomSheetDialogFragment` hosted by the merchant's own Activity — that would dissolve the Activity isolation `exported=false` rests on for a cosmetically identical result.                                                                                         |
+| The detent                                                         | ✅ `halfExpandedRatio = 0.9f` with `isFitToContents = false` — the maintainer's explicit "~90% of screen" decision — draggable further to `STATE_EXPANDED` (full height); `skipCollapsed = true` so a drag past the detent goes straight to hidden, never a small peek state.                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| One dismissal signal, three triggers                               | ✅ back press, a scrim tap, and a drag past the detent all set `BottomSheetBehavior.state = STATE_HIDDEN`; the sheet's own `BottomSheetCallback.onStateChanged` is the ONE place that then calls the existing `finishAsDismissed()` — no second, separate "cancel" path (design D4). Proven on-device, not just read: a real `adb shell input swipe` (drag-down) and a real tap on the scrim area both resolved through the existing `VpayCheckoutPending` result (D4's poll-before-report) with a real payment intent mid-flight, exactly as a real hardware back press already did.                                                                                                                |
+| Non-negotiables, re-measured on the new theme                      | ✅ none assumed unchanged. Fresh `flutter clean` → `flutter build apk --debug`/`--release`, both exit 0. The merged manifest inside BOTH built APKs — read with `aapt2 dump xmltree` against the actual APK file, not the source `AndroidManifest.xml` — still carries `VpayCheckoutActivity` with `android:exported="false"`. DEX string count for `evaluateJavascriptForTests`: debug 4, release 0 — unchanged. `onReceivedSslError` still not overridden; still no `addJavascriptInterface`; `allowFileAccess`/`allowFileAccessFromFileURLs`/`allowUniversalAccessFromFileURLs` still all `false` (read, since none of these has a dedicated test).                                               |
+| The hand-driven walk, three cold launches                          | ✅ on the maintainer's own `emulator-5554` (`flutter clean` → `flutter build apk --debug` → `adb uninstall` → `adb install` → launch → fill fields → "Start checkout"), all three showing `VpayCheckoutActivity` on top of `dumpsys activity activities` with the sheet visibly over the merchant app's own screen. Run 1 was driven all the way through a real MTN MoMo push (steering MSISDN `237600000100`) to `VpayCheckoutSucceeded` and back to the merchant screen through the page's own forward button — the existing `stopUrlReached` path, unchanged. Runs 2 and 3 each independently exercised a different dismissal trigger (drag-down; a scrim tap) instead of completing the payment. |
+| `just test-flutter-emulator`, `VPAY_EMULATOR_SERIAL=emulator-5554` | ✅ exit 0, all three suites green (window, dismiss, external-browser) — the dismiss suite's real hardware back press still reports a real dismissal through the sheet exactly as it did through the old full-screen window.                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| iOS — `UISheetPresentationController` on 15+                       | ✅ **compiled by nobody**, reviewed by reading only. `.pageSheet` (13/14, unchanged) already rendered as a card with the app visible behind it; `viewDidLoad` now sets an explicit `.large()` detent via `UISheetPresentationController` on 15+, matching the maintainer's "draggable to full height" decision as an actual API call rather than `.pageSheet`'s own implicit default. iOS 12 (D-M4 floor) has no non-full-screen modal presentation API at all and necessarily stays `.fullScreen` — a stated consequence of supporting that floor, not an oversight.                                                                                                                                |
+| macOS                                                              | ⛔ unaffected on purpose — `VpayCheckoutViewController` there already presents `as a sheet` (that file's own header, unchanged); the maintainer's complaint was about the full-screen Android/iOS shape, not macOS's existing sheet.                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Web                                                                | ⛔ unaffected on purpose — the web host has never been a native window (`window.open` popup, surrounded by the browser's own chrome); there is no full-screen takeover to fix.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+
+Screenshots (not committed to the repository, held by the agent that ran the
+walk): the merchant app before checkout, the sheet with the merchant app
+visibly behind it (the money shot), the paid outcome rendered inside the
+sheet, and the result back on the merchant's own screen.
+
+Evidence:
+[verification/2026-09-16-flutter-bottom-sheet.md](verification/2026-09-16-flutter-bottom-sheet.md).
+
 ## What is still not real
 
 - **No `just ci` gate** (D-M3). `install-flutter`/`analyze-flutter`/
@@ -111,11 +199,16 @@ Evidence:
 - **No iOS or macOS compile.** Not "not yet run" — there is no toolchain on
   this host and there cannot be. Confirmed again by D8: `swiftc`/`swift` are
   both absent from this host too.
-- **No device, no emulator, no browser** for `inApp` — Android's `inApp`
-  window is proven by compiling and web by compiling; neither has been
-  opened. **`externalBrowser` is the exception**: Android's Custom Tabs path
-  was run for real on a headless emulator (D8, above) — web's popup has
-  still never been driven by a browser.
+- **No browser** for web's `inApp` popup — proven by compiling
+  (`flutter build web`) and, separately, by `just test-flutter-web` running
+  `web_checkout_platform_test.dart` in a real Chrome (2026-09-15), but no
+  human or automated walk has ever opened the popup end to end against the
+  real hosted page. **Android's `inApp` window is the exception as of
+  2026-09-16**: corrected below and in the "A real installed app never
+  opened the window" and "Modal checkout sheet" sections — it has been
+  opened for real, repeatedly, on the maintainer's own `emulator-5554`.
+  `externalBrowser` was already the exception before that: Android's Custom
+  Tabs path was run for real on a headless emulator (D8, above).
 - **D8's tier 1** (Android App Links / iOS 17.4+ Associated Domains) is not
   implemented on any platform — see the D8 section above.
 - **No real rail.** `just test-flutter-e2e` (Lane D, above) proved the
@@ -143,3 +236,12 @@ Evidence:
   the four redaction counts after regeneration, both APK builds and DEX
   counts, and the real headless-emulator run of `VpayCheckoutMode
 .externalBrowser`, exit codes read from files throughout.
+- [verification/2026-09-16-flutter-real-app-registration.md](verification/2026-09-16-flutter-real-app-registration.md)
+  — the real-installed-APK defect, its root cause, the fix, the hand-driven
+  walk's `adb dumpsys`/screenshot evidence, the decisive regression test's
+  both exit codes, and every "do not break" gate rerun on the fix.
+- [verification/2026-09-16-flutter-bottom-sheet.md](verification/2026-09-16-flutter-bottom-sheet.md)
+  — the modal-sheet revision: the merged-manifest and DEX re-measurements on
+  the new theme, the three-cold-launch hand-driven walk's `dumpsys` evidence
+  and dismissal-trigger results, `just test-flutter-emulator`'s exit code,
+  and every "do not break" gate rerun on the change.

@@ -348,6 +348,42 @@ analyze-flutter: _flutter-preflight
 test-flutter: _flutter-preflight
     cd {{ flutter_plugin_dir }} && flutter test
 
+# The ONLY recipe that runs `web_checkout_platform.dart` at all — until this
+# landed, the web platform (`window.open`, the origin-pinned `vpay:complete`
+# listener, the `popup.closed` poll) had never been executed, only compiled
+# (`docs/sdks/parity.md`'s Flutter table row). `test/web/` is `@TestOn
+# ('chrome')`, so a bare `flutter test` excludes it entirely (proven: `flutter
+# test` still reports "82 passed, 0 skipped" with those files present — this
+# is neither a pass nor a skip, it is not in the run at all) and only
+# `flutter test --platform chrome` — this recipe, never `just test-flutter`
+# — compiles and runs them, in a REAL Google Chrome. Read
+# `test/web/web_checkout_platform_test.dart`'s own header before citing a ✅
+# off this recipe: it is a browser-executed unit test against a fixture page
+# this suite serves itself, never a run against vpay's actual hosted
+# checkout page — that header explains the structural reason (an origin
+# mismatch between this dev server and `examples/shop`) a true end-to-end
+# popup run was attempted and could not be made to work here.
+#
+# THE DECISIVE PROPERTY: refuses LOUDLY, never a skip, the moment no Chrome
+# is reachable — a green run that silently never opened a browser would be
+# worse than no test at all. `CHROME_EXECUTABLE` overrides which binary;
+# unset, `flutter_tools` itself looks for `google-chrome` on PATH, so this
+# recipe's own preflight check mirrors that default rather than inventing a
+# different one.
+test-flutter-web: _flutter-preflight
+    #!/usr/bin/env bash
+    set -euo pipefail
+    chrome="${CHROME_EXECUTABLE:-google-chrome}"
+    if ! command -v "$chrome" >/dev/null 2>&1; then
+        echo "test-flutter-web: FAIL — no Chrome reachable ('$chrome' is not on PATH)." >&2
+        echo "test-flutter-web: this is a REAL browser suite and refuses to fake one." >&2
+        echo "test-flutter-web: install Google Chrome, or set CHROME_EXECUTABLE to point at it." >&2
+        exit 1
+    fi
+    echo "test-flutter-web: using $chrome"
+    cd {{ flutter_plugin_dir }}
+    CHROME_EXECUTABLE="$chrome" flutter test --platform chrome test/web
+
 # The plugin's Dart core against a REAL, RUNNING vpay stack — Lane D,
 # `docs/plans/2026-09-14-flutter-e2e-real-stack.md`. No `MockClient` anywhere
 # in the path: `sdks/flutter/vpay_checkout_flutter/test_e2e/
@@ -356,6 +392,18 @@ test-flutter: _flutter-preflight
 # `examples/shop`'s real server (a real `POST /v1/payment_intents` + `POST
 # /v1/checkout/sessions`, authenticated with a real `private_key_jwt`
 # exchange).
+#
+# Since the merchant-loop addition (2026-09-15), this also proves the OTHER
+# half of design D1 — that a merchant, not just the payer's device, learns
+# a payment happened. The success fixture is the shop's own real order
+# (`orders.create`, same as ever); this recipe now also captures that
+# order's id and hands it to the Dart suite, which — once the plugin's own
+# poll reaches `VpayCheckoutSucceeded` — asks `examples/shop`'s `orders.get`
+# whether ITS OWN row, written only by its webhook handler
+# (`examples/shop/src/server/webhook.ts`) after a real, signature-verified
+# `payment_intent.succeeded` delivery from `vpay-worker`, says `paid`. That
+# is a second, independent observer: the shop process, driven by a real
+# webhook delivery, never by anything the plugin told it.
 #
 # Separate from `test-flutter`, the way `test-e2e` is separate from
 # `test-web`: `test-flutter` stays stack-independent and MUST keep passing —
@@ -448,6 +496,18 @@ test-flutter-e2e: _flutter-preflight
         echo "test-flutter-e2e: FAIL — orders.create (success fixture) answered: $success_order" >&2
         exit 1
     }
+    # The shop's OWN order id for this session — `examples/shop`'s database
+    # row, not anything vpay knows the name of. This is what lets the Dart
+    # suite ask the MERCHANT, independently of the poll it already did
+    # against vpay itself, whether the payment actually happened
+    # (docs/flows/hosted-checkout.md, "every 'it was paid' assertion made on
+    # the shop's own database" — the same authority
+    # `frontends/tests/e2e/cypress/support/shop.ts`'s `readOrder` is for
+    # Cypress).
+    success_order_id="$(printf '%s' "$success_order" | jq -er '.result.data.orderId')" || {
+        echo "test-flutter-e2e: FAIL — orders.create (success fixture) answered no orderId: $success_order" >&2
+        exit 1
+    }
 
     expiring_order="$(mint_order flutter-e2e-expired@example.test)"
     expiring_url="$(printf '%s' "$expiring_order" | jq -er '.result.data.url')" || {
@@ -507,7 +567,9 @@ test-flutter-e2e: _flutter-preflight
         --arg expiredSessionUrl "$expiring_url" \
         --arg expiredIntentId "$expiring_intent_id" \
         --arg expiredIntentClientSecret "$expiring_intent_secret" \
-        '{baseUrl: $baseUrl, publishableKey: $publishableKey, successSessionUrl: $successSessionUrl, expiredSessionUrl: $expiredSessionUrl, expiredIntentId: $expiredIntentId, expiredIntentClientSecret: $expiredIntentClientSecret}' \
+        --arg shopUrl "$shop_url" \
+        --arg successOrderId "$success_order_id" \
+        '{baseUrl: $baseUrl, publishableKey: $publishableKey, successSessionUrl: $successSessionUrl, expiredSessionUrl: $expiredSessionUrl, expiredIntentId: $expiredIntentId, expiredIntentClientSecret: $expiredIntentClientSecret, shopUrl: $shopUrl, successOrderId: $successOrderId}' \
         > "$fixture"
 
     echo "test-flutter-e2e: fixture written — driving the plugin's own BrowserClient/CheckoutController"
