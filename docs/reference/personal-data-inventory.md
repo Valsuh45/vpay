@@ -45,16 +45,16 @@ every copy of one piece of data (ADR-0020 §1). Each element carries the
 six-field classification and a `copies` list of the database columns (and, once
 the non-DB registry is complete, the non-database surfaces) that hold it:
 
-| Field            | Meaning                                                                                                            |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `subject`        | data-subject category: `payer`, `staff`, `merchant`, or `none` (system/technical)                                  |
-| `purpose`        | the product purpose for which the value is processed                                                               |
-| `necessary`      | whether the value is required for that purpose to function                                                        |
-| `tenant_boundary`| `merchant` or `system` — which boundary the value is scoped to                                                     |
-| `recipients`     | third parties that receive it (e.g. `mtn_momo`, `orange_money`, `merchant-endpoint`)                               |
-| `retention`      | the retention **class** (not the period — the period is an RFC-0002 decision)                                      |
-| `owner`          | the accountable retention owner (`maintainer`, `operator`, `merchant`)                                             |
-| `control`        | the erasure/privacy control at `DELETE`/retention time: `redact`, `none`, `forbid`                                 |
+| Field             | Meaning                                                                              |
+| ----------------- | ------------------------------------------------------------------------------------ |
+| `subject`         | data-subject category: `payer`, `staff`, `merchant`, or `none` (system/technical)    |
+| `purpose`         | the product purpose for which the value is processed                                 |
+| `necessary`       | whether the value is required for that purpose to function                           |
+| `tenant_boundary` | `merchant` or `system` — which boundary the value is scoped to                       |
+| `recipients`      | third parties that receive it (e.g. `mtn_momo`, `orange_money`, `merchant-endpoint`) |
+| `retention`       | the retention **class** (not the period — the period is an RFC-0002 decision)        |
+| `owner`           | the accountable retention owner (`maintainer`, `operator`, `merchant`)               |
+| `control`         | the erasure/privacy control at `DELETE`/retention time: `redact`, `none`, `forbid`   |
 
 `control` is the bridge to the controls already built: `redact` is what the
 customer erasure and retention sweep do (write the `[redacted]` marker, or
@@ -67,25 +67,25 @@ reach a log or export.
 Not an exhaustive table here — the authoritative copy is the YAML. The elements
 whose `subject` is a person are:
 
-| Element              | Copies (DB)                                                                                                    | Control   |
-| -------------------- | -------------------------------------------------------------------------------------------------------------- | --------- |
-| `payer_msisdn`       | `customers.phone`, `charges.payer_ref`, `charges.payer_ref_masked`                                             | `redact`  |
-| `customer_name`      | `customers.name`                                                                                               | `redact`  |
-| `customer_email`     | `customers.email`                                                                                              | `redact`  |
-| `address_formal`     | `customers.address_line1`…`address_country`                                                                    | `redact`  |
-| `address_gps`        | `customers.address_latitude_microdeg`, `customers.address_longitude_microdeg`                                  | `redact`  |
-| `rail_failure_text`  | `charges.failure_raw`, `refunds.failure_raw`, `webhook_deliveries.response_excerpt`, `payment_intents.last_payment_error*`, `provider_requests.error_kind` | `redact`  |
-| `staff_email`        | `staff_members.email`                                                                                          | `redact`  |
-| `staff_display_name` | `staff_members.display_name`                                                                                   | `none`    |
-| `staff_credential_secret` | `credentials.material`/`subject`/`issuer` (migration 0044 moved the staff credential columns here from `staff_members`)     | `forbid`  |
-| `staff_oauth_token`  | `staff_sessions.access_token`                                                                                  | `forbid`  |
-| `session_oauth_code` | `oauth_codes`, `oauth_refresh_tokens`, `oauth_device_codes`, `oauth_authorization_codes`, `oauth_client_assertion_jtis`, `oauth_dpop_jti` | `forbid` |
-| `webhook_url`        | `webhook_deliveries.url`, `checkout_sessions.success_url`/`cancel_url`/`return_url`, `oauth_*redirect_uri`, `charges.redirect_url`/`return_url` | `forbid` |
-| `oauth_signing_key`  | `oauth_signing_keys.kid`/`public_jwk`                                                                          | `forbid`  |
-| `oauth_client_secret`| `oauth_clients.client_secret_hash`/`jwks`, `merchant_api_keys.key_digest`/`key_prefix`, `checkout_sessions.publishable_key`/`client_secret_suffix`/`return_token`, `payment_intents.client_secret_suffix` | `forbid` |
-| `merchant_metadata`  | `customers.metadata`, `payment_intents.metadata`/`description`, `refunds.metadata`, `invoices.metadata` | `none`   |
-| `stored_api_body`    | `events.data`, `idempotency_keys.response_body`                                                          | `redact` |
-| `merchant_note`      | `refunds.reason`, `invoices.description`, `invoice_items.description`                                           | `none`   |
+| Element                   | Copies (DB)                                                                                                                                                                                               | Control  |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| `payer_msisdn`            | `customers.phone`, `charges.payer_ref`, `charges.payer_ref_masked`                                                                                                                                        | `redact` |
+| `customer_name`           | `customers.name`                                                                                                                                                                                          | `redact` |
+| `customer_email`          | `customers.email`                                                                                                                                                                                         | `redact` |
+| `address_formal`          | `customers.address_line1`…`address_country`                                                                                                                                                               | `redact` |
+| `address_gps`             | `customers.address_latitude_microdeg`, `customers.address_longitude_microdeg`                                                                                                                             | `redact` |
+| `rail_failure_text`       | `charges.failure_raw`, `refunds.failure_raw`, `webhook_deliveries.response_excerpt`, `payment_intents.last_payment_error*`, `provider_requests.error_kind`                                                | `redact` |
+| `staff_email`             | `staff_members.email`                                                                                                                                                                                     | `redact` |
+| `staff_display_name`      | `staff_members.display_name`                                                                                                                                                                              | `none`   |
+| `staff_credential_secret` | `credentials.material`/`subject`/`issuer` (migration 0044 moved the staff credential columns here from `staff_members`)                                                                                   | `forbid` |
+| `staff_oauth_token`       | `staff_sessions.access_token`                                                                                                                                                                             | `forbid` |
+| `session_oauth_code`      | `oauth_codes`, `oauth_refresh_tokens`, `oauth_device_codes`, `oauth_authorization_codes`, `oauth_client_assertion_jtis`, `oauth_dpop_jti`                                                                 | `forbid` |
+| `webhook_url`             | `webhook_deliveries.url`, `checkout_sessions.success_url`/`cancel_url`/`return_url`, `oauth_*redirect_uri`, `charges.redirect_url`/`return_url`                                                           | `forbid` |
+| `oauth_signing_key`       | `oauth_signing_keys.kid`/`public_jwk`                                                                                                                                                                     | `forbid` |
+| `oauth_client_secret`     | `oauth_clients.client_secret_hash`/`jwks`, `merchant_api_keys.key_digest`/`key_prefix`, `checkout_sessions.publishable_key`/`client_secret_suffix`/`return_token`, `payment_intents.client_secret_suffix` | `forbid` |
+| `merchant_metadata`       | `customers.metadata`, `payment_intents.metadata`/`description`, `refunds.metadata`, `invoices.metadata`                                                                                                   | `none`   |
+| `stored_api_body`         | `events.data`, `idempotency_keys.response_body`                                                                                                                                                           | `redact` |
+| `merchant_note`           | `refunds.reason`, `invoices.description`, `invoice_items.description`                                                                                                                                     | `none`   |
 
 Everything else is a `sys_*` element (`subject: none`) — identifiers, timestamps,
 statuses, amounts, tenancy references, configuration, worker state — classified
@@ -115,18 +115,18 @@ which is what the erasure statement in `vpay_db::customers` does.
 names. Each is marked `enumerable` — whether the gate can currently derive its
 contents from a static source independent of the inventory:
 
-| Surface            | Enumerable | Status                                                                                       |
-| ------------------ | ---------- | -------------------------------------------------------------------------------------------- |
-| `logs`             | no         | no static scanner over `tracing!` sites yet; the Debug-redaction rule is the only guard      |
-| `metrics`          | no         | metric-label derivation is not centrally registered                                          |
-| `traces`           | yes        | OTLP traces deliberately absent (`docs/status.md`: deferred)                                 |
-| `event_store`      | yes        | `events.data` — redacted on customer erasure                                                 |
-| `webhook_payload`  | no         | per-event projections (RFC-0002 D2) not yet implemented; payload == API object today         |
-| `browser_storage`  | yes        | checkout page local memory on the payer's own device                                         |
-| `provider_rail`    | no         | no static scan of adapter request builders; guarded by `RefundTarget`'s redacting `Debug`    |
-| `merchant_api`     | no         | wire object projections are per-resource, not centrally registered                           |
-| `observability`    | yes        | `/livez` and `/metrics` on `--observability-bind`                                            |
-| `backup`           | no         | PITR/WAL and full backups — external store; retention of restore copies is a deployment obligation (RFC-0002 D13) |
+| Surface           | Enumerable | Status                                                                                                            |
+| ----------------- | ---------- | ----------------------------------------------------------------------------------------------------------------- |
+| `logs`            | no         | no static scanner over `tracing!` sites yet; the Debug-redaction rule is the only guard                           |
+| `metrics`         | no         | metric-label derivation is not centrally registered                                                               |
+| `traces`          | yes        | OTLP traces deliberately absent (`docs/status.md`: deferred)                                                      |
+| `event_store`     | yes        | `events.data` — redacted on customer erasure                                                                      |
+| `webhook_payload` | no         | per-event projections (RFC-0002 D2) not yet implemented; payload == API object today                              |
+| `browser_storage` | yes        | checkout page local memory on the payer's own device                                                              |
+| `provider_rail`   | no         | no static scan of adapter request builders; guarded by `RefundTarget`'s redacting `Debug`                         |
+| `merchant_api`    | no         | wire object projections are per-resource, not centrally registered                                                |
+| `observability`   | yes        | `/livez` and `/metrics` on `--observability-bind`                                                                 |
+| `backup`          | no         | PITR/WAL and full backups — external store; retention of restore copies is a deployment obligation (RFC-0002 D13) |
 
 A surface with `enumerable: false` is an **unmet criterion**: the gate records it
 and keeps #144 open on it rather than manufacturing a self-check (RFC-0002 PR 2).

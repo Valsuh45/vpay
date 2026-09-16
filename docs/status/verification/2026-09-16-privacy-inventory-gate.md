@@ -30,7 +30,7 @@ flagged every stale or missing row:
   migration 0010;
 - `payment_intents.last_payment_error` dropped by migration 0014;
 - `staff_members.{password_hash, totp_secret, password_change_required,
-  totp_enrolled_at, last_totp_step}` dropped by migration 0044 (moved to
+totp_enrolled_at, last_totp_step}` dropped by migration 0044 (moved to
   `credentials`).
 
 All were corrected in the same commit. Three real SQL subtleties had to be

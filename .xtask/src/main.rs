@@ -5855,10 +5855,10 @@ fn migrations_db_columns(root: &Path) -> Result<BTreeSet<(String, String)>, Stri
                 }
             } else if let Some(table) = alter_table_target(stmt) {
                 let cols = tables.entry(table).or_default();
-                if let Some((from, to)) = alter_rename_column(stmt) {
-                    if cols.remove(&from) {
-                        cols.insert(to);
-                    }
+                if let Some((from, to)) = alter_rename_column(stmt)
+                    && cols.remove(&from)
+                {
+                    cols.insert(to);
                 }
                 for column in alter_add_columns(stmt) {
                     cols.insert(column);
@@ -5892,30 +5892,32 @@ fn strip_sql_comments(src: &str) -> String {
     let mut out = String::with_capacity(src.len());
     let mut i = 0;
     let mut in_str = false;
-    while i < b.len() {
-        if b[i] == b'\'' {
+    while let Some(&c) = b.get(i) {
+        if c == b'\'' {
             in_str = !in_str;
-            out.push(b[i] as char);
+            out.push(c as char);
             i += 1;
             continue;
         }
         if !in_str {
-            if b[i] == b'-' && i + 1 < b.len() && b[i + 1] == b'-' {
-                while i < b.len() && b[i] != b'\n' {
+            if c == b'-' && b.get(i + 1) == Some(&b'-') {
+                while b.get(i).is_some_and(|&x| x != b'\n') {
                     out.push(' ');
                     i += 1;
                 }
                 continue;
             }
-            if b[i] == b'/' && i + 1 < b.len() && b[i + 1] == b'*' {
+            if c == b'/' && b.get(i + 1) == Some(&b'*') {
                 out.push(' ');
                 out.push(' ');
                 i += 2;
-                while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                while b.get(i).is_some()
+                    && !(b.get(i) == Some(&b'*') && b.get(i + 1) == Some(&b'/'))
+                {
                     out.push(' ');
                     i += 1;
                 }
-                if i + 1 < b.len() {
+                if b.get(i).is_some() {
                     out.push(' ');
                     out.push(' ');
                     i += 2;
@@ -5923,7 +5925,7 @@ fn strip_sql_comments(src: &str) -> String {
                 continue;
             }
         }
-        out.push(b[i] as char);
+        out.push(c as char);
         i += 1;
     }
     out
@@ -5936,42 +5938,45 @@ fn create_table_parts(stmt: &str) -> Option<(String, &str)> {
     let pos = up.find("CREATE TABLE")?;
     let b = stmt.as_bytes();
     let mut i = pos + "CREATE TABLE".len();
-    while i < b.len() && b[i].is_ascii_whitespace() {
+    while b.get(i).is_some_and(|&c| c.is_ascii_whitespace()) {
         i += 1;
     }
-    if up[i..].starts_with("IF NOT EXISTS") {
+    if up.get(i..)?.starts_with("IF NOT EXISTS") {
         i += "IF NOT EXISTS".len();
-        while i < b.len() && b[i].is_ascii_whitespace() {
+        while b.get(i).is_some_and(|&c| c.is_ascii_whitespace()) {
             i += 1;
         }
     }
     let name_start = i;
-    while i < b.len() && !(b[i].is_ascii_whitespace() || b[i] == b'(') {
+    while b
+        .get(i)
+        .is_some_and(|&c| !(c.is_ascii_whitespace() || c == b'('))
+    {
         i += 1;
     }
-    let raw = &stmt[name_start..i];
+    let raw = stmt.get(name_start..i)?;
     let table = raw
         .rsplit('.')
         .next()
         .unwrap_or(raw)
         .trim_matches('"')
         .to_lowercase();
-    while i < b.len() && b[i].is_ascii_whitespace() {
+    while b.get(i).is_some_and(|&c| c.is_ascii_whitespace()) {
         i += 1;
     }
-    if i >= b.len() || b[i] != b'(' {
+    if b.get(i) != Some(&b'(') {
         return None;
     }
     let body_start = i + 1;
     let mut depth = 1i32;
     let mut j = body_start;
     while j < b.len() {
-        match b[j] {
-            b'(' => depth += 1,
-            b')' => {
+        match b.get(j) {
+            Some(&b'(') => depth += 1,
+            Some(&b')') => {
                 depth -= 1;
                 if depth == 0 {
-                    return Some((table, &stmt[body_start..j]));
+                    return Some((table, stmt.get(body_start..j)?));
                 }
             }
             _ => {}
@@ -6009,16 +6014,16 @@ fn split_sql_statements(s: &str) -> Vec<&str> {
     let mut start = 0;
     let mut in_str = false;
     let mut i = 0;
-    while i < b.len() {
-        if b[i] == b'\'' {
+    while let Some(&c) = b.get(i) {
+        if c == b'\'' {
             in_str = !in_str;
-        } else if b[i] == b';' && !in_str {
-            out.push(&s[start..i]);
+        } else if c == b';' && !in_str {
+            out.push(s.get(start..i).unwrap_or(""));
             start = i + 1;
         }
         i += 1;
     }
-    out.push(&s[start..]);
+    out.push(s.get(start..).unwrap_or(""));
     out
 }
 
@@ -6068,12 +6073,12 @@ fn is_constraint_line(part: &str) -> bool {
 fn alter_table_target(stmt: &str) -> Option<String> {
     let up = stmt.to_uppercase();
     let pos = up.find("ALTER TABLE")?;
-    let mut rest = stmt[pos + "ALTER TABLE".len()..].trim_start();
+    let mut rest = stmt.get(pos + "ALTER TABLE".len()..)?.trim_start();
     if rest.to_uppercase().starts_with("IF EXISTS") {
-        rest = rest["IF EXISTS".len()..].trim_start();
+        rest = rest.get("IF EXISTS".len()..)?.trim_start();
     }
     let end = rest.find(|c: char| c.is_whitespace())?;
-    let raw = &rest[..end];
+    let raw = rest.get(..end)?;
     Some(
         raw.rsplit('.')
             .next()
@@ -6081,6 +6086,16 @@ fn alter_table_target(stmt: &str) -> Option<String> {
             .trim_matches('"')
             .to_lowercase(),
     )
+}
+
+/// Whether `chars[j..]` begins with `kw` (case-insensitive), when that many
+/// characters are in bounds.
+fn is_kw_at(chars: &[char], j: usize, kw: &str) -> bool {
+    chars.get(j..j + kw.len()).is_some_and(|s| {
+        kw.chars()
+            .zip(s.iter())
+            .all(|(a, b)| a.eq_ignore_ascii_case(b))
+    })
 }
 
 /// Every column an `ALTER TABLE ... ADD [COLUMN]` adds, skipping `ADD
@@ -6093,7 +6108,7 @@ fn alter_add_columns(stmt: &str) -> Vec<String> {
     let mut in_str = false;
     let mut i = 0;
     while i < chars.len() {
-        let ch = chars[i];
+        let ch = chars.get(i).copied().unwrap_or_default();
         if ch == '\'' {
             in_str = !in_str;
         }
@@ -6102,73 +6117,57 @@ fn alter_add_columns(stmt: &str) -> Vec<String> {
             ')' if !in_str => depth -= 1,
             _ => {}
         }
-        if !in_str
+        let is_add = !in_str
             && depth == 0
             && (ch == 'A' || ch == 'a')
-            && i + 2 < chars.len()
-            && (chars[i + 1] == 'D' || chars[i + 1] == 'd')
-            && (chars[i + 2] == 'D' || chars[i + 2] == 'd')
-            && (i + 3 >= chars.len() || chars[i + 3].is_whitespace() || chars[i + 3] == '(')
-        {
-            // Skip `ADD CONSTRAINT ...` wholesale; its body is at depth > 0 so
-            // its own `ADD`s would be ignored anyway, but skipping the keyword
-            // keeps the parse honest about the shape.
-            let mut j = i + 3;
-            while j < chars.len() && chars[j].is_whitespace() {
-                j += 1;
-            }
-            let is_constraint = j + "CONSTRAINT".len() <= chars.len()
-                && "CONSTRAINT"
-                    .chars()
-                    .zip(chars[j..].iter())
-                    .all(|(a, b)| a.eq_ignore_ascii_case(b));
-            if is_constraint {
-                i = j + "CONSTRAINT".len();
-                continue;
-            }
-            while j < chars.len() && chars[j].is_whitespace() {
-                j += 1;
-            }
-            if j + "COLUMN".len() <= chars.len()
-                && "COLUMN"
-                    .chars()
-                    .zip(chars[j..].iter())
-                    .all(|(a, b)| a.eq_ignore_ascii_case(b))
-            {
-                j += "COLUMN".len();
-                while j < chars.len() && chars[j].is_whitespace() {
-                    j += 1;
-                }
-            }
-            if j + "IF NOT EXISTS".len() <= chars.len()
-                && "IF NOT EXISTS"
-                    .chars()
-                    .zip(chars[j..].iter())
-                    .all(|(a, b)| a.eq_ignore_ascii_case(b))
-            {
-                j += "IF NOT EXISTS".len();
-                while j < chars.len() && chars[j].is_whitespace() {
-                    j += 1;
-                }
-            }
-            let mut k = j;
-            while k < chars.len()
-                && (chars[k].is_alphanumeric() || chars[k] == '_' || chars[k] == '"')
-            {
-                k += 1;
-            }
-            let name: String = chars[j..k]
-                .iter()
-                .collect::<String>()
-                .trim_matches('"')
-                .to_lowercase();
-            if !name.is_empty() && name != "constraint" {
-                out.push(name);
-            }
-            i = k;
+            && is_kw_at(&chars, i + 1, "DD")
+            && chars
+                .get(i + 3)
+                .is_none_or(|c| c.is_whitespace() || *c == '(');
+        if !is_add {
+            i += 1;
             continue;
         }
-        i += 1;
+        let mut j = i + 3;
+        while chars.get(j).is_some_and(|c| c.is_whitespace()) {
+            j += 1;
+        }
+        // Skip `ADD CONSTRAINT ...` wholesale; its body is at depth > 0 so its
+        // own `ADD`s are ignored anyway, but skipping the keyword keeps the
+        // parse honest about the shape.
+        if is_kw_at(&chars, j, "CONSTRAINT") {
+            i = j + "CONSTRAINT".len();
+            continue;
+        }
+        if is_kw_at(&chars, j, "COLUMN") {
+            j += "COLUMN".len();
+            while chars.get(j).is_some_and(|c| c.is_whitespace()) {
+                j += 1;
+            }
+        }
+        if is_kw_at(&chars, j, "IF NOT EXISTS") {
+            j += "IF NOT EXISTS".len();
+            while chars.get(j).is_some_and(|c| c.is_whitespace()) {
+                j += 1;
+            }
+        }
+        let mut k = j;
+        while chars
+            .get(k)
+            .is_some_and(|c| c.is_alphanumeric() || *c == '_' || *c == '"')
+        {
+            k += 1;
+        }
+        let name: String = chars
+            .get(j..k)
+            .map(|s| s.iter().collect::<String>())
+            .unwrap_or_default()
+            .trim_matches('"')
+            .to_lowercase();
+        if !name.is_empty() && name != "constraint" {
+            out.push(name);
+        }
+        i = k;
     }
     out
 }
@@ -6180,64 +6179,52 @@ fn alter_drop_columns(stmt: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut in_str = false;
     let mut i = 0;
-    while i + 3 < chars.len() {
-        if chars[i] == '\'' {
+    while i < chars.len() {
+        let ch = chars.get(i).copied().unwrap_or_default();
+        if ch == '\'' {
             in_str = !in_str;
         }
         let is_drop = !in_str
-            && (chars[i] == 'D' || chars[i] == 'd')
-            && (chars[i + 1] == 'R' || chars[i + 1] == 'r')
-            && (chars[i + 2] == 'O' || chars[i + 2] == 'o')
-            && (chars[i + 3] == 'P' || chars[i + 3] == 'p')
-            && (i + 4 >= chars.len() || chars[i + 4].is_whitespace() || chars[i + 4] == '(');
+            && is_kw_at(&chars, i, "DROP")
+            && chars
+                .get(i + 4)
+                .is_none_or(|c| c.is_whitespace() || *c == '(');
         if !is_drop {
             i += 1;
             continue;
         }
         let mut j = i + 4;
-        while j < chars.len() && chars[j].is_whitespace() {
+        while chars.get(j).is_some_and(|c| c.is_whitespace()) {
             j += 1;
         }
         // Skip `DROP CONSTRAINT` (a constraint, not a column).
-        if j + "CONSTRAINT".len() <= chars.len()
-            && "CONSTRAINT"
-                .chars()
-                .zip(chars[j..].iter())
-                .all(|(a, b)| a.eq_ignore_ascii_case(b))
-        {
+        if is_kw_at(&chars, j, "CONSTRAINT") {
             i = j + "CONSTRAINT".len();
             continue;
         }
-        if j + "COLUMN".len() <= chars.len()
-            && "COLUMN"
-                .chars()
-                .zip(chars[j..].iter())
-                .all(|(a, b)| a.eq_ignore_ascii_case(b))
-        {
+        if is_kw_at(&chars, j, "COLUMN") {
             j += "COLUMN".len();
-            while j < chars.len() && chars[j].is_whitespace() {
+            while chars.get(j).is_some_and(|c| c.is_whitespace()) {
                 j += 1;
             }
         }
-        if j + "IF EXISTS".len() <= chars.len()
-            && "IF EXISTS"
-                .chars()
-                .zip(chars[j..].iter())
-                .all(|(a, b)| a.eq_ignore_ascii_case(b))
-        {
+        if is_kw_at(&chars, j, "IF EXISTS") {
             j += "IF EXISTS".len();
-            while j < chars.len() && chars[j].is_whitespace() {
+            while chars.get(j).is_some_and(|c| c.is_whitespace()) {
                 j += 1;
             }
         }
         let mut k = j;
-        while k < chars.len() && (chars[k].is_alphanumeric() || chars[k] == '_' || chars[k] == '"')
+        while chars
+            .get(k)
+            .is_some_and(|c| c.is_alphanumeric() || *c == '_' || *c == '"')
         {
             k += 1;
         }
-        let name: String = chars[j..k]
-            .iter()
-            .collect::<String>()
+        let name: String = chars
+            .get(j..k)
+            .map(|s| s.iter().collect::<String>())
+            .unwrap_or_default()
             .trim_matches('"')
             .to_lowercase();
         if !name.is_empty() && name != "constraint" {
@@ -6252,13 +6239,13 @@ fn alter_drop_columns(stmt: &str) -> Vec<String> {
 fn alter_rename_column(stmt: &str) -> Option<(String, String)> {
     let up = stmt.to_uppercase();
     let pos = up.find("RENAME COLUMN")?;
-    let rest = &stmt[pos + "RENAME COLUMN".len()..].trim_start();
+    let rest = stmt.get(pos + "RENAME COLUMN".len()..)?.trim_start();
     let from_end = rest.find(|c: char| c.is_whitespace())?;
-    let from = rest[..from_end].trim_matches('"').to_lowercase();
-    let tail = rest[from_end..].trim_start();
+    let from = rest.get(..from_end)?.trim_matches('"').to_lowercase();
+    let tail = rest.get(from_end..)?.trim_start();
     let tail_up = tail.to_uppercase();
     let to_start = if tail_up.starts_with("TO") {
-        tail["TO".len()..].trim_start()
+        tail.get("TO".len()..)?.trim_start()
     } else {
         tail
     };
@@ -6451,14 +6438,19 @@ non_db_surfaces:
             .filter(|s| !s.is_empty())
             .collect();
         assert_eq!(non_empty.len(), 3, "stmts: {stmts:?}");
-        assert!(non_empty[1].contains("'semi; colon'"), "stmts: {stmts:?}");
+        assert!(
+            non_empty
+                .get(1)
+                .is_some_and(|s| s.contains("'semi; colon'")),
+            "stmts: {stmts:?}"
+        );
     }
 
     #[test]
     fn a_comma_inside_a_string_does_not_split_create_body() {
         let parts = split_top_level("a TEXT DEFAULT 'x, y', b TEXT", ',');
         assert_eq!(parts.len(), 2, "parts: {parts:?}");
-        assert!(parts[0].contains("'x, y'"));
+        assert!(parts.first().is_some_and(|p| p.contains("'x, y'")));
     }
 
     #[test]

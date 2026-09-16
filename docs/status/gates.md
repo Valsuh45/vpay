@@ -696,7 +696,7 @@ non-database surface.
 
 **Why it parses the migrations rather than reading a manifest:** a manifest is
 a second artifact that can itself drift, and `schemas/vpay.cstack` is a
-*projection* — RFC-0002 PR 2 requires the check be against "a fully migrated
+_projection_ — RFC-0002 PR 2 requires the check be against "a fully migrated
 database or the migrations that create it". Parsing meant modelling SQL DDL
 `CREATE TABLE` and `ALTER TABLE ... ADD/DROP/RENAME COLUMN`, string-aware, so
 the parser reflects the **final** schema: it must apply migration 0010's
