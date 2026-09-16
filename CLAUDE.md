@@ -2,7 +2,9 @@
 
 Claude Code and other coding agents: **read [AGENTS.md](AGENTS.md) first.** It is
 the source of truth for how to work in this repository. This file adds only what
-is specific to working here as an agent.
+is specific to working here as an agent. For a first, small change —
+and for the shortest statement of the rules that always apply — start with
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Before you start
 

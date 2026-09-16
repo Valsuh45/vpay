@@ -72,3 +72,17 @@ backends/migrations/*.sql
 # papercut, not a CI failure, and it is real for anyone who builds the plugin.
 sdks/flutter/**/build/
 sdks/flutter/**/.dart_tool/
+
+# Agent worktrees (`.claude/worktrees/<name>/`), for the same reason as the
+# Flutter trees above and with the same consequence: git does not ignore
+# `.claude/` — `.claude/skills/vaam-ui` is tracked — so the root `.gitignore`
+# does not put these out of scope, and each worktree is a FULL SECOND COPY of
+# this repository. `prettier --check .` from the main checkout therefore walks
+# every checked-out branch as well as this one, and the run grows with the
+# number of worktrees rather than with the size of the tree.
+#
+# This is what made `just ci` time out in `fmt-check-web` on PR #172 while its
+# author was verifying it. CI never sees it — a runner clones one tree and has
+# no `.claude/worktrees/` — so it is a local papercut, not a CI failure, and
+# it is real for anyone who uses `git worktree` under `.claude/`.
+.claude/worktrees/

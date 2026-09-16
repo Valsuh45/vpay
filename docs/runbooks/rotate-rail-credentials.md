@@ -10,7 +10,7 @@ both and the mechanisms have nothing in common:
   so there is nothing to rotate. Revoking one needs the
   [ADR-0010](../adr/0010-merchant-auth-private-key-jwt.md) **dual-authority
   check** — YAML _and_ the database. That check is the reason this page
-  exists; [../roadmap.md](../roadmap.md) recorded that no runbook documented
+  exists; `docs/roadmap.md` recorded that no runbook documented
   it.
 
 **Nobody has done either on a deployment.** No cluster has run vpay, and no

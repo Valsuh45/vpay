@@ -3,6 +3,12 @@
 Instructions for any agent or human contributing to vpay. Read this before
 writing code.
 
+If this is your first change here, start with
+[CONTRIBUTING.md](CONTRIBUTING.md) — the short version, and the smallest safe
+first change. Come back to this file before touching money, persistence, rails,
+authentication, public API or wire types, the UI system, or dependencies; every
+one of those is covered below and none of it is optional.
+
 ---
 
 ## The two rules
