@@ -675,3 +675,50 @@ the wrong background is worse than no run: it is a claim nobody re-checks.**
 The lock is now a position assertion on the `@import` plus a read of the built
 stylesheet, in
 [verification/2026-09-12-storybook-restored.md](verification/2026-09-12-storybook-restored.md).
+
+## 2026-09-16 — `verify-privacy-inventory`, the thirteenth gate (issue #144)
+
+New 2026-09-16 with the personal-data inventory of issue #144
+([ADR-0020](../adr/0020-privacy-controls-and-evidence.md),
+[RFC-0002](../rfc/0002-gdpr-policy-and-operator-decisions.md)). It reads
+`schemas/privacy-inventory.yaml` and derives the authoritative database
+column set by parsing `backends/migrations` itself — not
+`schemas/vpay.cstack`, which deliberately models less than the whole database
+(ADR-0020). It fails in **both** directions, like `verify-status`:
+
+- a migrated column with no element in the inventory fails (a privacy-relevant
+  column cannot land unclassified);
+- an inventory column copy naming no live column fails (a stale or misspelled
+  row cannot survive the column it named).
+
+It also validates every element's six ADR-0020 §1 fields and every registered
+non-database surface.
+
+**Why it parses the migrations rather than reading a manifest:** a manifest is
+a second artifact that can itself drift, and `schemas/vpay.cstack` is a
+*projection* — RFC-0002 PR 2 requires the check be against "a fully migrated
+database or the migrations that create it". Parsing meant modelling SQL DDL
+`CREATE TABLE` and `ALTER TABLE ... ADD/DROP/RENAME COLUMN`, string-aware, so
+the parser reflects the **final** schema: it must apply migration 0010's
+`DROP COLUMN private_key_pem` / `RENAME COLUMN id TO kid`, 0014's
+`DROP COLUMN last_payment_error`, and 0044's five dropped `staff_members`
+credential columns. Three of those would otherwise have shown up in the
+inventory as stale rows (the initial hand-built inventory did, and the gate
+caught every one). The string-awareness matters for a real migration too:
+0007's `CHECK (private_key_pem LIKE '-----BEGIN%KEY-----%')` begins with
+`--`, and a comment stripper that is not string-aware eats the expression and
+leaves the `CHECK (` unclosed.
+
+**Measured on this tree, 2026-09-16:** 303 database columns classified across
+25 elements (16 personal-data, 17 necessary), checked in both directions
+against the 303 the migrations derive; 10 non-database surfaces registered,
+6 of them not yet statically enumerable — recorded as unmet criteria that keep
+#144 open rather than faked (RFC-0002 PR 2: "record any surface that cannot be
+enumerated as an unmet criterion rather than manufacturing a self-check").
+
+**Mutations that prove each direction bites** (`privacy_inventory_tests` in
+`.xtask/src/main.rs`): adding a `phone` column to a migration with no element
+fails direction A; adding a `ghost` column to the inventory with no migration
+fails direction B; a duplicate surface id and a surface id colliding with an
+element name each fail; the DDL parser's handling of `DROP`/`RENAME` and the
+string-aware comment stripper are pinned by their own tests.

@@ -496,6 +496,18 @@ jobs:
       # recipe and this workflow from drifting.
       - name: verify-migrations (applied migrations are immutable)
         run: just verify-migrations
+      # New 2026-09-16 (issue #144). Like `verify-migrations` above, this job
+      # is the only place the drift it catches is visible to CI: nothing in
+      # `rust` reads `schemas/privacy-inventory.yaml`, so a privacy-relevant
+      # column added to a migration with no inventory classification would
+      # pass `cargo nextest run --workspace` outright. The gate derives the
+      # authoritative column set by parsing `backends/migrations` itself
+      # (`schemas/vpay.cstack` models less than the whole database), in both
+      # directions, so a new column cannot land unclassified and a stale row
+      # cannot survive the column it named. Through the justfile, like the
+      # steps above it, so the recipe and this workflow cannot drift.
+      - name: verify-privacy-inventory (every migrated column is classified)
+        run: just verify-privacy-inventory
       # A report, not a gate — it exits 0 whatever it finds (Step 7,
       # decision (4)). It is here so `justfile`'s claim that this job runs
       # exactly what `just verify` runs stays true, and so the doc-volume,

@@ -107,8 +107,8 @@ token written in a comment of any kind, in a `#[doc = "…"]` attribute or insid
 any string, raw-string or character literal is prose, and prose declares
 nothing.
 
-`just verify` is **twelve gates and one advisory report**. What each one refuses,
-and what each printed when all twelve were re-run, one invocation each, on
+`just verify` is **thirteen gates and one advisory report**. What each one refuses,
+and what each printed when all thirteen were re-run, one invocation each, on
 **2026-09-16** on `888b00c3` — this branch's last commit before this table
 was filled in, exactly as the 2026-09-11 column was — with
 `DOCKER_HOST=unix:///run/user/1000/docker.sock`:
@@ -127,6 +127,7 @@ was filled in, exactly as the 2026-09-11 column was — with
 | `verify-toolchain`    | a `backends/Dockerfile` that drifts from `rust-toolchain.toml`                                                                                                   | 1.98.0                                                |
 | `verify-ui`           | a computed class string, a raw status-colour token, a >60-char class, a daisyUI-4 or unrouted daisyUI class, or an import of the deleted `@vpay/ui` (2026-09-12) | nothing: silent on success, exit 0 only               |
 | `verify-migrations`   | an applied migration whose bytes changed                                                                                                                         | 48 files                                              |
+| `verify-privacy-inventory` | a migrated column with no inventory classification, or an inventory row naming no live column (issue #144, 2026-09-16)                                                                                              | 303 columns / 25 elements / 10 surfaces               |
 | `verify-docs`         | **nothing — it exits 0 whatever it finds**                                                                                                                       | advisory report                                       |
 
 **One of those numbers moved twice on the same day and came back.**
@@ -168,7 +169,7 @@ different grammar than CI will is a gate whose green means less than it looks.
 Those numbers are a measurement of one tree on one day — `888b00c3`, 2026-09-16
 — not a promise. **They are `just verify`'s gates invoked one at a time, not
 `just verify` itself and not `just ci`**, which this branch's agents were
-instructed not to run; that distinction is the whole of what the twelve-in-a-row
+instructed not to run; that distinction is the whole of what the thirteen-in-a-row
 recipe adds. What each
 gate used to miss, the mutation that proved each hole shut, and the dates every
 one of these counts moved on, are in [status/gates.md](status/gates.md) — 509
@@ -488,7 +489,7 @@ reviews, two merges and this seam pass. Every one of the refunds
 pages records the **individual** gates and the **narrow** `cargo nextest`
 invocations for the crates its change touched, because every agent on this
 branch was instructed not to run `just ci` locally (five concurrent local
-builds once OOM-killed the host). **Read that as what it is:** the twelve
+builds once OOM-killed the host). **Read that as what it is:** the thirteen
 gates have been run on this head, and the full workspace test run, the web
 job and the doctest sweep that `just ci` adds on top of them have been run on
 **no** commit of this branch by anything but GitHub Actions. The gate table

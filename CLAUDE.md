@@ -9,8 +9,8 @@ and for the shortest statement of the rules that always apply — start with
 ## Before you start
 
 ```bash
-just verify    # the self-checks the justfile's `verify` recipe lists — twelve
-               # on 2026-09-07, and the recipe echoes its own count on success
+just verify    # the self-checks the justfile's `verify` recipe lists — thirteen
+               # on 2026-09-16, and the recipe echoes its own count on success
                # — all of which must pass before AND after your change, plus
                # the `verify-docs` report, which never fails
 cat docs/status.md

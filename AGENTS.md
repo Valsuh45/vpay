@@ -19,10 +19,11 @@ CI runs it.
 `just verify` is the gates the `verify` recipe lists in the `justfile`, and
 one report. **The recipe is the list; this paragraph is a description of it,
 and it has gone stale at nearly every count it has carried** — see below. On
-this commit the gates are twelve (`verify-no-mocks`, `verify-status`,
+this commit the gates are thirteen (`verify-no-mocks`, `verify-status`,
 `verify-errors`, `verify-sdk-parity`, `verify-links`, `verify-npm-scope`,
 `check-schema`, `verify-serde`, `verify-repositories`, `verify-toolchain`,
-`verify-ui`, `verify-migrations`) and they fail the build. If that list and
+`verify-ui`, `verify-migrations`, `verify-privacy-inventory`) and they fail
+the build. If that list and
 the recipe disagree, the recipe is right: read it, and fix this paragraph in
 the same commit. The report
 (`verify-docs`) never does — it prints doc-comment volume per crate, in-file
@@ -47,7 +48,7 @@ fails when a migration file's SHA-256 no longer matches
 migration's whole bytes and a comment reflowed after the file shipped stops
 every database that applied the original from booting — which is what PR #39
 did, with every job in CI green.
-Ten of the twelve are `cargo xtask` commands; `check-schema` and `verify-ui` are
+Eleven of the thirteen are `cargo xtask` commands; `check-schema` and `verify-ui` are
 justfile recipes — the first shells out to the CrateStack CLI, a binary this
 workspace does not build, and the second is a handful of `git grep`s.
 There is one more check, `cargo xtask verify-citations` (`just
@@ -318,7 +319,7 @@ process to a reader who will decide what to do. A skill briefs an agent that is
 already doing it, and is therefore judged on a different question: not "is this
 accurate and complete" but "would an agent that read only this do the right
 thing on its first attempt". That is why they are a separate repository — a
-briefing that has to clear twelve gates to be corrected is a briefing nobody
+briefing that has to clear thirteen gates to be corrected is a briefing nobody
 corrects — and why drift between them and this tree is gated rather than
 trusted.
 

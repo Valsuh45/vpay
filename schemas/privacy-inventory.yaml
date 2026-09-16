@@ -1,0 +1,1224 @@
+# vpay personal-data inventory — machine-readable companion (issue #144, ADR-0020, RFC-0002)
+# See docs/reference/personal-data-inventory.md. The authoritative DB surface is backends/migrations.
+# schema: version + elements (six-field ADR-0020 §1 classification + the copies that share each
+# element: DB columns, and non-DB surfaces once registered). non_db_surfaces lists the disclosure
+# surfaces ADR-0020 §1 names. cargo xtask verify-privacy-inventory checks this file against the
+# migrations in both directions.
+version: 1
+elements:
+  sys_amount:
+    subject: none
+    purpose: system
+    necessary: true
+    tenant_boundary: merchant
+    recipients: []
+    retention: operational
+    owner: maintainer
+    control: none
+    copies:
+    - kind: column
+      table: charges
+      column: amount
+    - kind: column
+      table: charges
+      column: currency_code
+    - kind: column
+      table: events
+      column: fanout_attempts
+    - kind: column
+      table: invoice_items
+      column: amount
+    - kind: column
+      table: invoice_items
+      column: currency_code
+    - kind: column
+      table: invoice_items
+      column: quantity
+    - kind: column
+      table: invoice_items
+      column: unit_amount
+    - kind: column
+      table: invoices
+      column: amount_due
+    - kind: column
+      table: invoices
+      column: amount_paid
+    - kind: column
+      table: invoices
+      column: amount_refunded
+    - kind: column
+      table: invoices
+      column: amount_remaining
+    - kind: column
+      table: invoices
+      column: currency_code
+    - kind: column
+      table: jobs
+      column: attempts
+    - kind: column
+      table: ledger_entries
+      column: amount
+    - kind: column
+      table: ledger_entries
+      column: currency_code
+    - kind: column
+      table: payment_intents
+      column: amount
+    - kind: column
+      table: payment_intents
+      column: amount_received
+    - kind: column
+      table: payment_intents
+      column: amount_refund_pending
+    - kind: column
+      table: payment_intents
+      column: amount_refunded
+    - kind: column
+      table: payment_intents
+      column: currency_code
+    - kind: column
+      table: provider_requests
+      column: attempt
+    - kind: column
+      table: rate_limit_windows
+      column: attempts
+    - kind: column
+      table: refunds
+      column: amount
+    - kind: column
+      table: refunds
+      column: currency_code
+    - kind: column
+      table: refunds
+      column: fee
+    - kind: column
+      table: webhook_deliveries
+      column: attempt
+  sys_time:
+    subject: none
+    purpose: system
+    necessary: true
+    tenant_boundary: merchant
+    recipients: []
+    retention: operational
+    owner: maintainer
+    control: none
+    copies:
+    - kind: column
+      table: charges
+      column: created_at
+    - kind: column
+      table: charges
+      column: updated_at
+    - kind: column
+      table: checkout_sessions
+      column: created_at
+    - kind: column
+      table: checkout_sessions
+      column: expires_at
+    - kind: column
+      table: checkout_sessions
+      column: updated_at
+    - kind: column
+      table: credentials
+      column: created_at
+    - kind: column
+      table: credentials
+      column: expires_at
+    - kind: column
+      table: credentials
+      column: updated_at
+    - kind: column
+      table: customers
+      column: anonymized_at
+    - kind: column
+      table: customers
+      column: created_at
+    - kind: column
+      table: customers
+      column: last_used_at
+    - kind: column
+      table: customers
+      column: updated_at
+    - kind: column
+      table: disabled_clients
+      column: disabled_at
+    - kind: column
+      table: events
+      column: created_at
+    - kind: column
+      table: idempotency_keys
+      column: completed_at
+    - kind: column
+      table: idempotency_keys
+      column: created_at
+    - kind: column
+      table: idempotency_keys
+      column: expires_at
+    - kind: column
+      table: invoice_items
+      column: created_at
+    - kind: column
+      table: invoice_items
+      column: updated_at
+    - kind: column
+      table: invoice_number_sequences
+      column: created_at
+    - kind: column
+      table: invoices
+      column: created_at
+    - kind: column
+      table: invoices
+      column: finalized_at
+    - kind: column
+      table: invoices
+      column: marked_uncollectible_at
+    - kind: column
+      table: invoices
+      column: paid_at
+    - kind: column
+      table: invoices
+      column: updated_at
+    - kind: column
+      table: invoices
+      column: voided_at
+    - kind: column
+      table: jobs
+      column: created_at
+    - kind: column
+      table: jobs
+      column: locked_at
+    - kind: column
+      table: jobs
+      column: run_at
+    - kind: column
+      table: ledger_transactions
+      column: created_at
+    - kind: column
+      table: merchant_api_keys
+      column: created_at
+    - kind: column
+      table: merchant_api_keys
+      column: last_used_at
+    - kind: column
+      table: merchant_api_keys
+      column: revoked_at
+    - kind: column
+      table: oauth_authorization_codes
+      column: consumed_at
+    - kind: column
+      table: oauth_authorization_codes
+      column: created_at
+    - kind: column
+      table: oauth_authorization_codes
+      column: expires_at
+    - kind: column
+      table: oauth_client_assertion_jtis
+      column: created_at
+    - kind: column
+      table: oauth_client_assertion_jtis
+      column: expires_at
+    - kind: column
+      table: oauth_codes
+      column: expires_at
+    - kind: column
+      table: oauth_device_codes
+      column: expires_at
+    - kind: column
+      table: oauth_device_codes
+      column: last_polled_at
+    - kind: column
+      table: oauth_dpop_jti
+      column: expires_at
+    - kind: column
+      table: oauth_refresh_tokens
+      column: expires_at
+    - kind: column
+      table: oauth_refresh_tokens
+      column: revoked_at
+    - kind: column
+      table: oauth_signing_keys
+      column: created_at
+    - kind: column
+      table: oauth_signing_keys
+      column: expires_at
+    - kind: column
+      table: oauth_signing_keys
+      column: updated_at
+    - kind: column
+      table: payment_intents
+      column: created_at
+    - kind: column
+      table: payment_intents
+      column: updated_at
+    - kind: column
+      table: provider_requests
+      column: responded_at
+    - kind: column
+      table: provider_requests
+      column: sent_at
+    - kind: column
+      table: rate_limit_windows
+      column: updated_at
+    - kind: column
+      table: rate_limit_windows
+      column: window_started_at
+    - kind: column
+      table: refunds
+      column: created_at
+    - kind: column
+      table: refunds
+      column: updated_at
+    - kind: column
+      table: staff_members
+      column: created_at
+    - kind: column
+      table: staff_members
+      column: last_sign_in_at
+    - kind: column
+      table: staff_members
+      column: updated_at
+    - kind: column
+      table: staff_sessions
+      column: access_token_expires_at
+    - kind: column
+      table: staff_sessions
+      column: created_at
+    - kind: column
+      table: staff_sessions
+      column: expires_at
+    - kind: column
+      table: staff_sessions
+      column: last_seen_at
+    - kind: column
+      table: webhook_deliveries
+      column: created_at
+    - kind: column
+      table: webhook_deliveries
+      column: next_attempt_at
+    - kind: column
+      table: webhook_deliveries
+      column: responded_at
+    - kind: column
+      table: webhook_deliveries
+      column: sent_at
+  sys_status:
+    subject: none
+    purpose: system
+    necessary: true
+    tenant_boundary: merchant
+    recipients: []
+    retention: operational
+    owner: maintainer
+    control: none
+    copies:
+    - kind: column
+      table: charges
+      column: failure_code
+    - kind: column
+      table: charges
+      column: state
+    - kind: column
+      table: checkout_sessions
+      column: livemode
+    - kind: column
+      table: checkout_sessions
+      column: payment_status
+    - kind: column
+      table: checkout_sessions
+      column: status
+    - kind: column
+      table: checkout_sessions
+      column: ui_mode
+    - kind: column
+      table: credentials
+      column: counter
+    - kind: column
+      table: credentials
+      column: kind
+    - kind: column
+      table: credentials
+      column: must_change
+    - kind: column
+      table: customers
+      column: livemode
+    - kind: column
+      table: disabled_clients
+      column: reason
+    - kind: column
+      table: events
+      column: fanout_state
+    - kind: column
+      table: events
+      column: livemode
+    - kind: column
+      table: events
+      column: type
+    - kind: column
+      table: idempotency_keys
+      column: state
+    - kind: column
+      table: invoice_items
+      column: livemode
+    - kind: column
+      table: invoices
+      column: livemode
+    - kind: column
+      table: invoices
+      column: status
+    - kind: column
+      table: jobs
+      column: kind
+    - kind: column
+      table: merchant_api_keys
+      column: livemode
+    - kind: column
+      table: oauth_authorization_codes
+      column: nonce
+    - kind: column
+      table: oauth_authorization_codes
+      column: scope
+    - kind: column
+      table: oauth_clients
+      column: allowed_audiences
+    - kind: column
+      table: oauth_clients
+      column: grant_types
+    - kind: column
+      table: oauth_clients
+      column: redirect_uris
+    - kind: column
+      table: oauth_clients
+      column: require_pkce
+    - kind: column
+      table: oauth_clients
+      column: scopes
+    - kind: column
+      table: oauth_clients
+      column: token_endpoint_auth_method
+    - kind: column
+      table: oauth_codes
+      column: nonce
+    - kind: column
+      table: oauth_codes
+      column: scope
+    - kind: column
+      table: oauth_codes
+      column: used
+    - kind: column
+      table: oauth_device_codes
+      column: scope
+    - kind: column
+      table: oauth_device_codes
+      column: status
+    - kind: column
+      table: oauth_refresh_tokens
+      column: scope
+    - kind: column
+      table: oauth_signing_keys
+      column: active
+    - kind: column
+      table: payment_intents
+      column: livemode
+    - kind: column
+      table: payment_intents
+      column: status
+    - kind: column
+      table: provider_requests
+      column: operation
+    - kind: column
+      table: provider_requests
+      column: status_code
+    - kind: column
+      table: providers
+      column: code
+    - kind: column
+      table: rate_limit_windows
+      column: scope
+    - kind: column
+      table: refunds
+      column: failure_code
+    - kind: column
+      table: refunds
+      column: status
+    - kind: column
+      table: staff_members
+      column: is_admin
+    - kind: column
+      table: staff_members
+      column: status
+    - kind: column
+      table: staff_sessions
+      column: state
+    - kind: column
+      table: webhook_deliveries
+      column: state
+    - kind: column
+      table: webhook_deliveries
+      column: status_code
+  rail_failure_text:
+    subject: payer
+    purpose: diagnostic
+    necessary: true
+    tenant_boundary: merchant
+    recipients: []
+    retention: customer
+    owner: maintainer
+    control: redact
+    copies:
+    - kind: column
+      table: charges
+      column: failure_raw
+    - kind: column
+      table: payment_intents
+      column: last_payment_error_code
+    - kind: column
+      table: payment_intents
+      column: last_payment_error_message
+    - kind: column
+      table: provider_requests
+      column: error_kind
+    - kind: column
+      table: refunds
+      column: failure_raw
+    - kind: column
+      table: webhook_deliveries
+      column: response_excerpt
+  sys_identifier:
+    subject: none
+    purpose: system
+    necessary: true
+    tenant_boundary: merchant
+    recipients: []
+    retention: operational
+    owner: maintainer
+    control: none
+    copies:
+    - kind: column
+      table: charges
+      column: id
+    - kind: column
+      table: charges
+      column: payment_intent_id
+    - kind: column
+      table: checkout_sessions
+      column: customer_id
+    - kind: column
+      table: checkout_sessions
+      column: id
+    - kind: column
+      table: checkout_sessions
+      column: merchant_id
+    - kind: column
+      table: checkout_sessions
+      column: payment_intent_id
+    - kind: column
+      table: checkout_sessions
+      column: seq
+    - kind: column
+      table: credentials
+      column: id
+    - kind: column
+      table: credentials
+      column: staff_member_id
+    - kind: column
+      table: customers
+      column: id
+    - kind: column
+      table: customers
+      column: merchant_id
+    - kind: column
+      table: customers
+      column: seq
+    - kind: column
+      table: disabled_clients
+      column: client_id
+    - kind: column
+      table: events
+      column: id
+    - kind: column
+      table: events
+      column: merchant_id
+    - kind: column
+      table: events
+      column: object_id
+    - kind: column
+      table: events
+      column: seq
+    - kind: column
+      table: idempotency_keys
+      column: claim_id
+    - kind: column
+      table: idempotency_keys
+      column: merchant_id
+    - kind: column
+      table: invoice_items
+      column: id
+    - kind: column
+      table: invoice_items
+      column: invoice_id
+    - kind: column
+      table: invoice_items
+      column: merchant_id
+    - kind: column
+      table: invoice_items
+      column: seq
+    - kind: column
+      table: invoice_number_sequences
+      column: merchant_id
+    - kind: column
+      table: invoices
+      column: customer_id
+    - kind: column
+      table: invoices
+      column: id
+    - kind: column
+      table: invoices
+      column: merchant_id
+    - kind: column
+      table: invoices
+      column: number
+    - kind: column
+      table: invoices
+      column: payment_intent_id
+    - kind: column
+      table: invoices
+      column: seq
+    - kind: column
+      table: jobs
+      column: dedupe_key
+    - kind: column
+      table: jobs
+      column: id
+    - kind: column
+      table: jobs
+      column: locked_by
+    - kind: column
+      table: ledger_entries
+      column: id
+    - kind: column
+      table: ledger_entries
+      column: merchant_id
+    - kind: column
+      table: ledger_entries
+      column: transaction_id
+    - kind: column
+      table: ledger_transactions
+      column: charge_id
+    - kind: column
+      table: ledger_transactions
+      column: id
+    - kind: column
+      table: merchant_api_keys
+      column: id
+    - kind: column
+      table: merchant_api_keys
+      column: merchant_id
+    - kind: column
+      table: oauth_authorization_codes
+      column: client_id
+    - kind: column
+      table: oauth_authorization_codes
+      column: merchant_id
+    - kind: column
+      table: oauth_authorization_codes
+      column: session_id
+    - kind: column
+      table: oauth_authorization_codes
+      column: staff_id
+    - kind: column
+      table: oauth_clients
+      column: client_id
+    - kind: column
+      table: oauth_codes
+      column: client_id
+    - kind: column
+      table: oauth_device_codes
+      column: client_id
+    - kind: column
+      table: oauth_refresh_tokens
+      column: client_id
+    - kind: column
+      table: payment_intents
+      column: customer_id
+    - kind: column
+      table: payment_intents
+      column: id
+    - kind: column
+      table: payment_intents
+      column: merchant_id
+    - kind: column
+      table: payment_intents
+      column: seq
+    - kind: column
+      table: provider_requests
+      column: charge_id
+    - kind: column
+      table: provider_requests
+      column: id
+    - kind: column
+      table: rate_limit_windows
+      column: id
+    - kind: column
+      table: refunds
+      column: charge_id
+    - kind: column
+      table: refunds
+      column: id
+    - kind: column
+      table: refunds
+      column: payment_intent_id
+    - kind: column
+      table: staff_members
+      column: id
+    - kind: column
+      table: staff_members
+      column: merchant_id
+    - kind: column
+      table: staff_sessions
+      column: id
+    - kind: column
+      table: staff_sessions
+      column: staff_id
+    - kind: column
+      table: webhook_deliveries
+      column: endpoint_id
+    - kind: column
+      table: webhook_deliveries
+      column: event_id
+    - kind: column
+      table: webhook_deliveries
+      column: id
+    - kind: column
+      table: webhook_deliveries
+      column: payload_sha256
+  payer_msisdn:
+    subject: payer
+    purpose: collect-payment-identity
+    necessary: true
+    tenant_boundary: merchant
+    recipients:
+    - mtn_momo
+    - orange_money
+    retention: customer
+    owner: maintainer
+    control: redact
+    copies:
+    - kind: column
+      table: charges
+      column: payer_ref
+    - kind: column
+      table: charges
+      column: payer_ref_masked
+    - kind: column
+      table: customers
+      column: phone
+  sys_config:
+    subject: none
+    purpose: system-config
+    necessary: true
+    tenant_boundary: system
+    recipients: []
+    retention: operational
+    owner: operator
+    control: none
+    copies:
+    - kind: column
+      table: charges
+      column: provider_code
+    - kind: column
+      table: currencies
+      column: code
+    - kind: column
+      table: currencies
+      column: exponent
+    - kind: column
+      table: invoice_number_sequences
+      column: next_number
+    - kind: column
+      table: invoice_number_sequences
+      column: prefix
+    - kind: column
+      table: invoices
+      column: due_date
+    - kind: column
+      table: ledger_entries
+      column: account
+    - kind: column
+      table: ledger_entries
+      column: direction
+    - kind: column
+      table: oauth_authorization_codes
+      column: code_challenge_method
+    - kind: column
+      table: oauth_codes
+      column: code_challenge_method
+    - kind: column
+      table: payment_intents
+      column: payment_method_types
+    - kind: column
+      table: provider_requests
+      column: provider_code
+    - kind: column
+      table: providers
+      column: delivers_callbacks
+    - kind: column
+      table: providers
+      column: display_name
+    - kind: column
+      table: providers
+      column: enabled
+    - kind: column
+      table: providers
+      column: flow
+    - kind: column
+      table: providers
+      column: requires_ip_allowlist
+    - kind: column
+      table: providers
+      column: supports_partial_refunds
+    - kind: column
+      table: providers
+      column: supports_refunds
+  sys_provider_ref:
+    subject: none
+    purpose: rail-correlation
+    necessary: true
+    tenant_boundary: merchant
+    recipients:
+    - mtn_momo
+    - orange_money
+    retention: operational
+    owner: maintainer
+    control: none
+    copies:
+    - kind: column
+      table: charges
+      column: provider_ref_extra
+    - kind: column
+      table: charges
+      column: provider_reference_id
+    - kind: column
+      table: charges
+      column: provider_txn_id
+    - kind: column
+      table: provider_requests
+      column: provider_reference_id
+    - kind: column
+      table: refunds
+      column: provider_reference_id
+  webhook_url:
+    subject: merchant
+    purpose: webhook-delivery
+    necessary: true
+    tenant_boundary: merchant
+    recipients:
+    - merchant-endpoint
+    retention: config
+    owner: operator
+    control: forbid
+    copies:
+    - kind: column
+      table: charges
+      column: redirect_url
+    - kind: column
+      table: charges
+      column: return_url
+    - kind: column
+      table: checkout_sessions
+      column: cancel_url
+    - kind: column
+      table: checkout_sessions
+      column: return_url
+    - kind: column
+      table: checkout_sessions
+      column: success_url
+    - kind: column
+      table: oauth_authorization_codes
+      column: redirect_uri
+    - kind: column
+      table: oauth_codes
+      column: redirect_uri
+    - kind: column
+      table: webhook_deliveries
+      column: url
+  oauth_client_secret:
+    subject: merchant
+    purpose: oauth-client-auth
+    necessary: true
+    tenant_boundary: merchant
+    recipients: []
+    retention: auth
+    owner: operator
+    control: forbid
+    copies:
+    - kind: column
+      table: checkout_sessions
+      column: client_secret_suffix
+    - kind: column
+      table: checkout_sessions
+      column: publishable_key
+    - kind: column
+      table: checkout_sessions
+      column: return_token
+    - kind: column
+      table: merchant_api_keys
+      column: key_digest
+    - kind: column
+      table: merchant_api_keys
+      column: key_prefix
+    - kind: column
+      table: oauth_clients
+      column: client_secret_hash
+    - kind: column
+      table: oauth_clients
+      column: jwks
+    - kind: column
+      table: payment_intents
+      column: client_secret_suffix
+  staff_credential_secret:
+    subject: staff
+    purpose: authentication
+    necessary: true
+    tenant_boundary: merchant
+    recipients: []
+    retention: auth
+    owner: operator
+    control: forbid
+    copies:
+    - kind: column
+      table: credentials
+      column: issuer
+    - kind: column
+      table: credentials
+      column: material
+    - kind: column
+      table: credentials
+      column: subject
+  address_formal:
+    subject: payer
+    purpose: delivery-location
+    necessary: false
+    tenant_boundary: merchant
+    recipients: []
+    retention: customer
+    owner: maintainer
+    control: redact
+    copies:
+    - kind: column
+      table: customers
+      column: address_city
+    - kind: column
+      table: customers
+      column: address_country
+    - kind: column
+      table: customers
+      column: address_line1
+    - kind: column
+      table: customers
+      column: address_line2
+    - kind: column
+      table: customers
+      column: address_postal_code
+    - kind: column
+      table: customers
+      column: address_state
+  address_gps:
+    subject: payer
+    purpose: delivery-location
+    necessary: false
+    tenant_boundary: merchant
+    recipients: []
+    retention: customer
+    owner: maintainer
+    control: redact
+    copies:
+    - kind: column
+      table: customers
+      column: address_latitude_microdeg
+    - kind: column
+      table: customers
+      column: address_longitude_microdeg
+  customer_email:
+    subject: payer
+    purpose: merchant-identity
+    necessary: false
+    tenant_boundary: merchant
+    recipients: []
+    retention: customer
+    owner: maintainer
+    control: redact
+    copies:
+    - kind: column
+      table: customers
+      column: email
+  merchant_metadata:
+    subject: merchant
+    purpose: merchant-context
+    necessary: false
+    tenant_boundary: merchant
+    recipients: []
+    retention: customer
+    owner: merchant
+    control: none
+    copies:
+    - kind: column
+      table: customers
+      column: metadata
+    - kind: column
+      table: invoices
+      column: metadata
+    - kind: column
+      table: payment_intents
+      column: description
+    - kind: column
+      table: payment_intents
+      column: metadata
+    - kind: column
+      table: refunds
+      column: metadata
+  customer_name:
+    subject: payer
+    purpose: merchant-identity
+    necessary: false
+    tenant_boundary: merchant
+    recipients: []
+    retention: customer
+    owner: maintainer
+    control: redact
+    copies:
+    - kind: column
+      table: customers
+      column: name
+  stored_api_body:
+    subject: payer
+    purpose: event-and-idempotency-replay
+    necessary: false
+    tenant_boundary: merchant
+    recipients:
+    - merchant-endpoint
+    retention: customer
+    owner: maintainer
+    control: redact
+    copies:
+    - kind: column
+      table: events
+      column: data
+    - kind: column
+      table: idempotency_keys
+      column: response_body
+  sys_request:
+    subject: none
+    purpose: request-tracing
+    necessary: true
+    tenant_boundary: merchant
+    recipients: []
+    retention: operational
+    owner: maintainer
+    control: none
+    copies:
+    - kind: column
+      table: idempotency_keys
+      column: idempotency_key
+    - kind: column
+      table: idempotency_keys
+      column: request_hash
+    - kind: column
+      table: idempotency_keys
+      column: request_method
+    - kind: column
+      table: idempotency_keys
+      column: request_path
+    - kind: column
+      table: idempotency_keys
+      column: response_retry
+    - kind: column
+      table: idempotency_keys
+      column: response_status
+  merchant_note:
+    subject: merchant
+    purpose: merchant-record
+    necessary: false
+    tenant_boundary: merchant
+    recipients: []
+    retention: customer
+    owner: merchant
+    control: none
+    copies:
+    - kind: column
+      table: invoice_items
+      column: description
+    - kind: column
+      table: invoices
+      column: description
+    - kind: column
+      table: refunds
+      column: reason
+  sys_job:
+    subject: none
+    purpose: worker
+    necessary: true
+    tenant_boundary: system
+    recipients: []
+    retention: operational
+    owner: operator
+    control: none
+    copies:
+    - kind: column
+      table: jobs
+      column: last_error
+    - kind: column
+      table: jobs
+      column: payload
+  session_oauth_code:
+    subject: staff
+    purpose: session-auth
+    necessary: true
+    tenant_boundary: merchant
+    recipients: []
+    retention: auth
+    owner: operator
+    control: forbid
+    copies:
+    - kind: column
+      table: oauth_authorization_codes
+      column: code_challenge
+    - kind: column
+      table: oauth_authorization_codes
+      column: code_hash
+    - kind: column
+      table: oauth_client_assertion_jtis
+      column: jti
+    - kind: column
+      table: oauth_codes
+      column: code
+    - kind: column
+      table: oauth_codes
+      column: code_challenge
+    - kind: column
+      table: oauth_codes
+      column: identity
+    - kind: column
+      table: oauth_device_codes
+      column: device_code
+    - kind: column
+      table: oauth_device_codes
+      column: user_code
+    - kind: column
+      table: oauth_dpop_jti
+      column: jti
+    - kind: column
+      table: oauth_refresh_tokens
+      column: identity
+    - kind: column
+      table: oauth_refresh_tokens
+      column: jkt
+    - kind: column
+      table: oauth_refresh_tokens
+      column: token
+  oauth_signing_key:
+    subject: system
+    purpose: token-signing
+    necessary: true
+    tenant_boundary: system
+    recipients: []
+    retention: auth
+    owner: operator
+    control: forbid
+    copies:
+    - kind: column
+      table: oauth_signing_keys
+      column: kid
+    - kind: column
+      table: oauth_signing_keys
+      column: public_jwk
+  staff_display_name:
+    subject: staff
+    purpose: staff-identity
+    necessary: false
+    tenant_boundary: merchant
+    recipients: []
+    retention: staff
+    owner: maintainer
+    control: none
+    copies:
+    - kind: column
+      table: staff_members
+      column: display_name
+  staff_email:
+    subject: staff
+    purpose: staff-identity
+    necessary: true
+    tenant_boundary: merchant
+    recipients: []
+    retention: staff
+    owner: maintainer
+    control: redact
+    copies:
+    - kind: column
+      table: staff_members
+      column: email
+  staff_oauth_token:
+    subject: staff
+    purpose: session-auth
+    necessary: true
+    tenant_boundary: merchant
+    recipients: []
+    retention: auth
+    owner: operator
+    control: forbid
+    copies:
+    - kind: column
+      table: staff_sessions
+      column: access_token
+non_db_surfaces:
+- id: logs
+  surface: telemetry
+  description: stdout/stderr tracing fields (tracing-subscriber)
+  enumerable: false
+  unmet: no static scanner over tracing!() sites yet; the Debug-redaction rule and CustomerRow hand-written impls are the only guard
+- id: metrics
+  surface: telemetry
+  description: /metrics Prometheus text on the observability listener
+  enumerable: false
+  unmet: metric label derivation is not centrally registered
+- id: traces
+  surface: telemetry
+  description: 'OTLP traces — deliberately absent (docs/status.md: deferred)'
+  enumerable: true
+  unmet: ''
+- id: event_store
+  surface: webhook
+  description: events.data — complete rendered API object stored per event (redacted on customer erasure)
+  enumerable: true
+  unmet: ''
+- id: webhook_payload
+  surface: webhook
+  description: signed payload delivered to the merchant endpoint
+  enumerable: false
+  unmet: per-event projections (RFC-0002 D2) not yet implemented; payload == API object today
+- id: browser_storage
+  surface: browser
+  description: checkout page local memory (frontends/apps/checkout/src/lib/memory-idb.ts) on the payer's own device
+  enumerable: true
+  unmet: ''
+- id: provider_rail
+  surface: provider
+  description: what vpay sends to MTN/Orange (payer MSISDN in requesttopay; refund destination)
+  enumerable: false
+  unmet: no static scan of adapter request builders; guarded by RefundTarget redacting Debug
+- id: merchant_api
+  surface: merchant
+  description: what /v1 renders to the merchant
+  enumerable: false
+  unmet: wire object projections are per-resource, not centrally registered
+- id: observability
+  surface: observability
+  description: /livez and /metrics on --observability-bind
+  enumerable: true
+  unmet: ''
+- id: backup
+  surface: backup
+  description: PITR/WAL and full backups (ADR-0013) — external store vpay does not operate
+  enumerable: false
+  unmet: retention/erasure of restore copies is a deployment obligation (RFC-0002 D13)

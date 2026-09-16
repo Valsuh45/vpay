@@ -1,6 +1,6 @@
 # vpay task runner. `just` with no argument lists everything.
 #
-# Twelve invariants this repo enforces on itself, all wired into `just verify`:
+# Thirteen invariants this repo enforces on itself, all wired into `just verify`:
 #   * no test double is reachable from a shipping binary
 #   * every unimplemented item is declared in docs/status.md
 #   * every error type is classified (ADR-0011) and anyhow stays in the binaries
@@ -34,6 +34,10 @@
 #     comment block for the reasoning)
 #   * every migration file's SHA256 matches its entry in the manifest; applied
 #     migrations are immutable (`verify-migrations`, 2026-09-07, issue #76)
+#   * every database column the migrations create is classified in
+#     schemas/privacy-inventory.yaml, and every classification names a live
+#     column, in both directions (`verify-privacy-inventory`, 2026-09-16,
+#     issue #144 — ADR-0020, RFC-0002)
 #
 # This block said "Eleven" and listed eleven until 2026-09-11: the
 # `verify-migrations` bullet had been pasted into the MIDDLE of the sentence
@@ -1491,9 +1495,9 @@ audit-web:
 # `verify-npm-scope` (its nearest relative in subject, not in date) for the
 # same reason every gate above it is where it is: the list is chronological.
 #
-# The twelve self-checks, then the advisory verify-docs report.
-verify: verify-no-mocks verify-status verify-errors verify-sdk-parity verify-links verify-npm-scope check-schema verify-serde verify-repositories verify-toolchain verify-ui verify-migrations verify-docs
-    @echo "verify: ok — the twelve gates above passed; the verify-docs report is advisory"
+# The thirteen self-checks, then the advisory verify-docs report.
+verify: verify-no-mocks verify-status verify-errors verify-sdk-parity verify-links verify-npm-scope check-schema verify-serde verify-repositories verify-toolchain verify-ui verify-migrations verify-privacy-inventory verify-docs
+    @echo "verify: ok — the thirteen gates above passed; the verify-docs report is advisory"
 
 verify-no-mocks:
     cargo xtask verify-no-mocks
@@ -2269,6 +2273,16 @@ verify-ui:
 # diff, so the honest path never makes one by accident.
 verify-migrations:
     cargo xtask verify-migrations
+
+# Issue #144 / ADR-0020 / RFC-0002: every database column the migrations create
+# is classified in schemas/privacy-inventory.yaml, and every classification
+# names a live column, in both directions — plus six-field element and
+# non-database-surface validation. The authoritative DB surface is derived by
+# parsing the migrations themselves (schemas/vpay.cstack models less than the
+# whole database), so a privacy-relevant column cannot land unclassified and a
+# stale inventory row cannot survive the column it named.
+verify-privacy-inventory:
+    cargo xtask verify-privacy-inventory
 
 # Append the current migration files' SHA-256 lines to the manifest.
 #
