@@ -104,12 +104,30 @@ pdb-minavailable — a PDB whose minAvailable is at least the replica count
 permits no voluntary eviction at all, so every `kubectl drain` and every
 node-pool upgrade blocks for ever. The failure looks like a stuck cluster, not
 like a misconfigured chart.
+
+ADR-0022: once `server.autoscaling.enabled` is true, `server.replicaCount`
+no longer governs `-server`'s Deployment (`deployment-server.yaml` stops
+setting `spec.replicas` entirely) — the field this guard has to compare
+against is `server.autoscaling.minReplicas`, the HPA's own floor, or the
+guard would compare `minAvailable` to a number the running Deployment does
+not use. The second half, added the same day, checks `-management`'s own
+budget against `management.replicaCount` when that workload is templated —
+a fixed-replica tier gets exactly the same failure mode a static
+`server.replicaCount` does.
 */}}
 {{- if .Values.podDisruptionBudget.enabled -}}
 {{- $min := int .Values.podDisruptionBudget.minAvailable -}}
-{{- $replicas := int .Values.server.replicaCount -}}
+{{- $replicas := ternary (int .Values.server.autoscaling.minReplicas) (int .Values.server.replicaCount) .Values.server.autoscaling.enabled -}}
 {{- if ge $min $replicas -}}
-{{- fail (printf "vpay chart guard \"pdb-minavailable\": podDisruptionBudget.minAvailable is %d and server.replicaCount is %d. A budget that requires every replica to stay up blocks every voluntary eviction, so node drains hang instead of the workload being protected. Keep minAvailable strictly below the replica count, or disable the budget." $min $replicas) -}}
+{{- $governs := ternary "server.autoscaling.minReplicas" "server.replicaCount" .Values.server.autoscaling.enabled -}}
+{{- fail (printf "vpay chart guard \"pdb-minavailable\": podDisruptionBudget.minAvailable is %d and %s is %d. A budget that requires every replica to stay up blocks every voluntary eviction, so node drains hang instead of the workload being protected. Keep minAvailable strictly below that value, or disable the budget." $min $governs $replicas) -}}
+{{- end -}}
+{{- if .Values.management.enabled -}}
+{{- $mmin := int .Values.podDisruptionBudget.managementMinAvailable -}}
+{{- $mreplicas := int .Values.management.replicaCount -}}
+{{- if ge $mmin $mreplicas -}}
+{{- fail (printf "vpay chart guard \"pdb-minavailable\": podDisruptionBudget.managementMinAvailable is %d and management.replicaCount is %d. Same failure as -server's budget, one tier over: every replica required up blocks every voluntary eviction. Keep managementMinAvailable strictly below management.replicaCount." $mmin $mreplicas) -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 
@@ -192,24 +210,38 @@ modulus) with no diagnostic at all.
 
 {{/* --------------------------------------------------------------- 12 */}}
 {{/*
-dashboard-not-templated — see values.yaml. The image is published; the
-workload is not written. This is the chart's `NotImplemented`.
+dashboard-not-templated — RETIRED 2026-09-16 (ADR-0022). This slot fired
+unconditionally on `dashboard.enabled: true`; that image now templates a
+Deployment (`deployment-dashboard.yaml`), because ADR-0022's own
+Dockerfile-hardening commit closed the gap this guard existed to name —
+`frontends/Dockerfile`'s `runner` stage now declares `USER node`, and that
+image was run with `docker run --read-only --tmpfs /tmp --user 1000:1000`
+and recorded turning Docker-`healthy` on `GET /healthz`. See
+`docs/status/verification/` for that run. The number is left with a gap
+rather than renumbered, matching this file's own convention of a dated
+addendum over a silent rewrite; nothing after it depends on the numbering.
 */}}
-{{- if .Values.dashboard.enabled -}}
-{{- fail "vpay chart guard \"dashboard-not-templated\": dashboard.enabled is true, but this chart templates no dashboard workload. ghcr.io/vaam-apps/vpay-dashboard is published by the release workflow; its Deployment is not written, because the image is node:22-alpine-based, declares no USER, and its behaviour under readOnlyRootFilesystem has never been observed. Deploy it separately, or leave this false — do not expect a silent no-op." -}}
-{{- end -}}
 {{/*
-dashboard-public-origin — the SHAPE of a value this chart consumes and no
-workload here reads, which is the point: it names VPAY_DASHBOARD_PUBLIC_ORIGIN
-on the dashboard an operator deploys separately, and a typo in it refuses
-every server action on that dashboard with one sentence. Checking the shape
-where the value is written is the only place the mistake is cheap.
+dashboard-public-origin — the SHAPE of a value the Deployment below reads as
+`VPAY_DASHBOARD_PUBLIC_ORIGIN`, and (ADR-0022) now REQUIRED once
+`dashboard.enabled` is true — a typo in it refuses every server action on the
+dashboard with one sentence, and letting it default silently would turn that
+into a production incident found by staff rather than an install-time error.
 
-Empty is legal and is the default — it means the app falls back to comparing
-the `Host` header. A value that IS set has to be an absolute http(s) origin
-with no path and no trailing slash, because that is what the app compares an
+Empty stays legal while `dashboard.enabled` is false: the value is inert
+until the workload exists, so pre-populating it ahead of turning the
+dashboard on should not be blocked by a chart that has nowhere yet to use it.
+Once enabled, an unset value means the app falls back to comparing the
+`Host` header — never `X-Forwarded-Host`, and wrong behind a proxy that
+rewrites `Host` — which is why this guard now refuses it rather than
+inheriting a partly-correct default a maintainer would have to notice by
+reading logs. A value that IS set has to be an absolute http(s) origin with
+no path and no trailing slash, because that is what the app compares an
 `Origin` header against, byte for byte after normalisation.
 */}}
+{{- if and .Values.dashboard.enabled (empty .Values.dashboard.publicOrigin) -}}
+{{- fail "vpay chart guard \"dashboard-public-origin\": dashboard.enabled is true but dashboard.publicOrigin is empty. The dashboard's server actions compare every request's Origin header against this value; left unset the app falls back to comparing Host — never X-Forwarded-Host, so wrong behind a proxy that rewrites Host — and every action would be refused the first time that assumption does not hold. Set it to the origin a browser reaches this dashboard on, e.g. https://dash.example." -}}
+{{- end -}}
 {{- with .Values.dashboard.publicOrigin -}}
 {{- if not (or (hasPrefix "http://" .) (hasPrefix "https://" .)) -}}
 {{- fail (printf "vpay chart guard \"dashboard-public-origin\": dashboard.publicOrigin is %q, which is not an absolute origin. Write scheme://host[:port] — https://dash.example, http://localhost:3000 — because it is compared against the Origin header a browser sends, which always carries a scheme." .) -}}
@@ -593,6 +625,131 @@ empty dict on anything it cannot parse, so every lookup below degrades to
 {{- end -}}
 {{- end -}}
 {{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/* --------------------------------------------------------------- 22 */}}
+{{/*
+connection-budget — ADR-0022 §3, and the load-bearing guard of that ADR:
+without it, splitting the surfaces and autoscaling `-server` is a change
+that works in staging and exhausts Postgres' connection budget in
+production.
+
+Every server, management and worker replica holds a pool of up to
+`vpay_db::pool::MAX_CONNECTIONS` (10, a compile-time constant this chart
+cannot read — duplicated here on purpose; see `pool.rs`'s own doc comment
+for the pairing, the same way `worker.concurrency` is paired with the pool
+by the "worker-concurrency-pool" guard above). The bound:
+
+    (server.autoscaling.maxReplicas + management.replicaCount + worker.replicaCount) * 10
+      <= database.maxConnections - database.reservedConnections
+
+Checked ONLY once `server.autoscaling.enabled` is true — a fixed
+`server.replicaCount` was already a known, reviewable number before this
+ADR, and this guard exists for the number an HPA can reach on its own
+without anyone re-reading the chart. `database.maxConnections` has NO
+default (see its own comment in values.yaml): guessing 100 on behalf of a
+managed Postgres instance is exactly how this becomes a 3am incident, so an
+autoscaling release that never set it is refused by name rather than
+silently checked against a guess.
+
+`management.replicaCount` is counted ONLY while `management.enabled` is
+true, which is what the `ternary` below spells: a tier this release does not
+template runs no process and holds no connection, and counting its replicas
+anyway would refuse a release over connections nothing will ever open. The
+failure message prints the counted number (0 while disabled), not the raw
+value, so the arithmetic an operator reads back is the arithmetic the guard
+actually did.
+
+_(Corrected 2026-09-16, in review: this paragraph originally claimed the
+opposite — "counted even when `management.enabled` is false" — while the
+code below has always read the `ternary`. The code was right; the prose was
+not.)_
+*/}}
+{{- if .Values.server.autoscaling.enabled -}}
+{{- if le (int .Values.database.maxConnections) 0 -}}
+{{- fail "vpay chart guard \"connection-budget\": server.autoscaling.enabled is true but database.maxConnections is not set (0). Every replica of -server, -management and -worker holds a pool of up to vpay_db::pool::MAX_CONNECTIONS (10) Postgres connections, and an HPA can reach server.autoscaling.maxReplicas on its own, with nobody re-reading this chart when it does. Set database.maxConnections to the real ceiling of the Postgres instance behind database.existingSecret (a managed instance's own max_connections, or `SHOW max_connections;`) — guessing on its behalf is how this becomes a 3am incident." -}}
+{{- else -}}
+{{- $management := ternary (int .Values.management.replicaCount) 0 .Values.management.enabled -}}
+{{- $worker := int .Values.worker.replicaCount -}}
+{{- $maxReplicas := int .Values.server.autoscaling.maxReplicas -}}
+{{- $wanted := mul (add $maxReplicas $management $worker) 10 -}}
+{{- $budget := sub (int .Values.database.maxConnections) (int .Values.database.reservedConnections) -}}
+{{- if gt $wanted $budget -}}
+{{- fail (printf "vpay chart guard \"connection-budget\": server.autoscaling.maxReplicas (%d) + management.replicaCount (%d, counted only while management.enabled) + worker.replicaCount (%d), times 10 connections each, is %d — more than database.maxConnections (%d) minus database.reservedConnections (%d) = %d. At maxReplicas this release would ask Postgres for more connections than it has, and the failure is not a refused scale-up: it is PgPoolOptions::acquire_timeout firing on whichever path asks next, which on the worker's side is the crash-recovery branch. Lower server.autoscaling.maxReplicas, raise database.maxConnections (if the instance actually has the headroom), or move some load off before raising either." $maxReplicas $management $worker $wanted (int .Values.database.maxConnections) (int .Values.database.reservedConnections) $budget) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+
+{{/* --------------------------------------------------------------- 23 */}}
+{{/*
+networkpolicy-management-ingress — ADR-0022 §5 asks the management tier not
+to be reachable from the public gateway, and names "a NetworkPolicy ingress
+rule admitting only the dashboard Deployment" as the concrete form of that.
+`networkpolicy.yaml`'s `-management` policy is that rule, and its entire
+security content is `networkPolicy.managementIngress.podSelector`.
+
+Left at its default (`{}`), that rule renders as
+
+    from:
+      - podSelector:
+          matchLabels: {}
+
+and an EMPTY `podSelector` in a NetworkPolicy peer selects **every pod in
+the policy's namespace** — so the rule an operator reads as "only the
+dashboard" admits the whole namespace to `/dash/v1`. It renders, it
+kubeconforms, and it is a default-allow rule wearing a default-deny one's
+name — exactly the failure the "rails-egress-except" guard above exists to
+refuse one layer over, and the same shape "networkpolicy-database" refuses
+for the egress side.
+
+Only checked when both flags are on: the policy is not rendered otherwise,
+and an operator pre-populating one value before the other should not be
+blocked by a chart that renders nothing from it yet.
+*/}}
+{{- if and .Values.networkPolicy.enabled .Values.management.enabled -}}
+{{- if empty .Values.networkPolicy.managementIngress.podSelector -}}
+{{- fail "vpay chart guard \"networkpolicy-management-ingress\": networkPolicy.enabled and management.enabled are both true but networkPolicy.managementIngress.podSelector is empty. An empty podSelector in a NetworkPolicy peer matches EVERY pod in the namespace, so the rendered -management policy would admit the whole namespace to /dash/v1 while reading like it admits one workload. Name the pods that may reach the management tier — for the dashboard this chart templates, that is app.kubernetes.io/name: vpay with app.kubernetes.io/component: dashboard — or disable networkPolicy." -}}
+{{- end -}}
+{{- end -}}
+
+
+{{/* --------------------------------------------------------------- 24 */}}
+{{/*
+networkpolicy-management-route — the combination in which the chart's two
+ADR-0022 §5 halves contradict each other, and nothing else notices.
+
+With `management.enabled`, `route.enabled` and `networkPolicy.enabled` all
+true, `httproute.yaml` publishes a `/dash/v1` rule whose backend is the
+`-management` Service, and `networkpolicy.yaml` writes a `-management`
+policy whose only traffic-port peer is a bare `podSelector`. A bare
+`podSelector` peer selects pods **in the policy's own namespace**; a Gateway
+lives in its own (`traefik`, `istio-system`, `envoy-gateway-system`). So the
+release publishes `/dash/v1` at the edge and the CNI drops every request
+that arrives on it. `helm upgrade` is green, every object reports healthy,
+and the symptom is found by a member of staff who cannot sign in.
+
+**This guard does not decide whether the management tier should face the
+public gateway.** ADR-0022 § "Left to the maintainer" item 3 leaves that
+open and prefers a separate internal Gateway; a chart that picked one would
+be deciding it. What it refuses is the combination in which the chart has
+been made to claim BOTH answers at once. Either answer clears it:
+
+  - yes, from that namespace — set
+    `networkPolicy.managementIngress.namespaceSelector` to the Gateway's
+    namespace labels, which renders a second, ORed ingress peer;
+  - no — set `route.enabled: false`, or drop the `/dash/v1` publication by
+    turning `management.enabled` off, and reach the tier by whatever
+    internal path the maintainer chose.
+
+Checked only when all three are on, for "networkpolicy-management-ingress"'s
+reason: with any of them off, one of the two contradicting objects is not
+rendered and there is nothing to contradict.
+*/}}
+{{- if and .Values.networkPolicy.enabled .Values.management.enabled .Values.route.enabled -}}
+{{- if empty .Values.networkPolicy.managementIngress.namespaceSelector -}}
+{{- fail "vpay chart guard \"networkpolicy-management-route\": route.enabled, management.enabled and networkPolicy.enabled are all true, but networkPolicy.managementIngress.namespaceSelector is empty. This release publishes an HTTPRoute rule for /dash/v1 whose backend is the -management Service, AND a -management NetworkPolicy whose only traffic-port peer is a bare podSelector — which matches pods in THIS namespace only, and a Gateway runs in its own. helm upgrade would be green, every object healthy, and every /dash/v1 request dropped by the CNI; the symptom is a member of staff who cannot sign in. Whether the management tier should face the public gateway is deliberately NOT this chart's decision (ADR-0022 \"Left to the maintainer\" item 3, which prefers a separate internal Gateway) — but it has to be SOMEBODY's. Either admit the Gateway's namespace, by setting networkPolicy.managementIngress.namespaceSelector to its labels (kubernetes.io/metadata.name: <gateway namespace>), which renders a second, ORed ingress peer beside the podSelector one; or stop publishing the path, by setting route.enabled: false, and reach /dash/v1 by the internal route you chose instead." -}}
 {{- end -}}
 {{- end -}}
 

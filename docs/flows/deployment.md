@@ -358,14 +358,14 @@ correlation mechanism until an OTLP decision is made.
 
 ## 7. What guards the deployment
 
-| Guard                                                                        | Where                                      | Catches                                                                                                                                                                                                                                                      |
-| ---------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 22 named `fail` guards                                                       | `deploy/helm/vpay/templates/_validate.tpl` | Value combinations that are well-typed and cannot work — see the chart README. _Said 15 until 2026-09-10 and 19 until 2026-09-11; the count is the `expected_guards` list in the `helm-check` recipe, which is the copy `just helm-check` actually enforces_ |
-| `helm lint` + `helm template` + `kubeconform -strict`                        | CI `deploy` job / `just helm-check`        | Malformed templates, objects that do not match their schema                                                                                                                                                                                                  |
-| `limit-rps` assertion on the rendered Ingress                                | same                                       | The rate limit [ADR-0009](../adr/0009-dashboard-oidc-provider.md) assumes exists silently disappearing                                                                                                                                                       |
-| `ExtensionRef`-or-`vpay/rate-limited-by` assertion on the rendered HTTPRoute | same                                       | The same disappearance on the Gateway API path, where there is no annotation to grep for                                                                                                                                                                     |
-| `/provider` routability, on both mechanisms                                  | same                                       | Every MTN MoMo and Orange Money callback answered by the ingress controller's 404, with no vpay log line — the chart's own defect until 2026-09-11                                                                                                           |
-| `Config::validate_all`                                                       | the process                                | Configuration that would fail at runtime                                                                                                                                                                                                                     |
+| Guard                                                                        | Where                                      | Catches                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ---------------------------------------------------------------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 24 named `fail` guards                                                       | `deploy/helm/vpay/templates/_validate.tpl` | Value combinations that are well-typed and cannot work — see the chart README. _Said 15 until 2026-09-10, 19 until 2026-09-11 and **22 until 2026-09-16**, when ADR-0022 added `connection-budget`, `networkpolicy-management-ingress` and `networkpolicy-management-route` and retired `dashboard-not-templated`. The bullet further down this page was corrected on that date and this row was not, for one review pass. The count is the `expected_guards` list in the `helm-check` recipe, which is the copy `just helm-check` actually enforces_ |
+| `helm lint` + `helm template` + `kubeconform -strict`                        | CI `deploy` job / `just helm-check`        | Malformed templates, objects that do not match their schema                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `limit-rps` assertion on the rendered Ingress                                | same                                       | The rate limit [ADR-0009](../adr/0009-dashboard-oidc-provider.md) assumes exists silently disappearing                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `ExtensionRef`-or-`vpay/rate-limited-by` assertion on the rendered HTTPRoute | same                                       | The same disappearance on the Gateway API path, where there is no annotation to grep for                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `/provider` routability, on both mechanisms                                  | same                                       | Every MTN MoMo and Orange Money callback answered by the ingress controller's 404, with no vpay log line — the chart's own defect until 2026-09-11                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `Config::validate_all`                                                       | the process                                | Configuration that would fail at runtime                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 The rate limit deserves its own sentence. ingress-nginx applies `limit-rps`
 per Ingress object, so the chart renders two: `/v1`, and a tighter one for
@@ -541,6 +541,35 @@ What exists:
   commit's — the rail callback's `<release>-provider` — and are byte-identical
   once that one document is stripped; the default render, with
   `ingress.enabled: false`, is byte-identical outright.
+- **Updated 2026-09-16 ([ADR-0022](../adr/0022-surface-isolation-and-independent-scaling.md),
+  status `Proposed`)**, and it is the largest change this chart has had since
+  block B: a second server `Deployment` (`<release>-management`, `/dash/v1`
+  and the staff routes, fixed replicas, deliberately **not** autoscaled), a
+  `Deployment` for the dashboard frontend, a `HorizontalPodAutoscaler` for
+  `<release>-server`, a second `PodDisruptionBudget`, a third
+  `NetworkPolicy`, a third `ServiceMonitor`, and two per-tier overlay
+  `ConfigMap`s that differ only in `deployment.surfaces`. **24 guards rather
+  than 22** — `connection-budget` (the ADR's own load-bearing one:
+  `(maxReplicas + management + worker) × 10` against
+  `database.maxConnections − reservedConnections`, because an HPA can
+  exhaust a Postgres connection budget without anyone re-reading the chart),
+  `networkpolicy-management-ingress` and `networkpolicy-management-route` —
+  with `dashboard-not-templated` retired, since the chart now writes the
+  Deployment that guard existed to refuse. **Four renders rather than three**:
+  `ci/values-route-networkpolicy.yaml` is the only one producing the
+  `/dash/v1` HTTPRoute rule and the `-management` NetworkPolicy together, and
+  `just helm-check` asserts the two agree — a published path whose Gateway
+  the policy denies installs green and drops every request. **25 fixtures**
+  rather than one per guard, because the harness now accepts `<guard>.<n>.yaml`
+  variants and `connection-budget` has one per direction. Measured:
+  **25 fixtures, 24 guards, all fired by name (24 expected); 68 resources
+  across the four renders — 68 valid, 0 invalid, 0 skipped.** Negative
+  controls for each new assertion, with their failure text, on
+  [docs/status/verification/2026-09-16-adr-0022.md](../status/verification/2026-09-16-adr-0022.md).
+  **None of it has been applied to a cluster either**, which is the whole
+  reason this page's verdict is still 🟡 — a `NetworkPolicy` is enforced by a
+  CNI, and the guard above only keeps the chart from _claiming_ two
+  contradictory things at once.
 - Measured on the authoring machine, 2026-09-03: **15 guards, all fired by
   name; 20 resources validated across the two renders — 20 valid, 0 invalid,
   0 skipped.** Negative controls run: disabling the `grace-period` guard, and

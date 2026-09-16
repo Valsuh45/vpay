@@ -64,6 +64,82 @@ pub struct Deployment {
     pub livemode: bool,
     #[garde(length(min = 1))]
     pub public_base_url: String,
+    /// Which HTTP surface(s) (ADR-0022) this process mounts.
+    ///
+    /// `None` — absent from the YAML — mounts **every** surface, which is
+    /// what every existing deployment gets on upgrade: this field did not
+    /// exist before, so no running config wrote it, and the fail-open
+    /// reading is "serve what you always served." `Some(vec)` is explicit,
+    /// never inferred (see [`Deployment::enabled_surfaces`] for why it
+    /// cannot be derived from `merchant_clients`): an empty list is a boot
+    /// error (a process configured to serve nothing is a misconfiguration),
+    /// and an unknown entry is a boot error naming the bad value and the
+    /// legal set. `#[garde(skip)]` because the real validation
+    /// ([`Deployment::enabled_surfaces`]) needs to produce a specific
+    /// [`ConfigError`], not a `garde::Report` string.
+    #[serde(default)]
+    #[garde(skip)]
+    pub surfaces: Option<Vec<String>>,
+}
+
+/// The legal values of `deployment.surfaces` (ADR-0022).
+pub const SURFACE_BUSINESS: &str = "business";
+/// The legal values of `deployment.surfaces` (ADR-0022).
+pub const SURFACE_MANAGEMENT: &str = "management";
+
+/// Which of the two HTTP surfaces (ADR-0022) a deployment mounts, resolved
+/// from [`Deployment::surfaces`]. Both fields `true` is what an absent
+/// `surfaces:` key resolves to, and is the only value every pre-ADR-0022
+/// deployment can have had.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EnabledSurfaces {
+    /// `/v1`, `/v1/browser`, `/provider`.
+    pub business: bool,
+    /// `/dash/v1` and the `staff` sign-in routes.
+    pub management: bool,
+}
+
+impl EnabledSurfaces {
+    /// What an absent `deployment.surfaces` means: every surface, so an
+    /// upgrade of a deployment that never wrote this key does not lose
+    /// `/v1`.
+    pub const ALL: Self = Self {
+        business: true,
+        management: true,
+    };
+}
+
+impl Deployment {
+    /// Resolves `deployment.surfaces` into which of the two surfaces this
+    /// process mounts.
+    ///
+    /// # Errors
+    /// [`ConfigError::NoSurfacesConfigured`] if the key is
+    /// present and empty, and
+    /// [`ConfigError::UnknownSurface`] if it names anything
+    /// other than [`SURFACE_BUSINESS`] or [`SURFACE_MANAGEMENT`].
+    pub fn enabled_surfaces(&self) -> Result<EnabledSurfaces, ConfigError> {
+        let Some(surfaces) = &self.surfaces else {
+            return Ok(EnabledSurfaces::ALL);
+        };
+        if surfaces.is_empty() {
+            return Err(ConfigError::NoSurfacesConfigured);
+        }
+        let mut enabled = EnabledSurfaces {
+            business: false,
+            management: false,
+        };
+        for surface in surfaces {
+            match surface.as_str() {
+                SURFACE_BUSINESS => enabled.business = true,
+                SURFACE_MANAGEMENT => enabled.management = true,
+                other => {
+                    return Err(ConfigError::UnknownSurface(other.to_owned()));
+                }
+            }
+        }
+        Ok(enabled)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, garde::Validate)]
@@ -1014,6 +1090,29 @@ pub enum ConfigError {
          addresses (see docs/flows/webhooks.md)"
     )]
     PrivateWebhookTargetsInLivemode,
+
+    /// `deployment.surfaces` is present and an empty list (ADR-0022). A
+    /// process configured to serve no surface is a misconfiguration, not a
+    /// valid deployment — it would boot, bind a port, and answer 404 to
+    /// every request forever, and nothing short of reading the config would
+    /// tell an operator why. Absent is legal (see
+    /// [`EnabledSurfaces::ALL`]); empty is not.
+    #[error(
+        "deployment.surfaces is present and empty; a process configured to serve no surface \
+         is a misconfiguration, not a valid deployment. Set it to one or both of: {SURFACE_BUSINESS}, {SURFACE_MANAGEMENT}"
+    )]
+    NoSurfacesConfigured,
+
+    /// `deployment.surfaces` names something other than [`SURFACE_BUSINESS`]
+    /// or [`SURFACE_MANAGEMENT`] (ADR-0022). Named explicitly rather than
+    /// folded into [`Self::Shape`]: an operator who mistyped `businesss` or
+    /// copied a value from a different chart needs the legal set in the same
+    /// message, not a generic deserialization failure.
+    #[error(
+        "deployment.surfaces contains an unknown value {0:?}; the legal set is: \
+         {SURFACE_BUSINESS}, {SURFACE_MANAGEMENT}"
+    )]
+    UnknownSurface(String),
 }
 
 impl vpay_core::Classify for ConfigError {
@@ -1214,5 +1313,87 @@ mod tests {
             // developer's stack is `http://wiremock-webhook:8080`.
             assert_eq!(validate_webhook_url(&parsed, raw, false), Ok(()), "{raw}");
         }
+    }
+
+    fn deployment_with_surfaces(surfaces: Option<Vec<&str>>) -> Deployment {
+        Deployment {
+            name: "test".to_owned(),
+            livemode: false,
+            public_base_url: "https://api.vpay.test".to_owned(),
+            surfaces: surfaces.map(|list| list.into_iter().map(str::to_owned).collect()),
+        }
+    }
+
+    /// Absent `deployment.surfaces` is the backward-compatibility case
+    /// (ADR-0022): every deployment that upgrades without ever writing the
+    /// key gets every surface, unchanged.
+    #[test]
+    fn absent_surfaces_means_every_surface() {
+        let resolved = deployment_with_surfaces(None)
+            .enabled_surfaces()
+            .expect("absent is always legal");
+        assert_eq!(resolved, EnabledSurfaces::ALL);
+    }
+
+    #[test]
+    fn one_named_surface_enables_only_that_one() {
+        let business_only = deployment_with_surfaces(Some(vec!["business"]))
+            .enabled_surfaces()
+            .expect("a legal single value");
+        assert!(business_only.business);
+        assert!(!business_only.management);
+
+        let management_only = deployment_with_surfaces(Some(vec!["management"]))
+            .enabled_surfaces()
+            .expect("a legal single value");
+        assert!(!management_only.business);
+        assert!(management_only.management);
+    }
+
+    #[test]
+    fn both_named_explicitly_is_the_same_as_absent() {
+        let resolved = deployment_with_surfaces(Some(vec!["business", "management"]))
+            .enabled_surfaces()
+            .expect("both named explicitly is legal");
+        assert_eq!(resolved, EnabledSurfaces::ALL);
+    }
+
+    /// A present, empty `deployment.surfaces` is a boot error (exit 78 via
+    /// [`vpay_core::Classify`]) — a process configured to serve nothing is a
+    /// misconfiguration, not a valid deployment. `vpay-api`'s own
+    /// `empty_surfaces_is_refused_before_a_router_is_ever_built` cites this
+    /// test by name; keep them in sync if either changes.
+    #[test]
+    fn deployment_surfaces_empty_is_a_boot_error() {
+        let err = deployment_with_surfaces(Some(Vec::new()))
+            .enabled_surfaces()
+            .expect_err("an empty list must be refused");
+        assert_eq!(err, ConfigError::NoSurfacesConfigured);
+        assert!(
+            err.to_string().contains("deployment.surfaces"),
+            "the message must name the key: {err}"
+        );
+        assert_eq!(
+            vpay_core::Classify::category(&err).exit_code(),
+            78,
+            "a misconfigured deployment must exit 78 (\"fix the deploy\")"
+        );
+    }
+
+    /// An unknown `deployment.surfaces` entry is refused, and the message
+    /// names both the bad value and the legal set — an operator who mistyped
+    /// `businesss` should not have to go read the source to find the right
+    /// spelling.
+    #[test]
+    fn deployment_surfaces_unknown_value_is_a_boot_error() {
+        let err = deployment_with_surfaces(Some(vec!["businesss"]))
+            .enabled_surfaces()
+            .expect_err("an unknown value must be refused");
+        assert_eq!(err, ConfigError::UnknownSurface("businesss".to_owned()));
+        let message = err.to_string();
+        assert!(message.contains("businesss"), "{message}");
+        assert!(message.contains(SURFACE_BUSINESS), "{message}");
+        assert!(message.contains(SURFACE_MANAGEMENT), "{message}");
+        assert_eq!(vpay_core::Classify::category(&err).exit_code(), 78);
     }
 }

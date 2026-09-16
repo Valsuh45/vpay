@@ -342,6 +342,19 @@ pub struct RouterDeps {
     /// expressible so that "the reads are mounted" and "a human can reach
     /// them" remain two separate claims rather than one.
     pub staff_login: Option<Arc<staff::StaffLogin>>,
+    /// Which of `/v1` (business) and `/dash/v1` (management) this process
+    /// mounts (ADR-0022), resolved from `deployment.surfaces` by
+    /// [`vpay_config::Deployment::enabled_surfaces`] before this struct is
+    /// built — `router` trusts the resolution rather than re-deriving it,
+    /// so a boot-time refusal (empty or unknown value) happens once, in
+    /// `Config::validate_all`, and never as a silent default here.
+    ///
+    /// Deliberately **not** derivable from [`Self::dashboard_validator`] or
+    /// from whether any merchant is registered: a management-only process
+    /// still registers `merchant_clients` (dashboard-binding validation
+    /// requires it), so an empty merchant list is not a legal proxy for "no
+    /// business surface." See ADR-0022 § "Why it cannot be inferred."
+    pub surfaces: vpay_config::EnabledSurfaces,
 }
 
 /// Shared state for every route in this router.
@@ -1396,6 +1409,11 @@ const V1_BODY_LIMIT_BYTES: usize = 64 * 1024;
 /// middleware layer must sit above:
 /// [docs/reference/vpay-api.md § the router](../../../../docs/reference/vpay-api.md#the-router).
 pub fn router(deps: RouterDeps) -> Router {
+    // Read once, up front: every mounting decision below is a `match`/`if`
+    // against these two booleans, and none of them is re-derived from
+    // `state` — see [`RouterDeps::surfaces`] for why it cannot be.
+    let surfaces = deps.surfaces;
+
     let state = AppState {
         repositories: deps.repositories,
         merchant_op: deps.merchant_op,
@@ -1407,13 +1425,32 @@ pub fn router(deps: RouterDeps) -> Router {
     };
 
     // Unauthenticated by necessity, not by omission — see the table above.
+    //
+    // Split three ways by surface, and the split *is* the ADR-0022 boundary
+    // — see ADR-0022 § "Where `/v1/oauth` goes". The two discovery routes
+    // mint nothing and are mounted on both surfaces, because the management
+    // tier's `resource_auth` validator fetches JWKS over HTTP and must not
+    // have to reach the business tier to validate a staff token. `/token`
+    // mints the **merchant** private-key-JWT credential (ADR-0017's staff
+    // grant terminates at `/dash/v1/oauth/token`, not here — see
+    // `staff::oauth`), so it is business-only: a `surfaces: [management]`
+    // pod that served it would mint merchant credentials on the staff tier,
+    // outside ADR-0009's rate limit, which is the exact boundary this ADR
+    // exists to draw.
     let oauth = Router::new()
-        .route("/token", post(op::token::token_handler))
         .route(
             "/.well-known/openid-configuration",
             get(op::token::discovery_handler),
         )
-        .route("/jwks.json", get(op::jwks::jwks_handler))
+        .route("/jwks.json", get(op::jwks::jwks_handler));
+    let oauth = match surfaces.business {
+        true => oauth.route("/token", post(op::token::token_handler)),
+        // Not mounted at all, so the nest's own `.fallback` answers the
+        // honest 404 rather than a refusal — the same fail-closed answer
+        // `/v1` and `/dash/v1` already give a surface that is not enabled.
+        false => oauth,
+    };
+    let oauth = oauth
         // Explicit, not inherited — see this function's route table and the
         // paragraph under it.
         .fallback(not_found)
@@ -1518,21 +1555,26 @@ pub fn router(deps: RouterDeps) -> Router {
         // code would otherwise get to choose.
         .layer(from_fn(track_http_metrics));
 
-    // The staff surface, and the only nest that is *conditional*: a
-    // deployment with no `dashboard_client` mounts nothing here, so every
-    // `/dash/v1/...` path falls through to the outer honest 404. That is the
-    // fail-closed reading of an absent registration — the alternative, a
-    // mounted nest whose middleware refuses everything, answers 401 to a
-    // caller and invites them to go looking for a credential that this
-    // deployment could never issue.
+    // The staff surface. A deployment with no `dashboard_client` mounts
+    // nothing here, so every `/dash/v1/...` path falls through to the outer
+    // honest 404 — the fail-closed reading of an absent registration. The
+    // alternative, a mounted nest whose middleware refuses everything,
+    // answers 401 to a caller and invites them to go looking for a
+    // credential that this deployment could never issue.
     //
-    // Both halves of the condition are required and neither is redundant:
-    // the validator is what checks a token, the binding is what a query
-    // filters by, and a nest mounted with one and not the other would be a
-    // surface that authenticates and cannot answer, or one that answers and
-    // cannot authenticate.
-    let dash_is_configured =
-        state.dashboard_validator.is_some() && state.resource_config.dashboard().is_some();
+    // The first two conditions were already required and neither is
+    // redundant: the validator is what checks a token, the binding is what
+    // a query filters by, and a nest mounted with one and not the other
+    // would be a surface that authenticates and cannot answer, or one that
+    // answers and cannot authenticate. ADR-0022 adds the third: a process
+    // whose `deployment.surfaces` does not include `management` mounts
+    // nothing here regardless of `dashboard_client`, so an operator can run
+    // a business-only replica against a config file that still names a
+    // dashboard client (e.g. shared between the `-server` and
+    // `-management` Deployments).
+    let dash_is_configured = surfaces.management
+        && state.dashboard_validator.is_some()
+        && state.resource_config.dashboard().is_some();
     let dash = dash_is_configured.then(|| {
         dash::routes()
             .layer(from_fn_with_state(
@@ -1661,22 +1703,43 @@ pub fn router(deps: RouterDeps) -> Router {
     let router = Router::new()
         .route("/healthz", get(healthz))
         .fallback(not_found)
-        // **Before the two nests, and that ordering is the whole reason a
-        // `/v1` request is not counted twice**: `Router::layer` wraps the
+        // **Before every nest below, and that ordering is the whole reason
+        // a `/v1` request is not counted twice**: `Router::layer` wraps the
         // routes that exist when it is called and nothing added afterwards,
         // so this copy covers `/healthz` and the outer 404 only, while each
         // nest carries its own. Moving this line below the nests would
         // double every `/v1` count and label half of them `unmatched`.
-        .layer(from_fn(track_http_metrics))
-        .nest("/v1/oauth", oauth)
-        .nest("/v1/browser", browser)
-        .nest("/v1", v1)
-        .nest(PROVIDER_NEST, provider);
+        .layer(from_fn(track_http_metrics));
 
-    // `nest` after the fold rather than inside the chain, because the chain
-    // is not an `Option`-shaped expression — and writing it as one would
-    // need a `Router` identity to merge against, which is exactly the thing
-    // a reader would then have to check does nothing.
+    // The `/v1/oauth` **nest** mounts whenever either surface is enabled
+    // (ADR-0022 § "Where `/v1/oauth` goes"), because both surfaces need the
+    // discovery pair; which routes are inside it is decided above, and
+    // `/token` is not one of them on a management-only pod. `match` after
+    // the fold rather than inside the chain, for the same reason the
+    // `dash`/`dash_procs` nests below already are — the chain is not an
+    // `Option`-shaped expression, and writing it as one would need a
+    // `Router` identity to merge against, which is exactly the thing a
+    // reader would then have to check does nothing.
+    let router = match (surfaces.business || surfaces.management).then_some(oauth) {
+        Some(oauth) => router.nest("/v1/oauth", oauth),
+        None => router,
+    };
+
+    // The business surface — `/v1/browser`, `/v1`, `/provider` — mounted
+    // only when `surfaces.business`. A management-only process falls
+    // through to the outer honest 404 for every one of these paths, the
+    // same fail-closed answer `/dash/v1` already gives an undashboarded
+    // deployment.
+    let router = match surfaces.business.then_some((browser, v1, provider)) {
+        Some((browser, v1, provider)) => router
+            .nest("/v1/browser", browser)
+            .nest("/v1", v1)
+            .nest(PROVIDER_NEST, provider),
+        None => router,
+    };
+
+    // `nest` after the fold rather than inside the chain, for the same
+    // reason as the two matches above.
     let router = match dash {
         Some(dash) => router.nest(DASH_NEST, dash),
         None => router,
@@ -2829,5 +2892,274 @@ mod tests {
             "the id must be a named span field, not an accident of some other value.\n\
              line: {api_error_line}"
         );
+    }
+
+    /// ADR-0022: `deployment.surfaces` decides which of `/v1` (business) and
+    /// `/dash/v1` (management) a process mounts. Every test here drives
+    /// requests off [`V1_ROUTES`] and [`DASH_ROUTES`] rather than a
+    /// hand-written path list, for the reason those tables exist at all
+    /// (axum 0.8 cannot enumerate a built router): a route added to either
+    /// table without updating a hand-written list here would pass silently.
+    ///
+    /// No request in this module carries a token. That is deliberate and
+    /// sufficient: the property under test is *which route answers at all*
+    /// (404, meaning "not mounted", vs. 401, meaning "mounted and
+    /// authenticated"), not what a valid credential does once inside — the
+    /// existing per-surface suites already cover that.
+    ///
+    /// The one exception to "drive off the tables" is
+    /// [`the_token_endpoint_is_business_only`]: [`V1_ROUTES`] holds no
+    /// `/v1/oauth` path at all — that subtree is built by hand in
+    /// [`router`] because it is unauthenticated — so the three OP paths are
+    /// written out there, and that is exactly why the surface split of the
+    /// OP went unnoticed until it was reviewed.
+    mod surfaces {
+        use axum::Router;
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt as _;
+
+        use crate::test_fixtures::deps_with_surfaces;
+        use crate::{DASH_NEST, DASH_ROUTES, V1_ROUTES, router};
+
+        async fn status_of(app: &Router, uri: &str) -> StatusCode {
+            app.clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(uri)
+                        .body(Body::empty())
+                        .expect("valid request"),
+                )
+                .await
+                .expect("router does not fail to serve")
+                .status()
+        }
+
+        /// `surfaces: [management]` — every `/v1` route is unmounted (404),
+        /// and `/dash/v1` still answers exactly as it does today (401
+        /// without a token; `dash_read_surface`'s own suite covers 200 with
+        /// one). This is the counterpart to
+        /// `absent_surfaces_config_mounts_both_surfaces` below: together
+        /// they show the toggle turns `/v1` off *and* leaves `/dash/v1`
+        /// alone.
+        #[tokio::test]
+        async fn management_only_unmounts_v1_and_keeps_dash_v1() {
+            let app = router(deps_with_surfaces(Some(vec!["management".to_owned()])));
+
+            for route in V1_ROUTES {
+                let path = format!("/v1{}", route.path.replace("{id}", "pi_anything"));
+                let status = status_of(&app, &path).await;
+                assert_eq!(
+                    status,
+                    StatusCode::NOT_FOUND,
+                    "{path} must 404 when deployment.surfaces = [management]; got {status}"
+                );
+            }
+
+            for route in DASH_ROUTES {
+                let path = format!("{DASH_NEST}{}", route.path.replace("{id}", "pi_anything"));
+                let status = status_of(&app, &path).await;
+                assert_eq!(
+                    status,
+                    StatusCode::UNAUTHORIZED,
+                    "{path} must still answer 401 without a token when deployment.surfaces = \
+                     [management]; got {status}"
+                );
+            }
+        }
+
+        /// `surfaces: [business]` — the mirror image: `/dash/v1` is
+        /// unmounted (404) and `/v1` answers exactly as it does today (401
+        /// without a token).
+        #[tokio::test]
+        async fn business_only_unmounts_dash_v1_and_keeps_v1() {
+            let app = router(deps_with_surfaces(Some(vec!["business".to_owned()])));
+
+            for route in DASH_ROUTES {
+                let path = format!("{DASH_NEST}{}", route.path.replace("{id}", "pi_anything"));
+                let status = status_of(&app, &path).await;
+                assert_eq!(
+                    status,
+                    StatusCode::NOT_FOUND,
+                    "{path} must 404 when deployment.surfaces = [business]; got {status}"
+                );
+            }
+
+            for route in V1_ROUTES {
+                let path = format!("/v1{}", route.path.replace("{id}", "pi_anything"));
+                let status = status_of(&app, &path).await;
+                assert_eq!(
+                    status,
+                    StatusCode::UNAUTHORIZED,
+                    "{path} must still answer 401 without a token when deployment.surfaces = \
+                     [business]; got {status}"
+                );
+            }
+        }
+
+        /// The backward-compatibility test, and the most important one in
+        /// this module: an absent `deployment.surfaces` — what every
+        /// deployment that predates ADR-0022 has — mounts **both** surfaces,
+        /// unchanged. An upgrade that silently dropped `/v1` here would be
+        /// exactly the regression ADR-0022 exists to prevent.
+        #[tokio::test]
+        async fn absent_surfaces_config_mounts_both_surfaces() {
+            let app = router(deps_with_surfaces(None));
+
+            for route in V1_ROUTES {
+                let path = format!("/v1{}", route.path.replace("{id}", "pi_anything"));
+                let status = status_of(&app, &path).await;
+                assert_eq!(
+                    status,
+                    StatusCode::UNAUTHORIZED,
+                    "{path} must answer (401 without a token) when deployment.surfaces is \
+                     absent; got {status}"
+                );
+            }
+
+            for route in DASH_ROUTES {
+                let path = format!("{DASH_NEST}{}", route.path.replace("{id}", "pi_anything"));
+                let status = status_of(&app, &path).await;
+                assert_eq!(
+                    status,
+                    StatusCode::UNAUTHORIZED,
+                    "{path} must answer (401 without a token) when deployment.surfaces is \
+                     absent; got {status}"
+                );
+            }
+        }
+
+        /// Drives a `POST` at `/v1/oauth/token`, which is the only shape
+        /// that distinguishes "mounted" from "not mounted" here: a `GET`
+        /// answers 405 on a surface that mounts it, and 405 and 404 are
+        /// both "not the handler".
+        async fn token_status(app: &Router) -> StatusCode {
+            app.clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/v1/oauth/token")
+                        .header("content-type", "application/x-www-form-urlencoded")
+                        .body(Body::from("grant_type=client_credentials"))
+                        .expect("valid request"),
+                )
+                .await
+                .expect("router does not fail to serve")
+                .status()
+        }
+
+        /// ADR-0022 § "Where `/v1/oauth` goes" — the security boundary this
+        /// module exists to pin, and the one the route tables cannot see.
+        ///
+        /// `/v1/oauth/token` mints the **merchant** private-key-JWT
+        /// credential. ADR-0017's staff grant terminates at
+        /// `/dash/v1/oauth/token` (see `staff::oauth`), inside the `dash`
+        /// nest, so the management surface has no use for this route and
+        /// must not serve it: a `surfaces: [management]` pod that did would
+        /// mint merchant credentials on the staff tier, and ADR-0009's rate
+        /// limit sits only in front of the business tier's copy.
+        ///
+        /// The discovery pair is the other half of the same decision and is
+        /// asserted here rather than in its own test, because the value of
+        /// the assertion is the *contrast*: they mint nothing, the
+        /// management tier's own `resource_auth` validator needs JWKS to
+        /// check a staff token, and making it fetch that from the business
+        /// tier would reintroduce the coupling ADR-0022 removes. So they
+        /// answer on both surfaces while `/token` does not.
+        ///
+        /// Decisive (mutation-checked 2026-09-16): move `.route("/token",
+        /// …)` in [`router`] out of the `match surfaces.business` and onto
+        /// the unconditional builder, and this test fails with
+        /// `left: 401, right: 404` on the first assertion. A 401 there is
+        /// the token endpoint's own `invalid_client` — i.e. the handler ran
+        /// on a management-only pod, which is the defect.
+        #[tokio::test]
+        async fn the_token_endpoint_is_business_only() {
+            let management = router(deps_with_surfaces(Some(vec!["management".to_owned()])));
+            assert_eq!(
+                token_status(&management).await,
+                StatusCode::NOT_FOUND,
+                "/v1/oauth/token must not be mounted when deployment.surfaces = [management]: \
+                 it mints the merchant credential, and ADR-0009's rate limit is only in front \
+                 of the business tier's copy"
+            );
+
+            // The discovery pair, on every surface including the one above.
+            for deployment in [
+                Some(vec!["management".to_owned()]),
+                Some(vec!["business".to_owned()]),
+                None,
+            ] {
+                let label = deployment
+                    .as_ref()
+                    .map_or_else(|| "absent".to_owned(), |s| s.join("+"));
+                let app = router(deps_with_surfaces(deployment));
+
+                assert_eq!(
+                    status_of(&app, "/v1/oauth/.well-known/openid-configuration").await,
+                    StatusCode::OK,
+                    "the discovery document must answer on surfaces = {label}"
+                );
+                // Not `200`: `jwks.json` reads `oauth_signing_keys` through a
+                // pool that has never connected in this fixture, so its honest
+                // answer is the 503 `op::jwks::jwks_handler` documents — see
+                // `the_oauth_routes_are_reachable_without_a_token`, which makes
+                // the same distinction. The property here is that the request
+                // reached the handler instead of the nest's 404.
+                assert_ne!(
+                    status_of(&app, "/v1/oauth/jwks.json").await,
+                    StatusCode::NOT_FOUND,
+                    "/v1/oauth/jwks.json must be mounted on surfaces = {label}: the management \
+                     tier validates staff tokens against it and must not depend on the business \
+                     tier being up to do so"
+                );
+            }
+
+            // The mirror image, so that a change which unmounted `/token`
+            // everywhere would not pass this test by accident.
+            for deployment in [Some(vec!["business".to_owned()]), None] {
+                let label = deployment
+                    .as_ref()
+                    .map_or_else(|| "absent".to_owned(), |s| s.join("+"));
+                let app = router(deps_with_surfaces(deployment));
+                assert_eq!(
+                    token_status(&app).await,
+                    StatusCode::UNAUTHORIZED,
+                    "/v1/oauth/token must still answer on surfaces = {label} (401 \
+                     `invalid_client` from RFC 6749, not the resource-server boundary)"
+                );
+            }
+        }
+
+        /// `surfaces: []` is a boot error, not a router with nothing
+        /// mounted. This is a `vpay_config` unit, not a request through this
+        /// crate's router — an empty list never reaches `RouterDeps` at all,
+        /// because `Config::validate_all` refuses to boot first. See
+        /// `deployment_surfaces_empty_is_a_boot_error` and
+        /// `deployment_surfaces_unknown_value_is_a_boot_error` in
+        /// `vpay-config`'s own test suite for the exit-78 and
+        /// message-naming-the-key assertions; duplicating a `Config::load`
+        /// round trip here would test `vpay_config` through `vpay_api`
+        /// instead of at its own boundary.
+        #[test]
+        fn empty_surfaces_is_refused_before_a_router_is_ever_built() {
+            let deployment = vpay_config::Deployment {
+                name: "test".to_owned(),
+                livemode: false,
+                public_base_url: "https://api.vpay.test".to_owned(),
+                surfaces: Some(Vec::new()),
+            };
+            let err = deployment
+                .enabled_surfaces()
+                .expect_err("an empty surfaces list must be refused");
+            assert!(
+                matches!(err, vpay_config::ConfigError::NoSurfacesConfigured),
+                "got {err:?}"
+            );
+            assert!(
+                err.to_string().contains("deployment.surfaces"),
+                "the message must name the key: {err}"
+            );
+        }
     }
 }

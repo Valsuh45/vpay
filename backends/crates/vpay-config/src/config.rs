@@ -938,6 +938,16 @@ impl Config {
             .map_err(|report| ConfigError::Validation(report.to_string()))?;
 
         let livemode = self.deployment.livemode;
+
+        // First of all: which surfaces this process even mounts (ADR-0022)
+        // is a property of the whole deployment, checked before anything
+        // that depends on *what* is being served. `enabled_surfaces` raises
+        // its own `ConfigError` for an empty or unknown list; a valid
+        // resolution is discarded here on purpose — this call exists only
+        // to fail boot early, and the router build (`vpay_api::router`) is
+        // where the resolved value is actually used.
+        self.deployment.enabled_surfaces()?;
+
         // Before any per-merchant rule, because it is not one: this is a
         // property of the whole deployment, and a file that carries it is
         // wrong however its merchants are written. Answering it first also
@@ -2633,6 +2643,7 @@ mod tests {
                 name: "test".to_owned(),
                 livemode: false,
                 public_base_url: "https://api.vpay.test".to_owned(),
+                surfaces: None,
             },
             providers: Vec::new(),
             currencies: Vec::new(),
@@ -3357,6 +3368,7 @@ mod tests {
                 name: "prod".to_owned(),
                 livemode: true,
                 public_base_url: "http://api.vpay.example".to_owned(),
+                surfaces: None,
             },
             providers: vec![ProviderHost {
                 code: "mtn_momo".to_owned(),
@@ -3450,6 +3462,7 @@ mod tests {
             name: "test".to_owned(),
             livemode: false,
             public_base_url: "https://api.vpay.test/".to_owned(),
+            surfaces: None,
         };
         let mut host = ProviderHost {
             code: "orange_money".to_owned(),
@@ -3494,6 +3507,7 @@ mod tests {
             name: "test".to_owned(),
             livemode: false,
             public_base_url: "https://api.vpay.test".to_owned(),
+            surfaces: None,
         };
         let host = ProviderHost {
             code: "mtn_momo".to_owned(),
@@ -4321,6 +4335,51 @@ mod tests {
         config
             .validate_all(&RawSecrets::default())
             .expect("hosted checkout with no embedding configured anywhere is valid");
+    }
+
+    /// ADR-0022, and the gap this test closes: `Deployment::enabled_surfaces`
+    /// has its own unit tests in `lib.rs`, but nothing pinned that
+    /// [`Config::validate_all`] actually **calls** it — deleting the
+    /// `self.deployment.enabled_surfaces()?;` line left the whole Rust suite
+    /// green (measured in review, 2026-09-16, 490/490 in `vpay-config` and
+    /// `vpay-api`). Without this test the "exit 78 at boot" claim rests on a
+    /// line no test reads.
+    ///
+    /// Both refusable shapes go through the real entry point, and both assert
+    /// the exit code an operator's supervisor actually sees.
+    #[test]
+    fn validate_all_refuses_an_empty_or_unknown_deployment_surfaces() {
+        let mut config = valid_config();
+
+        config.deployment.surfaces = Some(Vec::new());
+        let error = config
+            .validate_all(&RawSecrets::default())
+            .expect_err("validate_all must refuse an empty deployment.surfaces");
+        assert_eq!(error, ConfigError::NoSurfacesConfigured);
+        assert_eq!(
+            vpay_core::Classify::category(&error).exit_code(),
+            78,
+            "a misconfigured deployment must exit 78 (\"fix the deploy\")"
+        );
+
+        config.deployment.surfaces = Some(vec!["businesss".to_owned()]);
+        let error = config
+            .validate_all(&RawSecrets::default())
+            .expect_err("validate_all must refuse an unknown deployment.surfaces value");
+        assert_eq!(error, ConfigError::UnknownSurface("businesss".to_owned()));
+        assert_eq!(vpay_core::Classify::category(&error).exit_code(), 78);
+
+        // ...and the two legal shapes still validate, so the rule above is a
+        // rule and not a blanket refusal.
+        config.deployment.surfaces = None;
+        config
+            .validate_all(&RawSecrets::default())
+            .expect("an absent deployment.surfaces is what every pre-ADR-0022 config has");
+        config.deployment.surfaces = Some(vec!["management".to_owned()]);
+        config.validate_all(&RawSecrets::default()).expect(
+            "a management-only process still registers merchant_clients, so the \
+             dashboard-binding rule is unaffected by the surface split",
+        );
     }
 
     // --- publishable keys (Step 5c D1) ---

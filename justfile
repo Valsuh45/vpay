@@ -2922,16 +2922,29 @@ chart := "deploy/helm/vpay"
 # `just ci`; corrected 2026-09-16. The missing binaries still justify the
 # exclusion; the offline argument no longer does on its own.
 #
-# What it proves: the chart lints, all three value sets render, the twenty-two
-# named guards are exactly the twenty-two on disk and each fires on its own
-# values file with a non-zero exit, the default render templates no checkout
+# What it proves: the chart lints, all FOUR value sets render, the twenty-four
+# named guards are exactly the twenty-four `ci/guards/` names on disk and each
+# of the twenty-five fixtures there fires its own guard with a non-zero exit
+# (twenty-five because `connection-budget` has a fixture per direction — see
+# the `.<n>` note at the guard loop), the default render templates no checkout
 # page and `ci/values-full.yaml`'s does, the Ingress path carries its
 # `limit-rps` annotations and the Gateway API path says what rate-limits its
 # token rule, BOTH mechanisms route the rail callback prefix `/provider`, the
 # HTTPRoute templates render NOTHING without the Gateway API
-# CRDs, and every rendered object validates against the upstream schemas. What
-# it does not prove: anything at all about a cluster. Nothing here has ever
-# been applied to one.
+# CRDs, the `/dash/v1` HTTPRoute rule and the `-management` NetworkPolicy
+# agree with each other when both are rendered, and every rendered object
+# validates against the upstream schemas. What it does not prove: anything at
+# all about a cluster. Nothing here has ever been applied to one.
+#
+# CORRECTED 2026-09-16, in review: this said "three value sets" and
+# "twenty-two named guards" while `expected_guards` below already listed
+# twenty-three and `ci/guards/` already held twenty-three files. The list is
+# the gate — it is compared against the directory on every run — so the count
+# in this sentence was decoration that had gone stale, not a check that had
+# been weakened. It is twenty-four now, and four value sets: `ci/values-
+# route-networkpolicy.yaml` is the fourth, and it exists because the Gateway
+# API half and the NetworkPolicy half were each covered while the COMBINATION
+# of them was not.
 helm-check:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -2943,10 +2956,11 @@ helm-check:
     out="$(mktemp -d)"
     trap 'rm -rf "$out"' EXIT
 
-    echo "==> helm lint (defaults, then ci/values-full.yaml, then ci/values-route.yaml)"
+    echo "==> helm lint (defaults, ci/values-full.yaml, ci/values-route.yaml, ci/values-route-networkpolicy.yaml)"
     helm lint "$chart"
     helm lint "$chart" -f "$chart/ci/values-full.yaml"
     helm lint "$chart" -f "$chart/ci/values-route.yaml"
+    helm lint "$chart" -f "$chart/ci/values-route-networkpolicy.yaml"
 
     echo "==> helm template"
     helm template vpay "$chart" > "$out/default.yaml"
@@ -2959,21 +2973,36 @@ helm-check:
     # everything below would pass over an empty file.
     gwapi="gateway.networking.k8s.io/v1"
     helm template vpay "$chart" -f "$chart/ci/values-route.yaml" --api-versions "$gwapi" > "$out/route.yaml"
+    # The fourth render, and the only one in which the `/dash/v1` HTTPRoute
+    # rule and the `-management` NetworkPolicy are both produced. Same
+    # `--api-versions` for the same reason. See its own file header.
+    helm template vpay "$chart" -f "$chart/ci/values-route-networkpolicy.yaml" --api-versions "$gwapi" > "$out/route-np.yaml"
 
     # Each file under ci/guards/ violates exactly one guard, and the file's
     # basename IS the guard's name. A guard that stops firing — or one whose
     # message stops naming itself — fails here, which is the only thing that
     # keeps these from rotting into decoration.
     #
-    # The expected set is written out rather than counted, because "22 files
-    # were found and 22 fired" is also what deleting a guard *and* its values
+    # SECOND AND LATER DIRECTIONS: `<guard>.<n>.yaml`. Some guards refuse
+    # more than one shape — "connection-budget" refuses both an unset
+    # `database.maxConnections` and an arithmetic overrun, and ADR-0022's own
+    # acceptance checklist asks for a fixture in BOTH directions. Before
+    # 2026-09-16 the harness mapped one file to one guard and a second
+    # fixture could not exist, so the arithmetic direction had been checked
+    # by hand once and by nothing since. A `.<n>` suffix is stripped to get
+    # the guard name, so `connection-budget.2.yaml` must still fail with
+    # `guard "connection-budget"` — the suffix buys a second fixture, never
+    # a second name.
+    #
+    # The expected set is written out rather than counted, because "24 files
+    # were found and 24 fired" is also what deleting a guard *and* its values
     # file looks like. Adding a guard means adding its name here, its values
     # file under ci/guards/, and the `fail` in templates/_validate.tpl — in
     # one commit.
     expected_guards=(
         checkout-not-templated-by-default
         checkout-templated-when-enabled
-        dashboard-not-templated
+        connection-budget
         dashboard-public-origin
         database-secret
         extra-env-collision
@@ -2981,6 +3010,8 @@ helm-check:
         image-digest-format
         ingress-host
         networkpolicy-database
+        networkpolicy-management-ingress
+        networkpolicy-management-route
         observability-port
         overlay-empty
         pdb-minavailable
@@ -2994,10 +3025,12 @@ helm-check:
         worker-concurrency-pool
         worker-replicas
     )
-    echo "==> template guards (each must FAIL, by name)"
+    echo "==> template guards (each fixture must FAIL, by its own guard's name)"
     # LC_ALL=C so the comparison does not depend on the runner's collation
-    # rules for the hyphens in these names.
-    found=($(cd "$chart/ci/guards" && for f in *.yaml; do basename "$f" .yaml; done | LC_ALL=C sort))
+    # rules for the hyphens in these names. `sed` strips a `.<n>` variant
+    # suffix and `sort -u` folds the variants back onto one guard, so the
+    # set compared here stays the set of GUARDS, not of files.
+    found=($(cd "$chart/ci/guards" && for f in *.yaml; do basename "$f" .yaml; done | sed 's/\.[0-9][0-9]*$//' | LC_ALL=C sort -u))
     if [ "${expected_guards[*]}" != "${found[*]}" ]; then
         echo "helm-check: FAIL — ci/guards/ holds a different set of guards than this recipe expects." >&2
         echo "  expected: ${expected_guards[*]}" >&2
@@ -3005,22 +3038,39 @@ helm-check:
         exit 1
     fi
 
-    guards=0
-    for name in "${expected_guards[@]}"; do
-        f="$chart/ci/guards/$name.yaml"
-        if message="$(helm template vpay "$chart" -f "$f" 2>&1)"; then
-            echo "helm-check: FAIL — guard '$name' did not fire; $f rendered successfully" >&2
+    fixtures=0
+    fired=()
+    for f in $(cd "$chart/ci/guards" && ls *.yaml | LC_ALL=C sort); do
+        base="${f%.yaml}"
+        name="$(printf '%s' "$base" | sed 's/\.[0-9][0-9]*$//')"
+        path="$chart/ci/guards/$f"
+        if message="$(helm template vpay "$chart" -f "$path" 2>&1)"; then
+            echo "helm-check: FAIL — fixture '$base' did not fire; $path rendered successfully" >&2
             exit 1
         fi
         if ! printf '%s' "$message" | grep -qF "guard \"$name\""; then
-            echo "helm-check: FAIL — $f failed, but not with guard '$name':" >&2
+            echo "helm-check: FAIL — $path failed, but not with guard '$name':" >&2
             printf '%s\n' "$message" >&2
             exit 1
         fi
-        echo "    guard \"$name\" fired"
-        guards=$((guards + 1))
+        if [ "$base" = "$name" ]; then
+            echo "    guard \"$name\" fired"
+        else
+            echo "    guard \"$name\" fired (variant $base)"
+        fi
+        fired+=("$name")
+        fixtures=$((fixtures + 1))
     done
-    echo "    $guards guards, all fired by name (${#expected_guards[@]} expected)"
+    guards=$(printf '%s\n' "${fired[@]}" | LC_ALL=C sort -u | wc -l | tr -d ' ')
+    # Belt and braces: the per-file loop above proves every FIXTURE fires,
+    # and the set comparison proves every expected guard has at least one
+    # file. This proves the two agree on the count, so a variant suffix
+    # cannot quietly stand in for a missing guard.
+    if [ "$guards" -ne "${#expected_guards[@]}" ]; then
+        echo "helm-check: FAIL — $fixtures fixtures fired only $guards distinct guards, expected ${#expected_guards[@]}" >&2
+        exit 1
+    fi
+    echo "    $fixtures fixtures, $guards guards, all fired by name (${#expected_guards[@]} expected)"
 
     # The checkout page, in BOTH directions, over the RENDERED yaml rather
     # than over the values — because "checkout.enabled: false renders nothing"
@@ -3037,13 +3087,78 @@ helm-check:
         grep -n -- '-checkout' "$out/default.yaml" >&2
         exit 1
     fi
+    # Captured, not piped — see the management block below for the pipefail
+    # race this avoids.
+    checkout_window="$(grep -B20 "^  name: vpay-checkout$" "$out/full.yaml" || true)"
     for kind in Deployment Service Ingress; do
-        if ! grep -B20 "^  name: vpay-checkout$" "$out/full.yaml" | grep -q "^kind: $kind$"; then
+        if ! printf '%s' "$checkout_window" | grep -q "^kind: $kind$"; then
             echo "helm-check: FAIL — ci/values-full.yaml enables the checkout page but rendered no $kind for it" >&2
             exit 1
         fi
     done
     echo "    default: no checkout object; ci/values-full.yaml: Deployment + Service + Ingress"
+
+    # ADR-0022's two new workloads, same absence-cannot-be-a-fail-guard
+    # reasoning as the checkout block above: management.enabled and
+    # dashboard.enabled both default to false, so no existing release gets
+    # either object on upgrade, and that is an absence — not a `fail`.
+    echo "==> management tier and dashboard: absent by default, present when enabled"
+    for name in -management -dashboard; do
+        if grep -q -- "$name" "$out/default.yaml"; then
+            echo "helm-check: FAIL — the default render names a $name object, but management.enabled and dashboard.enabled both default to false:" >&2
+            grep -n -- "$name" "$out/default.yaml" >&2
+            exit 1
+        fi
+    done
+    # The producer's output is captured BEFORE it is searched, not piped into
+    # `grep -q`. Under `set -o pipefail` — which this recipe sets — `grep -q`
+    # exits on its first match and SIGPIPEs the producer, and the pipeline
+    # then reports 141 for a search that SUCCEEDED. It is a race on how much
+    # fits in the pipe buffer, so it passed for as long as the render was
+    # short: adding the third ServiceMonitor below lengthened the `-B20`
+    # window and it failed once, claiming `ci/values-full.yaml` "rendered no
+    # Deployment for vpay-management" against a file that plainly contained
+    # one (measured 2026-09-16). Same shape as the checkout block above,
+    # which has the same latent race and the same fix applied.
+    for name in vpay-management vpay-dashboard; do
+        for kind in Deployment Service; do
+            window="$(grep -B20 "^  name: $name$" "$out/full.yaml" || true)"
+            if ! printf '%s' "$window" | grep -q "^kind: $kind$"; then
+                echo "helm-check: FAIL — ci/values-full.yaml enables management and dashboard but rendered no $kind for $name" >&2
+                exit 1
+            fi
+        done
+    done
+    if ! grep -q "^kind: HorizontalPodAutoscaler$" "$out/full.yaml"; then
+        echo "helm-check: FAIL — ci/values-full.yaml enables server.autoscaling but rendered no HorizontalPodAutoscaler" >&2
+        exit 1
+    fi
+    # The management tier's metrics, which nothing else here would notice.
+    # `deployment-management.yaml` gives that Service a `metrics` port and
+    # `networkpolicy.yaml` opens the monitoring namespace to it; until
+    # 2026-09-16 `servicemonitor.yaml` selected `component: server` and
+    # `component: worker` only, so the port existed, was reachable, and was
+    # scraped by nobody. An absence again — no `fail` guard can assert it.
+    #
+    # `-dashboard` is asserted ABSENT in the same breath, deliberately: that
+    # workload is a Next.js app exporting no Prometheus metrics, so a
+    # ServiceMonitor for it would select a target that answers nothing. The
+    # gap is a decision, and this is where it is written down as one.
+    sm="$(helm template vpay "$chart" -f "$chart/ci/values-full.yaml" --show-only templates/servicemonitor.yaml)"
+    for component in server worker management; do
+        printf '%s' "$sm" | grep -q "^  name: vpay-$component$" \
+            || { echo "helm-check: FAIL — ci/values-full.yaml rendered no ServiceMonitor for vpay-$component; its /metrics port would be scraped by nothing" >&2; exit 1; }
+    done
+    # Anchored on an indented YAML line, not a bare substring: the template's
+    # own comment explains why the dashboard has no ServiceMonitor, and a
+    # plain grep for "-dashboard" matched that comment (found here, 2026-09-16
+    # — the check failed on the prose that documented it).
+    if printf '%s' "$sm" | grep -qE '^[[:space:]]+(name: vpay-dashboard|app\.kubernetes\.io/component: dashboard)$'; then
+        echo "helm-check: FAIL — a ServiceMonitor names -dashboard, but that workload exports no Prometheus metrics and its Service carries no metrics port; the scrape would error rather than return nothing" >&2
+        exit 1
+    fi
+    echo "    ServiceMonitors: server, worker, management (not dashboard — it exports no metrics)"
+    echo "    default: no -management or -dashboard object, no HPA; ci/values-full.yaml: both Deployments + Services, HPA"
 
     # ADR-0009 assumes a rate limit exists in front of the token endpoint.
     # This is the only thing in the repository that checks one is configured,
@@ -3127,13 +3242,38 @@ helm-check:
         || { echo "helm-check: FAIL — the rendered HTTPRoute carries no /provider rule; every MTN MoMo and Orange Money callback would be dropped at the Gateway" >&2; exit 1; }
     echo "    /provider is a rule on the rendered HTTPRoute"
 
+    # The two ADR-0022 §5 halves, in the one render that produces both, and
+    # checked against each other rather than each on its own — which is the
+    # whole reason the fourth values file exists.
+    #
+    # The "networkpolicy-management-route" guard refuses the INCOHERENT
+    # combination (a published /dash/v1 with a -management policy that admits
+    # only this namespace's pods, so the Gateway is denied and every request
+    # is dropped by the CNI while helm reports success). A guard cannot assert
+    # the coherent one: it is an absence of failure plus a presence of two
+    # objects, and `fail` can only refuse. So it is asserted here, over the
+    # rendered YAML, the same way the checkout page's two directions are.
+    echo "==> management tier: the /dash/v1 route and its NetworkPolicy agree"
+    grep -q 'value: /dash/v1' "$out/route-np.yaml" \
+        || { echo "helm-check: FAIL — ci/values-route-networkpolicy.yaml enables management and route but rendered no /dash/v1 HTTPRoute rule" >&2; exit 1; }
+    grep -q '^  name: vpay-management$' "$out/route-np.yaml" \
+        || { echo "helm-check: FAIL — ci/values-route-networkpolicy.yaml rendered no -management object at all" >&2; exit 1; }
+    # The peer that admits the Gateway's namespace. Asserted by its LABEL
+    # value rather than by the key alone: `-server`'s policy and the
+    # monitoring rule both carry `namespaceSelector`, so a grep for the key
+    # would pass on a render in which the management policy had none.
+    np_management="$(helm template vpay "$chart" -f "$chart/ci/values-route-networkpolicy.yaml" --api-versions "$gwapi" --show-only templates/networkpolicy.yaml | awk '/name: vpay-management$/,0')"
+    printf '%s' "$np_management" | grep -q 'kubernetes.io/metadata.name: traefik' \
+        || { echo "helm-check: FAIL — the -management NetworkPolicy does not admit the Gateway's namespace, but the HTTPRoute publishes /dash/v1 at a Gateway in it. Every /dash/v1 request would be dropped by the CNI with every object reporting healthy." >&2; exit 1; }
+    echo "    /dash/v1 is published AND the -management policy admits the Gateway's namespace"
+
     echo "==> kubeconform (downloads schemas — needs network)"
     kubeconform -strict -summary \
         -schema-location default \
         -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{{{.Group}}/{{{{.ResourceKind}}_{{{{.ResourceAPIVersion}}.json' \
-        "$out/default.yaml" "$out/full.yaml" "$out/route.yaml"
+        "$out/default.yaml" "$out/full.yaml" "$out/route.yaml" "$out/route-np.yaml"
 
-    echo "helm-check: ok — lint, 3 renders, $guards guards, rate limit (both paths), rail callback (both paths), kubeconform. No cluster was involved."
+    echo "helm-check: ok — lint, 4 renders, $guards guards, rate limit (both paths), rail callback (both paths), management route/policy coherence, kubeconform. No cluster was involved."
 
 # --------------------------------------------------------------- release ---
 
