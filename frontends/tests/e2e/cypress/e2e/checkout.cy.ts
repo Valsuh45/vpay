@@ -16,16 +16,26 @@
  * difference to anything asserted here, and every difference to whether
  * `dashboard.cy.ts` can find the intent afterwards.
  *
- * `237600000ce0` is `examples/merchant-demo/src/main.rs`'s `DEMO_MSISDN`: a
- * documentation number that keys WireMock scenario `mtn-e2e-poll`
- * (priority 5) to answer `PENDING` on the first `requesttopay` status query
- * and `SUCCESSFUL` on the next, so this spec's wait for `succeeded` exercises
- * the real poll ladder rather than a rail that succeeds on the first try.
+ * `237670000900` is a real, `phonenumber`-valid CM mobile number that keys
+ * WireMock scenario `mtn-e2e-poll` (`requesttopay-scenario.json`, priority 5)
+ * to answer `PENDING` on the first `requesttopay` status query and
+ * `SUCCESSFUL` on the next, so this spec's wait for `succeeded` exercises the
+ * real poll ladder rather than a rail that succeeds on the first try. It is
+ * the same number `backends/tests/integration/tests/worker_e2e.rs`'s
+ * `SETTLING_MSISDN` and `shop-hosted.cy.ts`'s `MTN.succeeds` already drive.
+ *
+ * The MSISDN has to be a real CM mobile number because the server validates
+ * it (`vpay_api::v1::payer_fields`) — a confirm carrying the older
+ * hex-suffixed `237600000ce0` or the `2376000000xx` block (prefix `60`, not a
+ * real CM mobile prefix) is refused with vpay's own `400` before the rail is
+ * ever asked. See `cypress/support/shop.ts`'s header and
+ * `docs/plans/step9-notes/lane-3.md` §4c.
+ *
  * `vpay-worker` — running in the compose stack, not stubbed — is what drives
  * that poll and settles the charge; nothing in this spec pushes the status
  * forward itself.
  */
-const MTN_E2E_POLL_MSISDN = "237600000ce0";
+const MTN_E2E_POLL_MSISDN = "237670000900";
 
 describe("checkout-browser", () => {
   it("confirms an MTN MoMo push through @vaam-apps/vpay-stripe-js and settles to succeeded", () => {
