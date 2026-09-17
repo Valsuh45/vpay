@@ -1,13 +1,18 @@
 # 2026-09-16 — the personal-data inventory and its gate (issue #144)
 
 Adds the personal-data inventory, its machine-readable companion and the
-thirteenth `just verify` gate.
+**fourteenth** `just verify` gate. _(It was the thirteenth when this page was
+written. `verify-versions` ([#201](https://github.com/vaam-apps/vpay/pull/201))
+landed on `master` on 2026-09-17, from a branch this one had not seen, and this
+branch merged it — so the two thirteenth gates met and the count is fourteen.
+See the 2026-09-17 addendum at the foot of this page, which also corrects two
+numbers below that were already a commit stale when this page shipped.)_
 
 ## What landed
 
 - `schemas/privacy-inventory.yaml` — the machine-readable inventory: 25
-  elements (16 personal-data), each carrying the six-field ADR-0020 §1
-  classification and the copies (database columns) that share it, plus 10
+  elements (16 personal-data), each carrying eight classification fields, six
+  of which the gate checks are non-empty (ADR-0020 §1) and the copies (database columns) that share it, plus 10
   registered non-database surfaces.
 - `docs/reference/personal-data-inventory.md` — the human-facing inventory,
   the element model, the personal-data columns and the non-database surfaces.
@@ -17,7 +22,8 @@ thirteenth `just verify` gate.
   in both directions: a migrated column with no element, and an element copy
   naming no live column. It also validates each element's six fields and the
   non-database-surface registry.
-- Wired into `just verify` (now thirteen gates), CI's `self-checks` job,
+- Wired into `just verify` (fourteen gates after the 2026-09-17 merge; thirteen
+  as delivered), CI's `self-checks` job,
   `AGENTS.md`, `CLAUDE.md`, `docs/status.md` and `docs/status/gates.md`.
 
 ## What the gate caught
@@ -71,3 +77,54 @@ modelled for the parser to reflect the final schema at all:
 - No full `just ci` was run on this branch (per the branch's standing
   instruction not to run concurrent local builds); the gates run here are the
   ones this change touches plus `verify-links`.
+
+## 2026-09-17 — the review, and what two numbers above really were
+
+**Two numbers on this page were already stale when it shipped**, and they are
+corrected rather than rewritten, because a dated evidence page that quietly
+agrees with its tree is the one thing this directory exists not to be:
+
+- "`cargo test -p xtask`: **259** passed … **Nine** of them are
+  `privacy_inventory_tests`" — the delivered branch had **263** passed, **0**
+  ignored, of which **13** were `privacy_inventory_tests`. The page recorded a
+  run from an earlier commit of the same branch. The pull request's own body
+  says 263 and 13.
+- "**303** database columns … against the **303** the migrations derive" — it
+  is **295** on this tree. 303 is what the parser derived, and the parser was
+  wrong in a way both directions of the gate agreed with; see below.
+
+**What the review changed.** The SQL parser modelled `DROP COLUMN` but not
+`DROP TABLE`. Migration `0009` drops `merchant_api_keys`, so its eight columns
+stayed in the derived set and **both** directions of the gate agreed about a
+table no database has — the inventory classified all eight, and
+`docs/reference/personal-data-inventory.md` published two of them as stored
+merchant credentials. `drop_table_targets` and a word boundary in
+`is_constraint_line` fix it; three tests pin it; the eight rows are gone.
+
+**Re-run on the merge of `origin/master` at `eb078020`, 2026-09-17, macOS,
+`cratestack` 0.12.0 on `PATH`:**
+
+- `cargo xtask verify-privacy-inventory`: ok — **295** database columns across
+  25 elements (16 personal-data, 17 necessary), both directions against the 295
+  the migrations derive; 10 non-database surfaces registered (6 not yet
+  statically enumerable, 6 with an unmet note, 4 elements name a recipient).
+- `cargo test -p xtask`: see the `just ci` page for this branch. The
+  `privacy_inventory_tests` module is **16** cases.
+- `cargo xtask verify-links`: see the same page.
+
+**And one thing this branch does not fix.** `just verify` does **not** pass on
+this tree, and would not on `master` either: `verify-versions` (#201) is red at
+`eb078020` because `deploy/helm/vpay/Chart.yaml` and
+`sdks/flutter/vpay_checkout_flutter/pubspec.yaml` are listed in
+`release-please-config.json`'s `extra-files` and carry no
+`x-release-please-version` comment. `master`'s own CI run
+[35275177452](https://github.com/vaam-apps/vpay/actions/runs/35275177452) fails
+on that step. Neither file is touched by this change, and neither is fixed
+here.
+
+**What this addendum still does not claim.** Every unmet criterion listed on
+2026-09-16 is still unmet, and the review added three more — five `redact`
+columns nothing redacts, `jobs.last_error`'s classification, and ADR-0020 §1's
+missing per-copy necessity/control. They are in
+[../../reference/personal-data-inventory.md](../../reference/personal-data-inventory.md)
+and they keep #144 open.

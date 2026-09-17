@@ -107,27 +107,40 @@ token written in a comment of any kind, in a `#[doc = "…"]` attribute or insid
 any string, raw-string or character literal is prose, and prose declares
 nothing.
 
-`just verify` is **thirteen gates and one advisory report**. What each one refuses,
-and what each printed when all thirteen were re-run, one invocation each, on
-**2026-09-16** on `888b00c3` — this branch's last commit before this table
-was filled in, exactly as the 2026-09-11 column was — with
-`DOCKER_HOST=unix:///run/user/1000/docker.sock`:
+`just verify` is **fourteen gates and one advisory report**. What each one refuses,
+and what each printed when all fourteen were re-run, one invocation each, on
+**2026-09-17** on this branch's merge of `master` at `eb078020`, on macOS with
+`cratestack` 0.12.0 on `PATH`. _(The column before it was 2026-09-16 on
+`888b00c3`, with `DOCKER_HOST=unix:///run/user/1000/docker.sock`; it was
+re-run because merging `master` moved nine of the numbers and added a gate.)_
+
+**One row below is a failure, and it is `master`'s.** `verify-versions`
+(PR [#201](https://github.com/vaam-apps/vpay/pull/201), 2026-09-17) fails on
+`master` itself at `eb078020`: `deploy/helm/vpay/Chart.yaml` and
+`sdks/flutter/vpay_checkout_flutter/pubspec.yaml` are listed in
+`release-please-config.json`'s `extra-files` and carry no
+`x-release-please-version` comment, which is the exact condition that gate
+refuses. `master`'s own CI run
+[35275177452](https://github.com/vaam-apps/vpay/actions/runs/35275177452) is
+red on that step. It is recorded here rather than left out, because a gate
+table with a green row for a red gate is worse than no table:
 
 | Gate                       | What it refuses                                                                                                                                                  | Last printed                                          |
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
 | `verify-no-mocks`          | a test double reachable from a shipping binary                                                                                                                   | no test double reachable                              |
 | `verify-status`            | an undeclared — or a stale — `NotImplemented` token                                                                                                              | 1 unimplemented item                                  |
 | `verify-errors`            | an unclassified error type, or `anyhow` in a library crate                                                                                                       | 20 error types, 17 `#[from]` variants                 |
-| `verify-sdk-parity`        | an SDK capability with no row, or a row naming no capability                                                                                                     | 603 proving tests, 36 dated gaps, 35 methods, 39 rows |
-| `verify-links`             | a repository link that resolves to no tracked path                                                                                                               | 1 731 links in 375 files                              |
+| `verify-sdk-parity`        | an SDK capability with no row, or a row naming no capability                                                                                                     | 661 proving tests, 37 dated gaps, 35 methods, 39 rows |
+| `verify-links`             | a repository link that resolves to no tracked path                                                                                                               | 1 718 links in 399 files                              |
 | `verify-npm-scope`         | an unpublishable manifest, or a retired package name outside the record                                                                                          | 2 publishable packages, 1 private                     |
-| `check-schema`             | a `schemas/vpay.cstack` that does not type-check                                                                                                                 | 27 declarations; see the note below                   |
-| `verify-serde`             | a serialisable type that does not spell the wire convention                                                                                                      | 96 types, 17 exemptions                               |
-| `verify-repositories`      | a repository implementation named outside `vpay-db`, or an exported schema                                                                                       | 4 implementations, 83 source files outside            |
+| `check-schema`             | a `schemas/vpay.cstack` that does not type-check                                                                                                                 | 27 declarations, under 0.12.0; see the note below     |
+| `verify-serde`             | a serialisable type that does not spell the wire convention                                                                                                      | 102 types, 17 exemptions                              |
+| `verify-repositories`      | a repository implementation named outside `vpay-db`, or an exported schema                                                                                       | 4 implementations, 84 source files outside            |
 | `verify-toolchain`         | a `backends/Dockerfile` that drifts from `rust-toolchain.toml`                                                                                                   | 1.98.0                                                |
 | `verify-ui`                | a computed class string, a raw status-colour token, a >60-char class, a daisyUI-4 or unrouted daisyUI class, or an import of the deleted `@vpay/ui` (2026-09-12) | nothing: silent on success, exit 0 only               |
 | `verify-migrations`        | an applied migration whose bytes changed                                                                                                                         | 48 files                                              |
-| `verify-privacy-inventory` | a migrated column with no inventory classification, or an inventory row naming no live column (issue #144, 2026-09-16)                                           | 303 columns / 25 elements / 10 surfaces               |
+| `verify-versions`          | a release-please-owned version that disagrees, or an `extra-files` entry with no `x-release-please-version` comment (PR #201, 2026-09-17)                        | **FAILS on `master`** — 2 unannotated `extra-files`   |
+| `verify-privacy-inventory` | a migrated column with no inventory classification, or an inventory row naming no live column (issue #144, 2026-09-16)                                           | 295 columns / 25 elements / 10 surfaces               |
 | `verify-docs`              | **nothing — it exits 0 whatever it finds**                                                                                                                       | advisory report                                       |
 
 **One of those numbers moved twice on the same day and came back.**
@@ -136,13 +149,20 @@ not 1: RFC-0003 § 5 gave `orange_money` a `refund` token. It prints **1**
 again now, because the same day's MTN work retired
 `NotImplemented("mtn_momo::refund")` by writing the Disbursements `transfer`
 call — a different token, from a different branch, for a different reason.
-The column above is the 2026-09-16 re-run, so it reads **1**. _(It stood at
+The column above is the 2026-09-17 re-run, and it still reads **1**. _(It stood at
 what the gates printed on 2026-09-11 on `722e579` until 2026-09-16, by which
-time six of the thirteen numbers had moved — `verify-errors` 19→20,
-`verify-sdk-parity` 550/35/32→603/36/35, `verify-links` 1 600/352→1 731/375,
-`check-schema` 26→27, `verify-serde` 90→96, `verify-migrations` 42→48 — and
+time six of the thirteen rows then in this table had moved — `verify-errors`
+19→20, `verify-sdk-parity` 550/35/32→603/36/35, `verify-links`
+1 600/352→1 731/375, `check-schema` 26→27, `verify-serde` 90→96,
+`verify-migrations` 42→48 — and
 the column was a measurement of a tree three merges old. Re-running it was cheaper than
-carrying the caveat.)_
+carrying the caveat. It happened again nine days' worth of merges later, on
+2026-09-17, when this branch merged `master` at `eb078020`: `verify-sdk-parity`
+603/36/35→**661/37/35**, `verify-links` 1 731/375→**1 718/399**, `verify-serde`
+96→**102**, `verify-repositories` 83→**84** source files, and
+`verify-privacy-inventory` 303→**295** columns, that last one because this
+branch's own review taught the gate to read `DROP TABLE`. Same conclusion,
+twice: re-run the column, do not annotate it.)_
 
 **And `verify-status` gained a third direction the same day, on review.** It
 compared _sets of token strings_ and knew nothing about where a token was
@@ -158,24 +178,33 @@ are unconstrained, because this repository has no convention saying where such
 a token may live. `a_token_naming_another_rail_is_refused_however_well_the_page_matches`
 in `.xtask` pins it, in both directions.
 
-**`check-schema` did not run under the version this repository pins**, and the
+~~**`check-schema` did not run under the version this repository pins**, and the
 recipe says so out loud rather than passing quietly: `justfile`'s
 `cratestack_version` is `0.12.0`, the CrateStack CLI on the authoring machine's
 `PATH` is **0.11.1**, and the check ran in full against the 0.11.1 grammar — 27
 model/enum declarations, datasource present. That is a property of one machine,
 not of this tree, and it is recorded because a gate that ran against a
-different grammar than CI will is a gate whose green means less than it looks.
+different grammar than CI will is a gate whose green means less than it looks.~~
+
+**Struck 2026-09-17.** It was a property of that one machine, and this column
+was measured on another: the CLI on this host **is** `0.12.0`, the version
+`justfile`'s `cratestack_version` pins, and the check printed
+"cratestack 0.12.0, schema schemas/vpay.cstack (27 model/enum declarations,
+datasource present)". The paragraph is kept rather than deleted because the
+reason it existed — a gate that ran against a different grammar than CI will
+is a gate whose green means less than it looks — is the same whichever machine
+is behind.
 
 Those numbers are a measurement of one tree on one day — `888b00c3`, 2026-09-16
 — not a promise. **They are `just verify`'s gates invoked one at a time, not
 `just verify` itself and not `just ci`**, which this branch's agents were
-instructed not to run; that distinction is the whole of what the thirteen-in-a-row
+instructed not to run; that distinction is the whole of what the fourteen-in-a-row
 recipe adds. What each
 gate used to miss, the mutation that proved each hole shut, and the dates every
 one of these counts moved on, are in [status/gates.md](status/gates.md) — 509
 lines of it, unedited. Read the numbers in it as date-stamps rather than totals:
 it calls `verify-sdk-parity` the reader of "the fourth machine-checked
-document", which was true on 2026-09-03, when four of these twelve gates
+document", which was true on 2026-09-03, when four of these fourteen gates
 existed.
 
 ### Unimplemented items tracked by `verify-status`

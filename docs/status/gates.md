@@ -676,9 +676,43 @@ The lock is now a position assertion on the `@import` plus a read of the built
 stylesheet, in
 [verification/2026-09-12-storybook-restored.md](verification/2026-09-12-storybook-restored.md).
 
-## 2026-09-16 — `verify-privacy-inventory`, the thirteenth gate (issue #144)
+## 2026-09-17 — `verify-versions`, the thirteenth gate (PR #201)
 
-New 2026-09-16 with the personal-data inventory of issue #144
+Recorded here on 2026-09-17 by [#187](https://github.com/vaam-apps/vpay/pull/187),
+not by the change that added it. [#201](https://github.com/vaam-apps/vpay/pull/201)
+moved the `verify` recipe, its echo, `verify_all` and a CI step, and wrote no
+row on this page, no row in [../status.md](../status.md)'s gate table and no
+bullet in `justfile`'s own header list. `docs/status.md` § "Where a new row
+goes" says a new gate lands in both places; this is the second half, written
+where the two thirteenth gates met.
+
+It refuses two things: a version release-please owns that disagrees with the
+others, and a file listed in `release-please-config.json`'s `extra-files` that
+carries no `x-release-please-version` comment — because release-please's
+`generic` updater rewrites only annotated lines, so an unannotated
+`extra-files` entry is a version that silently stops being bumped. Nothing
+else checks it: `release.yml` derives its Docker tag from the git ref and never
+compares it against any manifest.
+
+**It is red on `master` at `eb078020`, and has been since it landed.**
+`deploy/helm/vpay/Chart.yaml` and
+`sdks/flutter/vpay_checkout_flutter/pubspec.yaml` are both in `extra-files`
+and neither carries the annotation. `master`'s own CI run
+[35275177452](https://github.com/vaam-apps/vpay/actions/runs/35275177452)
+fails on the `verify-versions (release-please's bump is complete)` step.
+**The gate is right and the tree is wrong** — those two versions really would
+stop tracking a release — so it is recorded rather than worked around. The fix
+is two comment annotations and it belongs to whoever owns #201, not to the
+branch that happened to merge next; nothing on this page or in #187 touches
+either file.
+
+## 2026-09-17 — `verify-privacy-inventory`, the fourteenth gate (issue #144)
+
+New 2026-09-16 with the personal-data inventory of issue #144, and the
+**fourteenth** gate rather than the thirteenth: `verify-versions` landed on
+`master` hours earlier, from a branch this one had not seen, the same way
+`verify-npm-scope` and `check-schema` collided on 2026-09-05. _(This section
+was headed "the thirteenth gate" until the merge of 2026-09-17.)_ It comes from
 ([ADR-0020](../adr/0020-privacy-controls-and-evidence.md),
 [RFC-0002](../rfc/0002-gdpr-policy-and-operator-decisions.md)). It reads
 `schemas/privacy-inventory.yaml` and derives the authoritative database
@@ -691,8 +725,10 @@ column set by parsing `backends/migrations` itself — not
 - an inventory column copy naming no live column fails (a stale or misspelled
   row cannot survive the column it named).
 
-It also validates every element's six ADR-0020 §1 fields and every registered
-non-database surface.
+It also validates that each element's six string fields are non-empty — the
+ADR-0020 §1 classification is eight fields; `necessary` is a boolean and
+`recipients` a list, so "present" is all either can be — and that every
+registered non-database surface has a unique id and a description.
 
 **Why it parses the migrations rather than reading a manifest:** a manifest is
 a second artifact that can itself drift, and `schemas/vpay.cstack` is a
@@ -709,16 +745,55 @@ caught every one). The string-awareness matters for a real migration too:
 `--`, and a comment stripper that is not string-aware eats the expression and
 leaves the `CHECK (` unclosed.
 
-**Measured on this tree, 2026-09-16:** 303 database columns classified across
+**And `DROP TABLE`, which the first draft did not model — the hole this gate
+was reviewed into having.** Added 2026-09-17 on the review of this PR.
+Migration `0009` drops `merchant_api_keys` outright (`0008` created it; the
+merchant-auth model moved to `private_key_jwt` before either shipped, ADR-0010).
+A parser that models `DROP COLUMN` but not `DROP TABLE` leaves all eight of
+that table's columns in the derived set, and then **both** directions agree
+about a table no database has: direction A cannot report them unclassified
+because the inventory classifies them, and direction B cannot report the
+inventory rows as stale because the parser still derives the columns. The
+inventory did classify all eight, and
+[../reference/personal-data-inventory.md](../reference/personal-data-inventory.md)
+published `merchant_api_keys.key_digest`/`key_prefix` as stored merchant
+credentials — a GDPR artifact naming a table that does not exist. With
+`DROP TABLE` modelled, the gate named all eight on the real tree in one run.
+`a_dropped_table_leaves_no_columns_behind` and
+`a_stale_row_naming_a_dropped_tables_column_fails_direction_b` pin it.
+
+**What it proved about this gate generally**, and it is the same lesson
+`verify-status` learned twice: a drift gate whose two directions read the
+_same_ derived set can be wrong in both at once. Neither direction is a
+check on the other; the parser is. Still unmodelled, and named rather than
+left: `ALTER TABLE … RENAME TO`, `CREATE TABLE … (LIKE …)` and `PARTITION OF`.
+No migration uses any of them. A table rename would keep its columns under the
+old name and fail this gate **loudly**; the other two would produce a table
+with no columns and fail it **silently**, which is the shape to watch for.
+
+**Measured on this tree, 2026-09-17:** 295 database columns classified across
 25 elements (16 personal-data, 17 necessary), checked in both directions
-against the 303 the migrations derive; 10 non-database surfaces registered,
+against the 295 the migrations derive; 10 non-database surfaces registered,
 6 of them not yet statically enumerable — recorded as unmet criteria that keep
 #144 open rather than faked (RFC-0002 PR 2: "record any surface that cannot be
 enumerated as an unmet criterion rather than manufacturing a self-check").
+_(It read 303/303 on 2026-09-16, before `DROP TABLE` was modelled.)_
+
+**Three more unmet criteria, found by the same review and fixed in no code**,
+because each would be a claim rather than a check: five columns carry
+`control: redact` and no statement in this repository redacts them;
+`jobs.last_error` holds the rail's own message under a `subject: none`
+element; and ADR-0020 §1's per-copy necessity/control reference is absent from
+the schema. All three are written down in
+[../reference/personal-data-inventory.md](../reference/personal-data-inventory.md)
+and keep #144 open alongside the six surfaces. The `enumerable` flag on the
+other four surfaces is **counted, not derived** — nothing re-checks them.
 
 **Mutations that prove each direction bites** (`privacy_inventory_tests` in
-`.xtask/src/main.rs`): adding a `phone` column to a migration with no element
-fails direction A; adding a `ghost` column to the inventory with no migration
+`.xtask/src/main.rs`, 16 cases): adding a `phone` column to a migration with no
+element fails direction A; adding a `ghost` column to the inventory with no
+migration fails direction B; a dropped table's column named by the inventory
 fails direction B; a duplicate surface id and a surface id colliding with an
-element name each fail; the DDL parser's handling of `DROP`/`RENAME` and the
+element name each fail; the DDL parser's handling of
+`DROP`/`RENAME`/`DROP TABLE`, its constraint-keyword word boundary and the
 string-aware comment stripper are pinned by their own tests.

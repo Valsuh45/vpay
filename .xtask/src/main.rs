@@ -49,7 +49,7 @@
 //!
 //! * `verify-privacy-inventory` — every database column the migrations create
 //!   is classified in `schemas/privacy-inventory.yaml`, and every classification
-//!   names a live column (two-directional), plus the six-field element and
+//!   names a live column (two-directional), plus the element-field and
 //!   non-database-surface validation. New 2026-09-16 (issue #144): before it,
 //!   a privacy-relevant column could be added to a migration with no record
 //!   of the data it holds, and nothing failed.
@@ -5600,7 +5600,7 @@ const PRIVACY_SUBJECT_VOCAB: [&str; 5] = ["payer", "staff", "merchant", "none", 
 
 /// Fail unless every database column the migrations create is classified in
 /// `schemas/privacy-inventory.yaml` and every inventory element copy names a
-/// live column — issue #144's drift gate, plus six-field and non-database-
+/// live column — issue #144's drift gate, plus element-field and non-database-
 /// surface validation.
 ///
 /// The authoritative DB surface is the migrations, not `schemas/vpay.cstack`:
@@ -5781,7 +5781,8 @@ struct PrivacyInventory {
     non_db_surfaces: Vec<PrivacySurface>,
 }
 
-/// One stable data element: the six-field ADR-0020 §1 classification plus the
+/// One stable data element: the ADR-0020 §1 classification — eight fields, of
+/// which the gate checks the six string ones are non-empty — plus the
 /// copies (DB columns, and non-DB surfaces once registered) that hold it.
 #[derive(serde::Deserialize)]
 struct PrivacyElement {

@@ -1,6 +1,7 @@
 # vpay personal-data inventory — machine-readable companion (issue #144, ADR-0020, RFC-0002)
 # See docs/reference/personal-data-inventory.md. The authoritative DB surface is backends/migrations.
-# schema: version + elements (six-field ADR-0020 §1 classification + the copies that share each
+# schema: version + elements (the ADR-0020 §1 classification — eight fields, six of which the gate
+# checks are non-empty — + the copies that share each
 # element: DB columns, and non-DB surfaces once registered). non_db_surfaces lists the disclosure
 # surfaces ADR-0020 §1 names. cargo xtask verify-privacy-inventory checks this file against the
 # migrations in both directions.
