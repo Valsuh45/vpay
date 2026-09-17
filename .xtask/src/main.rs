@@ -5821,8 +5821,23 @@ struct PrivacySurface {
 /// The migrations are the authoritative schema — `schemas/vpay.cstack` models
 /// less than the whole database (ADR-0020, RFC-0002 PR 2) — so the inventory is
 /// checked against a parse of the SQL, not against that projection. Handles
-/// `CREATE TABLE`, `ALTER TABLE ... ADD/DROP/RENAME COLUMN`, and strips
-/// `--`/`/* */` comments string-aware (0007's `'-----BEGIN%KEY-----%'`).
+/// `CREATE TABLE`, `ALTER TABLE ... ADD/DROP/RENAME COLUMN`, `DROP TABLE`, and
+/// strips `--`/`/* */` comments string-aware (0007's `'-----BEGIN%KEY-----%'`).
+///
+/// # Why `DROP TABLE` is here
+///
+/// It was not, until this gate's own review. Migration `0009` drops
+/// `merchant_api_keys` outright (0008 created it; the merchant-auth model moved
+/// to `private_key_jwt` before either shipped), and a parser that models
+/// `DROP COLUMN` but not `DROP TABLE` leaves all eight of that table's columns
+/// in the derived set. Both directions then agree on a table that does not
+/// exist: the gate cannot report them unclassified, and it cannot report the
+/// inventory rows naming them as stale. The first inventory written against
+/// this parser classified all eight, and
+/// `docs/reference/personal-data-inventory.md` published two of them as stored
+/// merchant credentials. A privacy inventory that names a table no database
+/// has is the "looks more finished than it is" failure with a GDPR artifact
+/// attached.
 fn migrations_db_columns(root: &Path) -> Result<BTreeSet<(String, String)>, String> {
     let dir = root.join(MIGRATIONS_DIR);
     let mut files: Vec<PathBuf> = Vec::new();
@@ -5855,6 +5870,10 @@ fn migrations_db_columns(root: &Path) -> Result<BTreeSet<(String, String)>, Stri
                 let cols = tables.entry(table).or_default();
                 for column in create_table_columns(body) {
                     cols.insert(column);
+                }
+            } else if let Some(dropped) = drop_table_targets(stmt) {
+                for table in dropped {
+                    tables.remove(&table);
                 }
             } else if let Some(table) = alter_table_target(stmt) {
                 let cols = tables.entry(table).or_default();
@@ -6057,6 +6076,14 @@ fn split_top_level(s: &str, sep: char) -> Vec<String> {
 }
 
 /// Whether a `CREATE TABLE` body part opens a constraint rather than a column.
+///
+/// The keyword must be a whole word. `up.starts_with(k)` alone would read a
+/// column named `unique_reference`, `check_digit` or `like_count` as a table
+/// constraint and drop it from the derived set — and a column the parser never
+/// derives is a column the gate cannot report as unclassified, which is the one
+/// way this check can be wrong without saying so. No such column exists today;
+/// the boundary is here so that adding one is an ordinary gate failure rather
+/// than a silent hole (`a_column_named_after_a_constraint_keyword_is_a_column`).
 fn is_constraint_line(part: &str) -> bool {
     const KW: [&str; 8] = [
         "CONSTRAINT",
@@ -6069,7 +6096,51 @@ fn is_constraint_line(part: &str) -> bool {
         "LIKE",
     ];
     let up = part.to_uppercase();
-    KW.iter().any(|k| up.starts_with(k))
+    KW.iter().any(|k| {
+        up.starts_with(k)
+            && up
+                .get(k.len()..)
+                .and_then(|rest| rest.chars().next())
+                .is_none_or(|c| !(c.is_alphanumeric() || c == '_'))
+    })
+}
+
+/// The tables a `DROP TABLE [IF EXISTS] a, b [CASCADE|RESTRICT]` removes.
+///
+/// `None` when `stmt` is not a `DROP TABLE` at all, so the caller can tell
+/// "not this statement" from "this statement drops nothing". Schema
+/// qualification and quoting are normalised exactly as
+/// [`create_table_parts`] and [`alter_table_target`] normalise them, or the
+/// name removed would not be the name inserted.
+fn drop_table_targets(stmt: &str) -> Option<Vec<String>> {
+    let up = stmt.to_uppercase();
+    let pos = up.find("DROP TABLE")?;
+    let mut rest = stmt.get(pos + "DROP TABLE".len()..)?.trim_start();
+    if rest.to_uppercase().starts_with("IF EXISTS") {
+        rest = rest.get("IF EXISTS".len()..)?.trim_start();
+    }
+    let mut out = Vec::new();
+    for raw in rest.split(',') {
+        let name = raw
+            .split_whitespace()
+            .next()
+            .unwrap_or_default()
+            .trim_end_matches(';');
+        if name.is_empty() {
+            continue;
+        }
+        let name = name
+            .rsplit('.')
+            .next()
+            .unwrap_or(name)
+            .trim_matches('"')
+            .to_lowercase();
+        if name.is_empty() || name == "cascade" || name == "restrict" {
+            continue;
+        }
+        out.push(name);
+    }
+    Some(out)
 }
 
 /// If `stmt` is an `ALTER TABLE`, the normalised target table name.
@@ -6469,6 +6540,79 @@ non_db_surfaces:
         assert!(
             alter_drop_columns("ALTER TABLE t ADD COLUMN note TEXT DEFAULT 'DROP word';")
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_dropped_table_leaves_no_columns_behind() {
+        // Migration 0009's shape: 0008 creates `merchant_api_keys`, 0009 drops
+        // it. Before `DROP TABLE` was modelled, all eight columns stayed in the
+        // derived set, so neither direction of the gate could see that the
+        // inventory was classifying a table no database has.
+        let root = tmp_root();
+        fs::write(
+            root.join("backends/migrations/0001_create.sql"),
+            "CREATE TABLE merchant_api_keys (id TEXT, key_digest TEXT);",
+        )
+        .unwrap();
+        fs::write(
+            root.join("backends/migrations/0002_drop.sql"),
+            "DROP TABLE merchant_api_keys;",
+        )
+        .unwrap();
+        let cols = migrations_db_columns(&root).unwrap();
+        assert!(
+            !cols
+                .iter()
+                .any(|(table, _)| table == "merchant_api_keys"),
+            "a dropped table must leave nothing behind: {cols:?}"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_stale_row_naming_a_dropped_tables_column_fails_direction_b() {
+        // The other half of the same defect, through the real gate: an element
+        // copy naming a column of a dropped table must fail, exactly as one
+        // naming a column that never existed does.
+        let root = tmp_root();
+        fs::write(
+            root.join("backends/migrations/0001_create.sql"),
+            "CREATE TABLE customers ( email TEXT, status TEXT );\
+             \nCREATE TABLE merchant_api_keys ( key_digest TEXT );",
+        )
+        .unwrap();
+        fs::write(
+            root.join("backends/migrations/0002_drop.sql"),
+            "DROP TABLE merchant_api_keys;",
+        )
+        .unwrap();
+        let inv = OK_INV.replace(
+            "column: email",
+            "column: email\n    - kind: column\n      table: merchant_api_keys\n      column: key_digest",
+        );
+        fs::write(root.join("schemas/privacy-inventory.yaml"), inv).unwrap();
+        let err = verify_privacy_inventory(&root).unwrap_err();
+        assert!(err.contains("merchant_api_keys.key_digest"), "err: {err}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_column_named_after_a_constraint_keyword_is_a_column() {
+        // `up.starts_with("UNIQUE")` alone swallows `unique_reference`, and a
+        // column the parser never derives is one the gate cannot report as
+        // unclassified — the only way this check fails silently.
+        let cols = create_table_columns(
+            "unique_reference TEXT, check_digit INT, like_count INT, \
+             UNIQUE (unique_reference), CHECK (check_digit > 0)",
+        );
+        assert_eq!(
+            cols,
+            vec![
+                "unique_reference".to_string(),
+                "check_digit".to_string(),
+                "like_count".to_string()
+            ]
         );
     }
 

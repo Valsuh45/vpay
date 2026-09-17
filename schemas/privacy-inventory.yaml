@@ -195,15 +195,6 @@ elements:
         table: ledger_transactions
         column: created_at
       - kind: column
-        table: merchant_api_keys
-        column: created_at
-      - kind: column
-        table: merchant_api_keys
-        column: last_used_at
-      - kind: column
-        table: merchant_api_keys
-        column: revoked_at
-      - kind: column
         table: oauth_authorization_codes
         column: consumed_at
       - kind: column
@@ -369,9 +360,6 @@ elements:
       - kind: column
         table: jobs
         column: kind
-      - kind: column
-        table: merchant_api_keys
-        column: livemode
       - kind: column
         table: oauth_authorization_codes
         column: nonce
@@ -608,12 +596,6 @@ elements:
       - kind: column
         table: ledger_transactions
         column: id
-      - kind: column
-        table: merchant_api_keys
-        column: id
-      - kind: column
-        table: merchant_api_keys
-        column: merchant_id
       - kind: column
         table: oauth_authorization_codes
         column: client_id
@@ -861,12 +843,6 @@ elements:
       - kind: column
         table: checkout_sessions
         column: return_token
-      - kind: column
-        table: merchant_api_keys
-        column: key_digest
-      - kind: column
-        table: merchant_api_keys
-        column: key_prefix
       - kind: column
         table: oauth_clients
         column: client_secret_hash
