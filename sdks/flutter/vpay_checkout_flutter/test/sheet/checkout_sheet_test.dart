@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -653,4 +654,107 @@ void main() {
       },
     );
   });
+
+  group('issue #195 — the browser leg the sheet actually opens', () {
+    testWidgets(
+      'is the redirect page on the CHECKOUT origin, not the API base URL and not the rail',
+      (WidgetTester tester) async {
+        // The wiring this test exists for, and the only place it can be
+        // seen: `VpayCheckoutSheet` is what chooses which of its two URLs
+        // the redirect leg is built on. `sessionUrl` is on
+        // `checkout.example` (the checkout app, `checkout.public_base_url`)
+        // and `baseUrl` is `api.example` (the API,
+        // `deployment.public_base_url`) — two deployables on two origins,
+        // and `/c/{id}/redirect` exists on exactly one of them. A leg built
+        // on the other is a 404 instead of a payment, and every unit test
+        // of `redirectLegUrlFor` in `sheet_controller_test.dart` would
+        // still pass.
+        final VpayCheckoutPlatform previous = VpayCheckoutPlatform.instance;
+        final _RecordingPlatform platform = _RecordingPlatform();
+        VpayCheckoutPlatform.instance = platform;
+        addTearDown(() {
+          VpayCheckoutPlatform.instance = previous;
+          platform.dispose();
+        });
+
+        final http.Client client = MockClient((http.Request request) async {
+          if (request.method == 'POST' &&
+              request.url.path.endsWith('/confirm')) {
+            return _json(<String, Object?>{
+              ..._intentJson(status: 'requires_action'),
+              'next_action': <String, Object?>{
+                'type': 'redirect_to_url',
+                'redirect_to_url': <String, Object?>{
+                  'url': 'https://orange.example/pay/abc',
+                  'return_url': null,
+                },
+              },
+            });
+          }
+          if (request.url.path.contains('/payment_intents/')) {
+            // Terminal on the first poll, so the post-dismissal poll loop
+            // this test does not care about settles at once.
+            return _json(_intentJson(status: 'succeeded'));
+          }
+          return _json(_sessionJson(rails: [_orangeRailJson()]));
+        });
+
+        await _pump(
+          tester,
+          VpayCheckoutSheet(
+            sessionUrl: _sessionUrl,
+            baseUrl: 'https://api.example',
+            publishableKey: 'pk_test_1',
+            httpClient: client,
+            locale: VpayLocale.en,
+          ),
+        );
+
+        await tester.tap(find.byType(ElevatedButton));
+        // Not `pumpAndSettle`: the hand-off deliberately never resolves here
+        // (the fake host reports nothing), so this page never settles —
+        // which is the point. Pump until the host has been asked to show
+        // something, then assert what it was asked to show.
+        for (int i = 0; i < 50 && platform.shownUrl == null; i += 1) {
+          await tester.pump(const Duration(milliseconds: 10));
+        }
+
+        expect(
+          platform.shownUrl,
+          'https://checkout.example/c/cs_123/redirect?key=pk_test_1#$_csSecret',
+        );
+        expect(platform.shownUrl, isNot(contains('api.example')));
+        expect(platform.shownUrl, isNot(contains('orange.example')));
+      },
+    );
+  });
+}
+
+/// A platform host that records the URL it was asked to show and reports
+/// nothing back.
+///
+/// Reporting nothing is deliberate: this test is about the URL the sheet
+/// hands over, and a host that answered would start the post-return poll
+/// loop, whose timers have nothing to do with what is being asserted.
+class _RecordingPlatform extends VpayCheckoutPlatform {
+  String? shownUrl;
+  final StreamController<CheckoutWindowEvent> _events =
+      StreamController<CheckoutWindowEvent>.broadcast();
+
+  @override
+  Future<void> show({
+    required String url,
+    required List<StopUrlSpec> stopUrls,
+    required bool allowInsecureUrl,
+  }) async {
+    shownUrl = url;
+  }
+
+  @override
+  Future<void> dismiss() async {}
+
+  @override
+  Stream<CheckoutWindowEvent> get windowEvents => _events.stream;
+
+  void dispose() => unawaited(_events.close());
 }

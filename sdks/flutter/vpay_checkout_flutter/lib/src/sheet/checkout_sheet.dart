@@ -288,6 +288,10 @@ class _VpayCheckoutSheetState extends State<VpayCheckoutSheet> {
         allowInsecureBaseUrl: widget.allowInsecureBaseUrl,
         httpClient: widget.httpClient,
       ),
+      // The checkout page's own origin comes from the server-minted session
+      // URL, never from `baseUrl` (the API's origin, a second deployable on
+      // a second host) — `SheetController.sessionPageUrl`.
+      sessionPageUrl: SheetController.sessionPageUrlFrom(widget.sessionUrl),
       sessionClientSecret: _sessionClientSecretFromUrl(widget.sessionUrl),
       merchantName: widget.merchantName,
       allowedMethods: widget.allowedMethods,

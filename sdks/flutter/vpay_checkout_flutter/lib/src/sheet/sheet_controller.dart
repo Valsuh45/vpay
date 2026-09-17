@@ -86,6 +86,7 @@ String errorMessageKey(VpayError error) {
 final class SheetController extends ChangeNotifier {
   SheetController({
     required this.client,
+    required this.sessionPageUrl,
     required this.sessionClientSecret,
     this.merchantName,
     this.allowedMethods,
@@ -99,6 +100,26 @@ final class SheetController extends ChangeNotifier {
   }) : _platform = platform ?? VpayCheckoutPlatform.instance;
 
   final BrowserClient client;
+
+  /// `{checkout_base}/c/{cs_id}` — this session's own hosted page, with its
+  /// query and fragment (both credentials) already stripped.
+  ///
+  /// **Not derivable from [client].** `BrowserClient.baseUrl` is the
+  /// **API**'s origin — the thing `/v1/browser/...` hangs off
+  /// (`deployment.public_base_url`, `http://localhost:8080` in
+  /// `compose.demo.yml`). The checkout page is a second deployable on a
+  /// second origin (`checkout.public_base_url`, `http://localhost:3080`
+  /// there), and `config/application.yml` says so at length. Building a
+  /// `/c/{id}/…` URL on the API's origin sends the payer to a route the API
+  /// does not serve, which is a 404 instead of a payment.
+  ///
+  /// So it comes from the one string that always carries the right origin:
+  /// the **server-minted** session URL, `{checkout_base}/c/{cs_id}?key=…#…`
+  /// (`vpay_api::v1::checkout_sessions`), which the sheet is handed and
+  /// already parses for [sessionClientSecret]. A path prefix survives it
+  /// (`https://api.example/checkout/c/cs_1` is a legal deployment), which
+  /// no re-derivation from a configured base would.
+  final String sessionPageUrl;
 
   /// `cs_…_secret_…` — read once at construction, exactly as
   /// `VpayCheckout.start`'s `_SessionUrl.clientSecret` is.
@@ -349,8 +370,7 @@ final class SheetController extends ChangeNotifier {
     _setState(reduceCheckoutScreen(_state, CheckoutRedirectRequired(url)));
     await _handOffToBrowser(
       redirectLegUrlFor(
-        baseUrl: client.baseUrl,
-        sessionId: s.context.session.id,
+        sessionPageUrl: sessionPageUrl,
         publishableKey: client.publishableKey,
         sessionClientSecret: sessionClientSecret,
       ),
@@ -371,25 +391,49 @@ final class SheetController extends ChangeNotifier {
   /// `Referer`). The rail URL itself is deliberately **not** passed as a
   /// parameter — the redirect page re-derives it from the server, so a
   /// crafted URL can never turn a payment origin into an open redirect.
+  ///
+  /// [sessionPageUrl] is this session's own hosted page and is therefore
+  /// already on the **checkout** origin — see that field for why the API's
+  /// own base URL is the wrong answer here and what it breaks.
   @visibleForTesting
   static String redirectLegUrlFor({
-    required String baseUrl,
-    required String sessionId,
+    required String sessionPageUrl,
     required String publishableKey,
     required String sessionClientSecret,
   }) {
-    final String base = baseUrl.trim().endsWith('/')
-        ? baseUrl.trim().substring(0, baseUrl.trim().length - 1)
-        : baseUrl.trim();
+    // Trailing slashes only: the caller has already stripped the query and
+    // the fragment (`sessionPageUrlFrom`), and a `//redirect` would be a
+    // path segment the app does not route.
+    final String base = sessionPageUrl.trim().replaceAll(RegExp(r'/+$'), '');
     // The session `client_secret` is written raw into the fragment, exactly
     // as the server mints the hosted URL (`{base}/c/{id}#{secret}`) —
     // percent-encoding it would double-decode when the browser exposes
     // `location.hash` and `parsePageCredentials` calls `decodeURIComponent`
     // again. The secret's alphabet is URL-safe alphanumerics + `_`, so raw
     // is correct and matches the server's own shape.
-    return '$base/c/${Uri.encodeComponent(sessionId)}/redirect'
+    return '$base/redirect'
         '?key=${Uri.encodeQueryComponent(publishableKey)}'
         '#$sessionClientSecret';
+  }
+
+  /// `{checkout_base}/c/{cs_id}` out of a server-minted session URL —
+  /// everything before the first `?` or `#`, which is where both of that
+  /// URL's credentials live.
+  ///
+  /// The counterpart of `checkout_sheet.dart`'s own fragment read, and here
+  /// rather than there so [redirectLegUrlFor]'s input is defined beside it:
+  /// these two functions are the whole of "which origin does the payer's
+  /// browser go to", and splitting them across files is how they would
+  /// drift.
+  ///
+  /// Public rather than `@visibleForTesting`: [VpayCheckoutSheet] calls it,
+  /// and so must anyone constructing a [SheetController] by hand — which is
+  /// the point, because the alternative every caller reaches for first
+  /// (`client.baseUrl`) is the wrong origin.
+  static String sessionPageUrlFrom(String sessionUrl) {
+    final String trimmed = sessionUrl.trim();
+    final int cut = trimmed.indexOf(RegExp(r'[?#]'));
+    return cut == -1 ? trimmed : trimmed.substring(0, cut);
   }
 
   /// Hands the redirecting state's URL to [VpayCheckoutPlatform] — the

@@ -10,6 +10,16 @@ import 'package:vpay_checkout_flutter/vpay_checkout_flutter.dart';
 const _piSecret = 'pi_123_secret_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const _csSecret = 'cs_123_secret_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 
+/// This session's own hosted page — on the **checkout** origin.
+///
+/// Deliberately a different host from `_ScriptedClient`'s `https://api.example`
+/// base URL, because those really are two deployables on two origins
+/// (`checkout.public_base_url` vs `deployment.public_base_url`,
+/// `config/application.yml`). A test that used one string for both could not
+/// tell a redirect-leg URL built on the right origin from one built on the
+/// wrong one.
+const _sessionPageUrl = 'https://checkout.example/c/cs_123';
+
 /// A clock a test fully controls — `checkout_controller_test.dart`'s own
 /// `FakeClock`, restated here so this file has no test-time dependency on
 /// that one.
@@ -205,6 +215,7 @@ void main() {
       );
       final controller = SheetController(
         client: scripted.build(),
+        sessionPageUrl: _sessionPageUrl,
         sessionClientSecret: _csSecret,
         clock: clock,
         jitterSource: FixedJitterSource(const [0.5]),
@@ -253,6 +264,7 @@ void main() {
       );
       final controller = SheetController(
         client: scripted.build(),
+        sessionPageUrl: _sessionPageUrl,
         sessionClientSecret: _csSecret,
       );
 
@@ -268,6 +280,7 @@ void main() {
       );
       final controller = SheetController(
         client: scripted.build(),
+        sessionPageUrl: _sessionPageUrl,
         sessionClientSecret: _csSecret,
       );
 
@@ -296,6 +309,7 @@ void main() {
         );
         final controller = SheetController(
           client: scripted.build(),
+          sessionPageUrl: _sessionPageUrl,
           sessionClientSecret: _csSecret,
           remembered: VpayRememberedMsisdn(
             store: store,
@@ -341,6 +355,7 @@ void main() {
       final platform = _FakePlatform(CheckoutWindowOutcome.stopUrlReached);
       final controller = SheetController(
         client: scripted.build(),
+        sessionPageUrl: _sessionPageUrl,
         sessionClientSecret: _csSecret,
         platform: platform,
       );
@@ -361,9 +376,12 @@ void main() {
       // pay/abc`) must not appear anywhere in the hand-off.
       expect(
         platform.shownUrl,
-        'https://api.example/c/cs_123/redirect?key=pk_test_1#$_csSecret',
+        'https://checkout.example/c/cs_123/redirect?key=pk_test_1#$_csSecret',
       );
       expect(platform.shownUrl, isNot(contains('orange.example')));
+      // …and on the checkout origin, not the API's. `_ScriptedClient`'s base
+      // URL is `https://api.example`; a leg built on it would 404.
+      expect(platform.shownUrl, isNot(contains('api.example')));
       // redirect_required (-> CheckoutRedirecting) must appear in the
       // recorded state history strictly before the platform host was
       // asked to show anything.
@@ -389,6 +407,7 @@ void main() {
       final platform = _FakePlatform(CheckoutWindowOutcome.dismissed);
       final controller = SheetController(
         client: scripted.build(),
+        sessionPageUrl: _sessionPageUrl,
         sessionClientSecret: _csSecret,
         platform: platform,
       );
@@ -409,6 +428,7 @@ void main() {
       );
       final controller = SheetController(
         client: scripted.build(),
+        sessionPageUrl: _sessionPageUrl,
         sessionClientSecret: _csSecret,
       );
 
@@ -451,6 +471,7 @@ void main() {
       final clock = FakeClock(DateTime(2026));
       final controller = SheetController(
         client: client,
+        sessionPageUrl: _sessionPageUrl,
         sessionClientSecret: _csSecret,
         clock: clock,
         jitterSource: FixedJitterSource(const [0.5]),
@@ -482,6 +503,7 @@ void main() {
         );
         final controller = SheetController(
           client: scripted.build(),
+          sessionPageUrl: _sessionPageUrl,
           sessionClientSecret: _csSecret,
         );
 
@@ -522,40 +544,87 @@ void main() {
     });
   });
 
+  group('SheetController.sessionPageUrlFrom', () {
+    test(
+      'keeps the checkout origin and the path, and drops both credentials',
+      () {
+        expect(
+          SheetController.sessionPageUrlFrom(
+            'https://checkout.example/c/cs_123?key=pk_test_1#$_csSecret',
+          ),
+          'https://checkout.example/c/cs_123',
+        );
+      },
+    );
+
+    test(
+      'keeps a deployment path prefix — a legal checkout.public_base_url',
+      () {
+        expect(
+          SheetController.sessionPageUrlFrom(
+            'https://api.example/checkout/c/cs_123?key=pk_test_1#$_csSecret',
+          ),
+          'https://api.example/checkout/c/cs_123',
+        );
+      },
+    );
+
+    test('a fragment-only session URL loses the fragment and nothing else', () {
+      expect(
+        SheetController.sessionPageUrlFrom(
+          'https://checkout.example/c/cs_123#$_csSecret',
+        ),
+        'https://checkout.example/c/cs_123',
+      );
+    });
+  });
+
   group('SheetController.redirectLegUrlFor', () {
     test('builds a vpay-controlled /redirect URL with the key in the query and the secret in the fragment', () {
       expect(
         SheetController.redirectLegUrlFor(
-          baseUrl: 'https://api.example',
-          sessionId: 'cs_123',
+          sessionPageUrl: _sessionPageUrl,
           publishableKey: 'pk_test_1',
           sessionClientSecret: _csSecret,
         ),
-        'https://api.example/c/cs_123/redirect?key=pk_test_1#$_csSecret',
+        'https://checkout.example/c/cs_123/redirect?key=pk_test_1#$_csSecret',
       );
     });
 
-    test('strips a trailing slash from the base URL', () {
+    test('strips a trailing slash from the session page URL', () {
       expect(
         SheetController.redirectLegUrlFor(
-          baseUrl: 'https://api.example/',
-          sessionId: 'cs_123',
+          sessionPageUrl: '$_sessionPageUrl/',
           publishableKey: 'pk_test_1',
           sessionClientSecret: _csSecret,
         ),
-        'https://api.example/c/cs_123/redirect?key=pk_test_1#$_csSecret',
+        'https://checkout.example/c/cs_123/redirect?key=pk_test_1#$_csSecret',
       );
     });
 
     test('never carries a rail URL — the redirect page re-derives it from the server', () {
       final String url = SheetController.redirectLegUrlFor(
-        baseUrl: 'https://api.example',
-        sessionId: 'cs_123',
+        sessionPageUrl: _sessionPageUrl,
         publishableKey: 'pk_test_1',
         sessionClientSecret: _csSecret,
       );
       expect(url, isNot(contains('orange.example')));
       expect(url, isNot(contains('url=')));
+    });
+
+    test('is built on the CHECKOUT origin, never the API base URL the client holds', () {
+      // The bug this test exists for: `/c/{id}/…` is served by
+      // `frontends/apps/checkout`, a second deployable on a second origin
+      // (`checkout.public_base_url`). Building it on `BrowserClient.baseUrl`
+      // — the API's origin, `deployment.public_base_url` — sends the payer
+      // to a route the API does not serve.
+      final String url = SheetController.redirectLegUrlFor(
+        sessionPageUrl: _sessionPageUrl,
+        publishableKey: 'pk_test_1',
+        sessionClientSecret: _csSecret,
+      );
+      expect(url, startsWith('https://checkout.example/'));
+      expect(url, isNot(contains('api.example')));
     });
   });
 }
