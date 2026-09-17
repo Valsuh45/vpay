@@ -10,6 +10,18 @@ library;
 
 export 'src/browser_client.dart'
     show BrowserClient, CheckoutSessionResult, PaymentIntentResult;
+export 'src/config/checkout_page_config.dart'
+    show
+        CheckoutPageBranding,
+        CheckoutPageCheckoutSettings,
+        CheckoutPageConfig,
+        InMemoryVpayCheckoutConfigStore,
+        VpayCheckoutConfigStore,
+        checkoutPageConfigTtl,
+        defaultCheckoutPageConfigStore,
+        narrowAllowedMethods,
+        prepareCheckout,
+        resolveCheckoutPageConfig;
 export 'src/checkout_controller.dart'
     show
         CheckoutController,
@@ -88,11 +100,9 @@ export 'src/sheet/checkout_screen.dart'
         reduceCheckoutScreen,
         stateForContext;
 export 'src/sheet/checkout_sheet.dart'
-    show
-        VpayCheckoutSheet,
-        kVpayCheckoutSheetCornerRadius,
-        showVpayCheckoutSheet,
-        showVpayCheckoutSheetRoute;
+    show VpayCheckoutSheet, showVpayCheckoutSheet, showVpayCheckoutSheetRoute;
+export 'src/sheet/checkout_theme.dart'
+    show VpayCheckoutTheme, kVpayCheckoutSheetCornerRadius;
 export 'src/sheet/failures.dart' show maxProviderReasonLength, providerReason;
 export 'src/sheet/i18n.dart'
     show
