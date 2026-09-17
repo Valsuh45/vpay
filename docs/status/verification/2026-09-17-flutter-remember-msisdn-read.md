@@ -55,8 +55,22 @@ A review pass tightened consistency with the hosted page:
   `onForget -> setRemember(false)` (a forgotten record with a still-ticked box
   could never happen on the web);
 - a stale number loaded for a _previous_ rail is cleared before the async read
-  for the new rail answers, so switching rails never shows the wrong number in
-  the new rail's form even for a frame;
+  for the new rail answers; ~~so switching rails never shows the wrong number in
+  the new rail's form even for a frame~~ — **that last clause is not true, and
+  was not measured** (corrected on review, 2026-09-17). `chooseRail` calls
+  `_setState`, which calls `notifyListeners()`, **before** it calls
+  `_loadRememberedMsisdn`, so the widget rebuilds once while `defaultMsisdn`
+  still holds the previous rail's number; the `null` lands only afterwards.
+  What actually prevents a wrong-rail prefill on that frame is the widget's
+  "empty text" guard — and since the field is never cleared on a rail switch,
+  the previous rail's number stays visible in the new rail's form anyway. A
+  payer who clears the field on rail A, goes back, and picks rail B would be
+  prefilled with rail A's number. **No test covers this, and none can today**:
+  the sheet's rails come from `CheckoutSession.rails` (`rails.dart` branches on
+  `RailFlow`, never on a rail code), and no fixture or deployment currently
+  offers two `push` rails at once — `orange_money` is `redirect` and renders no
+  field. Reachable in principle, unreachable in practice, and left visible
+  rather than claimed closed;
 - the box seed is the **non-expired** half of the store
   (`VpayRememberedMsisdn.hasActiveRecord`): an expired record is something to
   forget (the button still shows) but nothing the box can truthfully say the
