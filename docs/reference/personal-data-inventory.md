@@ -85,7 +85,7 @@ reach a log or export.
 ### `control: redact` names five columns nothing yet redacts
 
 **Added on review, 2026-09-17.** Read `control` as the control this element
-*should* carry, not as a promise that one runs today. The customer erasure and
+_should_ carry, not as a promise that one runs today. The customer erasure and
 the retention sweep are the only `redact` implementations in this repository,
 and between them they write exactly eight statements
 (`vpay_db::customers`, `backends/crates/vpay-db/src/customers.rs:1294` and
@@ -95,18 +95,18 @@ and between them they write exactly eight statements
 
 Five columns carry `control: redact` and are reached by **none** of them:
 
-| Column                                       | Element             | What actually protects it today                               |
-| -------------------------------------------- | ------------------- | ------------------------------------------------------------- |
-| `payment_intents.last_payment_error_code`    | `rail_failure_text` | nothing                                                       |
-| `payment_intents.last_payment_error_message` | `rail_failure_text` | nothing                                                       |
-| `provider_requests.error_kind`               | `rail_failure_text` | a 128-character `CHECK` and a closed operator-label vocabulary |
-| `webhook_deliveries.response_excerpt`        | `rail_failure_text` | length truncation only                                        |
+| Column                                       | Element             | What actually protects it today                                 |
+| -------------------------------------------- | ------------------- | --------------------------------------------------------------- |
+| `payment_intents.last_payment_error_code`    | `rail_failure_text` | nothing                                                         |
+| `payment_intents.last_payment_error_message` | `rail_failure_text` | nothing                                                         |
+| `provider_requests.error_kind`               | `rail_failure_text` | a 128-character `CHECK` and a closed operator-label vocabulary  |
+| `webhook_deliveries.response_excerpt`        | `rail_failure_text` | length truncation only                                          |
 | `staff_members.email`                        | `staff_email`       | the `Debug` impl (`vpay_db::staff`) — there is no staff erasure |
 
 This is an **unmet criterion, not a gap in the file**: the gate reads `control`
 for its closed vocabulary and cannot know which statements exist, and no gate
 here claims otherwise. It keeps #144 open alongside the six non-enumerable
-surfaces below. The two `rail_failure_text` columns that *are* redacted —
+surfaces below. The two `rail_failure_text` columns that _are_ redacted —
 `charges.failure_raw` and `refunds.failure_raw` — are redacted because they are
 "unbounded text a rail wrote _about_ this payer and may quote their number
 back" (`customers.rs:1176`); the same sentence is true of the four above it.
@@ -116,25 +116,25 @@ back" (`customers.rs:1176`); the same sentence is true of the four above it.
 Not an exhaustive table here — the authoritative copy is the YAML. The elements
 whose `subject` is a person are:
 
-| Element                   | Copies (DB)                                                                                                                                                                                               | Control  |
-| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
-| `payer_msisdn`            | `customers.phone`, `charges.payer_ref`, `charges.payer_ref_masked`                                                                                                                                        | `redact` |
-| `customer_name`           | `customers.name`                                                                                                                                                                                          | `redact` |
-| `customer_email`          | `customers.email`                                                                                                                                                                                         | `redact` |
-| `address_formal`          | `customers.address_line1`…`address_country`                                                                                                                                                               | `redact` |
-| `address_gps`             | `customers.address_latitude_microdeg`, `customers.address_longitude_microdeg`                                                                                                                             | `redact` |
-| `rail_failure_text`       | `charges.failure_raw`, `refunds.failure_raw`, `webhook_deliveries.response_excerpt`, `payment_intents.last_payment_error*`, `provider_requests.error_kind`                                                | `redact` |
-| `staff_email`             | `staff_members.email`                                                                                                                                                                                     | `redact` |
-| `staff_display_name`      | `staff_members.display_name`                                                                                                                                                                              | `none`   |
-| `staff_credential_secret` | `credentials.material`/`subject`/`issuer` (migration 0044 moved the staff credential columns here from `staff_members`)                                                                                   | `forbid` |
-| `staff_oauth_token`       | `staff_sessions.access_token`                                                                                                                                                                             | `forbid` |
-| `session_oauth_code`      | `oauth_codes`, `oauth_refresh_tokens`, `oauth_device_codes`, `oauth_authorization_codes`, `oauth_client_assertion_jtis`, `oauth_dpop_jti`                                                                 | `forbid` |
-| `webhook_url`             | `webhook_deliveries.url`, `checkout_sessions.success_url`/`cancel_url`/`return_url`, `oauth_*redirect_uri`, `charges.redirect_url`/`return_url`                                                           | `forbid` |
-| `oauth_signing_key`       | `oauth_signing_keys.kid`/`public_jwk`                                                                                                                                                                     | `forbid` |
-| `oauth_client_secret`     | `oauth_clients.client_secret_hash`/`jwks`, `checkout_sessions.publishable_key`/`client_secret_suffix`/`return_token`, `payment_intents.client_secret_suffix`                                               | `forbid` |
-| `merchant_metadata`       | `customers.metadata`, `payment_intents.metadata`/`description`, `refunds.metadata`, `invoices.metadata`                                                                                                   | `none`   |
-| `stored_api_body`         | `events.data`, `idempotency_keys.response_body`                                                                                                                                                           | `redact` |
-| `merchant_note`           | `refunds.reason`, `invoices.description`, `invoice_items.description`                                                                                                                                     | `none`   |
+| Element                   | Copies (DB)                                                                                                                                                  | Control  |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------- |
+| `payer_msisdn`            | `customers.phone`, `charges.payer_ref`, `charges.payer_ref_masked`                                                                                           | `redact` |
+| `customer_name`           | `customers.name`                                                                                                                                             | `redact` |
+| `customer_email`          | `customers.email`                                                                                                                                            | `redact` |
+| `address_formal`          | `customers.address_line1`…`address_country`                                                                                                                  | `redact` |
+| `address_gps`             | `customers.address_latitude_microdeg`, `customers.address_longitude_microdeg`                                                                                | `redact` |
+| `rail_failure_text`       | `charges.failure_raw`, `refunds.failure_raw`, `webhook_deliveries.response_excerpt`, `payment_intents.last_payment_error*`, `provider_requests.error_kind`   | `redact` |
+| `staff_email`             | `staff_members.email`                                                                                                                                        | `redact` |
+| `staff_display_name`      | `staff_members.display_name`                                                                                                                                 | `none`   |
+| `staff_credential_secret` | `credentials.material`/`subject`/`issuer` (migration 0044 moved the staff credential columns here from `staff_members`)                                      | `forbid` |
+| `staff_oauth_token`       | `staff_sessions.access_token`                                                                                                                                | `forbid` |
+| `session_oauth_code`      | `oauth_codes`, `oauth_refresh_tokens`, `oauth_device_codes`, `oauth_authorization_codes`, `oauth_client_assertion_jtis`, `oauth_dpop_jti`                    | `forbid` |
+| `webhook_url`             | `webhook_deliveries.url`, `checkout_sessions.success_url`/`cancel_url`/`return_url`, `oauth_*redirect_uri`, `charges.redirect_url`/`return_url`              | `forbid` |
+| `oauth_signing_key`       | `oauth_signing_keys.kid`/`public_jwk`                                                                                                                        | `forbid` |
+| `oauth_client_secret`     | `oauth_clients.client_secret_hash`/`jwks`, `checkout_sessions.publishable_key`/`client_secret_suffix`/`return_token`, `payment_intents.client_secret_suffix` | `forbid` |
+| `merchant_metadata`       | `customers.metadata`, `payment_intents.metadata`/`description`, `refunds.metadata`, `invoices.metadata`                                                      | `none`   |
+| `stored_api_body`         | `events.data`, `idempotency_keys.response_body`                                                                                                              | `redact` |
+| `merchant_note`           | `refunds.reason`, `invoices.description`, `invoice_items.description`                                                                                        | `none`   |
 
 Everything else is a `sys_*` element (`subject: none`) — identifiers, timestamps,
 statuses, amounts, tenancy references, configuration, worker state — classified

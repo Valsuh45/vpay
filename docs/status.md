@@ -114,16 +114,25 @@ and what each printed when all fourteen were re-run, one invocation each, on
 `888b00c3`, with `DOCKER_HOST=unix:///run/user/1000/docker.sock`; it was
 re-run because merging `master` moved nine of the numbers and added a gate.)_
 
-**One row below is a failure, and it is `master`'s.** `verify-versions`
-(PR [#201](https://github.com/vaam-apps/vpay/pull/201), 2026-09-17) fails on
-`master` itself at `eb078020`: `deploy/helm/vpay/Chart.yaml` and
-`sdks/flutter/vpay_checkout_flutter/pubspec.yaml` are listed in
-`release-please-config.json`'s `extra-files` and carry no
-`x-release-please-version` comment, which is the exact condition that gate
-refuses. `master`'s own CI run
+**One row below is a failure, and it is `master`'s — and it is the gate
+working.** `verify-versions`
+(PR [#201](https://github.com/vaam-apps/vpay/pull/201), 2026-09-17) is red on
+`master` itself at `eb078020`, one commit after it landed. The release PR
+[#203](https://github.com/vaam-apps/vpay/pull/203) bumped 0.1.0 → 0.1.1, and
+release-please's YAML updater **re-serialised**
+`deploy/helm/vpay/Chart.yaml` and
+`sdks/flutter/vpay_checkout_flutter/pubspec.yaml` rather than rewriting one
+line of each — which dropped every comment in them, including the
+`x-release-please-version` annotations that are the only thing making those
+two files bumpable. At `a475a2d8` the pubspec read
+`version: 0.1.0 # x-release-please-version`; at `eb078020` it reads
+`version: 0.1.1` and the Chart has lost its whole header comment. **The tool
+destroyed its own instructions on its first run, and the gate written the same
+day caught it on the next commit.** `master`'s CI run
 [35275177452](https://github.com/vaam-apps/vpay/actions/runs/35275177452) is
-red on that step. It is recorded here rather than left out, because a gate
-table with a green row for a red gate is worse than no table:
+red on that step; a separate pull request owns the repair. It is recorded here
+rather than left out, because a gate table with a green row for a red gate is
+worse than no table:
 
 | Gate                       | What it refuses                                                                                                                                                  | Last printed                                          |
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
@@ -139,7 +148,7 @@ table with a green row for a red gate is worse than no table:
 | `verify-toolchain`         | a `backends/Dockerfile` that drifts from `rust-toolchain.toml`                                                                                                   | 1.98.0                                                |
 | `verify-ui`                | a computed class string, a raw status-colour token, a >60-char class, a daisyUI-4 or unrouted daisyUI class, or an import of the deleted `@vpay/ui` (2026-09-12) | nothing: silent on success, exit 0 only               |
 | `verify-migrations`        | an applied migration whose bytes changed                                                                                                                         | 48 files                                              |
-| `verify-versions`          | a release-please-owned version that disagrees, or an `extra-files` entry with no `x-release-please-version` comment (PR #201, 2026-09-17)                        | **FAILS on `master`** — 2 unannotated `extra-files`   |
+| `verify-versions`          | a release-please-owned version that disagrees, or an `extra-files` entry with no `x-release-please-version` comment (PR #201, 2026-09-17)                        | **red at `eb078020`** — 2 unannotated `extra-files`   |
 | `verify-privacy-inventory` | a migrated column with no inventory classification, or an inventory row naming no live column (issue #144, 2026-09-16)                                           | 295 columns / 25 elements / 10 surfaces               |
 | `verify-docs`              | **nothing — it exits 0 whatever it finds**                                                                                                                       | advisory report                                       |
 

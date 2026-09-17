@@ -112,15 +112,25 @@ merchant credentials. `drop_table_targets` and a word boundary in
   `privacy_inventory_tests` module is **16** cases.
 - `cargo xtask verify-links`: see the same page.
 
-**And one thing this branch does not fix.** `just verify` does **not** pass on
-this tree, and would not on `master` either: `verify-versions` (#201) is red at
-`eb078020` because `deploy/helm/vpay/Chart.yaml` and
-`sdks/flutter/vpay_checkout_flutter/pubspec.yaml` are listed in
-`release-please-config.json`'s `extra-files` and carry no
-`x-release-please-version` comment. `master`'s own CI run
-[35275177452](https://github.com/vaam-apps/vpay/actions/runs/35275177452) fails
-on that step. Neither file is touched by this change, and neither is fixed
-here.
+**Two things this branch inherits red and does not fix**, both `master`'s at
+`eb078020` and both reproduced locally here:
+
+- `just verify-versions` (#201) fails. The release PR
+  [#203](https://github.com/vaam-apps/vpay/pull/203) had release-please
+  re-serialise `deploy/helm/vpay/Chart.yaml` and
+  `sdks/flutter/vpay_checkout_flutter/pubspec.yaml`, which dropped every
+  comment in them — including the `x-release-please-version` annotations the
+  gate requires of every `extra-files` entry.
+- `just fmt-check-web` (prettier) fails on `AGENTS.md`, `CHANGELOG.md` and
+  those same two YAML files. `AGENTS.md`'s two offending lines are inside the
+  § Releasing block #201 added (`*new*`/`*not*` where prettier wants `_new_`/
+  `_not_`); `master`'s own copy fails the same check.
+
+`master`'s CI run
+[35275177452](https://github.com/vaam-apps/vpay/actions/runs/35275177452) is
+red on both steps. No file behind either failure is touched by this change.
+`git diff --name-only origin/master...HEAD | xargs pnpm exec prettier --check`
+— every file this branch does touch — passes.
 
 **What this addendum still does not claim.** Every unmet criterion listed on
 2026-09-16 is still unmet, and the review added three more — five `redact`

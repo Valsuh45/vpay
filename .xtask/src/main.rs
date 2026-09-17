@@ -6563,9 +6563,7 @@ non_db_surfaces:
         .unwrap();
         let cols = migrations_db_columns(&root).unwrap();
         assert!(
-            !cols
-                .iter()
-                .any(|(table, _)| table == "merchant_api_keys"),
+            !cols.iter().any(|(table, _)| table == "merchant_api_keys"),
             "a dropped table must leave nothing behind: {cols:?}"
         );
         let _ = fs::remove_dir_all(&root);

@@ -694,17 +694,37 @@ carries no `x-release-please-version` comment — because release-please's
 else checks it: `release.yml` derives its Docker tag from the git ref and never
 compares it against any manifest.
 
-**It is red on `master` at `eb078020`, and has been since it landed.**
+**It went red one commit after it landed, and what turned it red is the thing
+it was built to catch.** The release pull request
+[#203](https://github.com/vaam-apps/vpay/pull/203) bumped 0.1.0 → 0.1.1, and
+release-please's YAML updater **re-serialised**
 `deploy/helm/vpay/Chart.yaml` and
-`sdks/flutter/vpay_checkout_flutter/pubspec.yaml` are both in `extra-files`
-and neither carries the annotation. `master`'s own CI run
+`sdks/flutter/vpay_checkout_flutter/pubspec.yaml` instead of rewriting one
+line of each. Re-serialising a YAML document drops its comments — including
+the `x-release-please-version` annotations that are the only reason those two
+files were bumpable. At `a475a2d8` the pubspec read
+`version: 0.1.0 # x-release-please-version`; at `eb078020` it reads
+`version: 0.1.1`, and the Chart has lost its entire header comment block.
+
+**The tool destroyed its own instructions on its first run**, so the second
+release would have left both versions behind at 0.1.1 with nothing anywhere
+saying so — which is exactly the quiet regression #201's own doc comment says
+it exists for. Without the gate the symptom would have been a Helm chart
+version that stopped matching the image tag, some releases later.
+`master`'s CI run
 [35275177452](https://github.com/vaam-apps/vpay/actions/runs/35275177452)
 fails on the `verify-versions (release-please's bump is complete)` step.
-**The gate is right and the tree is wrong** — those two versions really would
-stop tracking a release — so it is recorded rather than worked around. The fix
-is two comment annotations and it belongs to whoever owns #201, not to the
-branch that happened to merge next; nothing on this page or in #187 touches
-either file.
+
+**The gate is right and the tree is wrong**, so it is recorded rather than
+worked around. A separate pull request owns the repair; nothing on this page
+or in #187 touches either file, and #187 is therefore red on this gate too,
+inherited rather than caused.
+
+_(It is worth reading beside `justfile`'s `verify-migrations` note and the
+2026-09-12 Storybook section above: three gates now, each of which went from
+"reasonable precaution" to "caught a real regression" inside a week of
+landing, and in all three cases the regression was invisible to every other
+check in `just ci`.)_
 
 ## 2026-09-17 — `verify-privacy-inventory`, the fourteenth gate (issue #144)
 
