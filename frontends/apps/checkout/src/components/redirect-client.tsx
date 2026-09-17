@@ -6,35 +6,42 @@
  * Everything here needs a browser: reading the fragment, calling the API,
  * writing the redirect-leg marker to `sessionStorage`, and performing the
  * navigation. The decision of *what to do* is imported
- * (`decideRedirectLegEntry` and `redirectUrlOf`), so this file is wiring, not
- * policy.
+ * (`decideRedirectLegEntry`, `intentClientSecretOf` and `redirectUrlOf`), so
+ * this file is wiring, not policy.
  *
  * # What it does, and what it never does
  *
- * It reads the session, takes the rail's URL from the **server's** answer,
- * marks this tab as a sheet's redirect leg, and navigates to the rail. It
- * never navigates to a URL the caller supplied, so it cannot be turned into
- * an open redirect (see `redirect.ts`'s module doc).
+ * It reads the session for the intent's credential, reads the **intent** for
+ * the rail's URL, marks this tab as a sheet's redirect leg, and navigates to
+ * the rail. It never navigates to a URL the caller supplied, so it cannot be
+ * turned into an open redirect — and it never reads `next_action` off the
+ * session, which would answer `null` on every real deployment. Both are
+ * `redirect.ts`'s module doc.
  *
  * # What the payer sees
  *
- * While the session read and navigation are in flight it shows a loading
+ * While the reads and the navigation are in flight it shows a loading
  * screen — never the "you can close this window" copy, because that copy
  * invites the payer to close *before* the rail has opened. Only if the
- * redirect cannot happen at all (a broken credential, an unreadable session,
- * an intent with no redirect) does it fall through to the neutral
+ * redirect cannot happen at all (a broken credential, an unreadable session
+ * or intent, an intent with no redirect) does it fall through to the neutral
  * "returning to the app" screen, which is accurate there: the rail was never
  * opened, and the sheet's poll reports what actually happened.
+ *
+ * It renders no branding. The two screens it can show carry no merchant
+ * name, no amount and no support line — there is nothing here for a brand to
+ * be applied to, and the sheet behind this window is already wearing the
+ * host app's own theme.
  */
 "use client";
 
+import { loadStripe } from "@vaam-apps/vpay-stripe-js";
 import { useEffect, useMemo, useState } from "react";
 
-import type { Branding } from "../config/settings";
 import { translator, type Locale } from "../i18n/index";
 import { BrowserCheckoutApi } from "../lib/api";
 import { redirectUrlOf } from "../lib/controller";
-import { decideRedirectLegEntry } from "../lib/redirect";
+import { decideRedirectLegEntry, intentClientSecretOf } from "../lib/redirect";
 import { rememberRedirectLeg } from "../lib/redirect-leg";
 import { RedirectLegNeutral, StatusPanel } from "./screens";
 
@@ -43,8 +50,6 @@ export interface RedirectClientProps {
   /** `NEXT_PUBLIC_VPAY_API_URL` — the origin `/v1/browser/...` hangs off. */
   apiBaseUrl: string;
   initialLocale: Locale;
-  /** `branding.yaml`. Shown only if this page cannot redirect and renders the neutral screen. */
-  branding: Branding;
 }
 
 export function RedirectClient(props: RedirectClientProps) {
@@ -74,18 +79,46 @@ export function RedirectClient(props: RedirectClientProps) {
     let cancelled = false;
     void (async () => {
       const api = new BrowserCheckoutApi({ baseUrl: props.apiBaseUrl });
-      const result = await api.readSession(props.sessionId, {
+      const session = await api.readSession(props.sessionId, {
         key: decision.key,
         clientSecret: decision.clientSecret,
       });
       if (cancelled) {
         return;
       }
-      const url = result.ok ? redirectUrlOf(result.value.payment_intent) : null;
+      // The session read answers the **intent's** credential, never a
+      // `next_action` — see `redirect.ts`'s module doc for why reading one
+      // off this response would be a page that never redirects anybody.
+      const intentSecret = session.ok
+        ? intentClientSecretOf(session.value)
+        : null;
+      if (intentSecret === null) {
+        setTerminal(true);
+        return;
+      }
+      let retrieved;
+      try {
+        const stripe = await loadStripe(decision.key, {
+          baseUrl: props.apiBaseUrl,
+        });
+        retrieved = await stripe.retrievePaymentIntent(intentSecret);
+      } catch {
+        // `loadStripe` rejects only on a blank key or base URL — the same
+        // integration mistake `checkout-client.tsx` handles, and not a payer
+        // this page can send anywhere.
+        setTerminal(true);
+        return;
+      }
+      if (cancelled) {
+        return;
+      }
+      const url =
+        retrieved.paymentIntent === undefined
+          ? null
+          : redirectUrlOf(retrieved.paymentIntent);
       if (url === null) {
-        // The session could not be read, or the intent names no redirect —
-        // the rail was already consumed, say. There is nothing to redirect
-        // to.
+        // The intent could not be read, or it names no redirect — the rail
+        // was already consumed, say. There is nothing to redirect to.
         setTerminal(true);
         return;
       }

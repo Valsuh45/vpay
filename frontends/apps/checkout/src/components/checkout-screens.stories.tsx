@@ -163,3 +163,51 @@ export const ReturnFailed: Story = {
     />
   ),
 };
+
+/**
+ * The neutral screen a native sheet's redirect leg shows (issue #195).
+ *
+ * Here because `test-storybook` is the only thing in this repository that
+ * returns a colour-contrast verdict for a payer screen, and this one is
+ * almost entirely `text-muted-foreground` on the page background — the
+ * pairing most likely to fail it and the least likely to be noticed, since
+ * it has no chrome and nothing to compare itself against. The jsdom axe
+ * suite next door covers it structurally in both locales already and
+ * computes no colour.
+ */
+export const ReturnRedirectLeg: Story = {
+  args: {
+    state: CHECKOUT_SCREENS["loading"] as CheckoutState,
+    locale: "fr",
+  },
+  render: () => (
+    <ReturnView
+      state={RETURN_SCREENS["redirect_leg"]!}
+      t={translator("fr")}
+      locale="fr"
+      branding={BRANDING}
+      destination={null}
+      onReturnToMerchant={NOOP}
+      onLocaleChange={NOOP}
+    />
+  ),
+};
+
+/** English too: the two strings differ in length enough to lay out differently. */
+export const ReturnRedirectLegInEnglish: Story = {
+  args: {
+    state: CHECKOUT_SCREENS["loading"] as CheckoutState,
+    locale: "en",
+  },
+  render: () => (
+    <ReturnView
+      state={RETURN_SCREENS["redirect_leg"]!}
+      t={translator("en")}
+      locale="en"
+      branding={BRANDING}
+      destination={null}
+      onReturnToMerchant={NOOP}
+      onLocaleChange={NOOP}
+    />
+  ),
+};

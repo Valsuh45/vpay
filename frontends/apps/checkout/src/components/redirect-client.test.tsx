@@ -1,112 +1,191 @@
 // @vitest-environment jsdom
 /**
- * The one behaviour that makes issue #195 work: a successful session read on
- * `/c/{id}/redirect` marks this tab as a sheet's redirect leg and navigates
- * to the rail URL the server stored — never to anything the URL supplied.
+ * The one behaviour that makes issue #195 work: `/c/{id}/redirect` marks
+ * this tab as a sheet's redirect leg and navigates to the rail URL **the
+ * server** holds — never to anything the page's own URL supplied.
+ *
+ * Driven against `src/testing/browser-stub.ts`, a real `node:http` server,
+ * rather than a patched `fetch`. That is not ceremony here, it is the whole
+ * point: the first version of this page read `next_action` off the session
+ * response, which the server never puts there, and a hand-written `fetch`
+ * stub that answered one certified a page that would have sent no payer to
+ * any rail. A test may only assert a shape the server actually sends.
  */
-import { render, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { recallRedirectLeg } from "../lib/redirect-leg";
-import { makeBranding } from "../testing/fixtures";
+import { startCheckoutStub, type CheckoutStub } from "../testing/browser-stub";
 import { RedirectClient } from "./redirect-client";
 
-const SESSION_ID = "cs_123";
 const RAIL_URL = "https://orange.example/pay/abc";
 
-function sessionEnvelope(nextAction: unknown) {
-  return {
-    object: "checkout.session",
-    id: SESSION_ID,
-    payment_intent: {
-      object: "payment_intent",
-      id: "pi_123",
-      status: "requires_action",
-      next_action: nextAction,
+let open: CheckoutStub | null = null;
+let restoreLocation: (() => void) | null = null;
+
+afterEach(async () => {
+  // Explicit: `globals: false` in `vitest.config.ts` means testing-library
+  // registers no automatic cleanup, so a second render would otherwise find
+  // the first one's DOM still mounted.
+  cleanup();
+  await open?.close();
+  open = null;
+  restoreLocation?.();
+  restoreLocation = null;
+  window.sessionStorage.clear();
+});
+
+/**
+ * Replaces `window.location` with a recorder.
+ *
+ * `location.assign` and the credential read (`location.search`/`.hash`) are
+ * the two things this page does with it, and jsdom makes the property
+ * configurable, so both are observable without patching the component.
+ */
+function stubLocation(stub: CheckoutStub): { assigned: string[] } {
+  const original = window.location;
+  const assigned: string[] = [];
+  Object.defineProperty(window, "location", {
+    value: {
+      search: `?key=${stub.publishableKey}`,
+      hash: `#${stub.sessionSecret}`,
+      assign: (url: string) => assigned.push(url),
     },
-  };
+    configurable: true,
+  });
+  restoreLocation = () =>
+    Object.defineProperty(window, "location", {
+      value: original,
+      configurable: true,
+    });
+  return { assigned };
 }
 
-function stubFetch(body: unknown) {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(
-      () =>
-        new Response(JSON.stringify(body), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
-    ),
+/** What the sheet has already done by the time this page loads: confirmed a redirect rail. */
+async function confirmOrange(stub: CheckoutStub): Promise<void> {
+  const response = await fetch(
+    `${stub.url}/v1/browser/payment_intents/${"pi_test_stub0000000000000001"}/confirm`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        key: stub.publishableKey,
+        client_secret: stub.intentSecret,
+        "payment_method_data[type]": "orange_money",
+      }).toString(),
+    },
+  );
+  expect(response.status).toBe(200);
+}
+
+function renderPage(stub: CheckoutStub) {
+  return render(
+    <RedirectClient
+      sessionId={stub.sessionId}
+      apiBaseUrl={stub.url}
+      initialLocale="fr"
+    />,
   );
 }
 
 describe("RedirectClient", () => {
-  let assignMock: ReturnType<typeof vi.fn>;
-  const originalLocation = window.location;
+  it("marks the tab as a redirect leg, then navigates to the rail URL the server stored", async () => {
+    const stub = await startCheckoutStub({
+      paymentMethodTypes: ["orange_money"],
+      redirectUrl: RAIL_URL,
+      // The poll must not settle the intent out of `requires_action` before
+      // this page reads it.
+      pollsBeforeTerminal: 5,
+    });
+    open = stub;
+    await confirmOrange(stub);
+    const { assigned } = stubLocation(stub);
 
-  beforeEach(() => {
-    // `window.location` is configurable in jsdom; replace it with a mock so
-    // the page's navigation (`location.assign`) and its credential read
-    // (`location.search`/`location.hash`) are observable and controllable.
-    assignMock = vi.fn();
+    renderPage(stub);
+
+    await waitFor(() => expect(assigned).toEqual([RAIL_URL]));
+    // The marker is written BEFORE the navigation, so the return page the
+    // rail redirects to suppresses its own outcome.
+    expect(recallRedirectLeg(window.sessionStorage, stub.sessionId)).toBe(true);
+  });
+
+  it("reads the rail URL from the intent route, because the session route never carries one", async () => {
+    const stub = await startCheckoutStub({
+      paymentMethodTypes: ["orange_money"],
+      redirectUrl: RAIL_URL,
+      pollsBeforeTerminal: 5,
+    });
+    open = stub;
+    await confirmOrange(stub);
+    const { assigned } = stubLocation(stub);
+
+    renderPage(stub);
+
+    await waitFor(() => expect(assigned).toEqual([RAIL_URL]));
+    // The session read answers the intent's credential and a null
+    // `next_action`; the intent read answers the rail URL. A page that
+    // stopped at the first would never have got here.
+    const paths = stub.urls().map((url) => url.split("?")[0] ?? url);
+    expect(paths).toContain(`/v1/browser/checkout/sessions/${stub.sessionId}`);
+    expect(
+      paths.some((path) => path.startsWith("/v1/browser/payment_intents/")),
+    ).toBe(true);
+  });
+
+  it("never navigates when the intent names no redirect, and does not mark the tab", async () => {
+    // Never confirmed: `requires_payment_method`, no `next_action` anywhere.
+    const stub = await startCheckoutStub({
+      paymentMethodTypes: ["orange_money"],
+      redirectUrl: RAIL_URL,
+    });
+    open = stub;
+    const { assigned } = stubLocation(stub);
+
+    const { findByText } = renderPage(stub);
+
+    // The neutral screen is the page's only other outcome, so waiting for it
+    // is waiting for both reads to have settled — no arbitrary sleep.
+    await findByText("Retour à l’application");
+    expect(assigned).toEqual([]);
+    expect(recallRedirectLeg(window.sessionStorage, stub.sessionId)).toBe(
+      false,
+    );
+  });
+
+  it("navigates nowhere on a credential the URL does not carry", async () => {
+    const stub = await startCheckoutStub({
+      paymentMethodTypes: ["orange_money"],
+      redirectUrl: RAIL_URL,
+      pollsBeforeTerminal: 5,
+    });
+    open = stub;
+    await confirmOrange(stub);
+    const original = window.location;
+    const assigned: string[] = [];
+    // A crafted link: the rail's own URL offered in the query and in the
+    // fragment, and no session credential. Nothing on this page reads
+    // either, so there is nothing to follow.
     Object.defineProperty(window, "location", {
       value: {
-        search: "?key=pk_test_1",
-        hash: "#cs_123_secret_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        assign: assignMock,
+        search: `?url=${encodeURIComponent("https://evil.example/")}`,
+        hash: `#https://evil.example/`,
+        assign: (url: string) => assigned.push(url),
       },
       configurable: true,
     });
-  });
+    restoreLocation = () =>
+      Object.defineProperty(window, "location", {
+        value: original,
+        configurable: true,
+      });
 
-  afterEach(() => {
-    Object.defineProperty(window, "location", {
-      value: originalLocation,
-      configurable: true,
-    });
-    vi.restoreAllMocks();
-    vi.unstubAllGlobals();
-    window.sessionStorage.clear();
-  });
+    const before = stub.urls().length;
+    const { findByText } = renderPage(stub);
 
-  it("marks the tab as a redirect leg, then navigates to the rail URL the server stored", async () => {
-    stubFetch(
-      sessionEnvelope({
-        type: "redirect_to_url",
-        redirect_to_url: { url: RAIL_URL },
-      }),
-    );
-
-    render(
-      <RedirectClient
-        sessionId={SESSION_ID}
-        apiBaseUrl="https://api.example"
-        initialLocale="fr"
-        branding={makeBranding()}
-      />,
-    );
-
-    await waitFor(() => expect(assignMock).toHaveBeenCalledWith(RAIL_URL));
-    // The marker is written BEFORE the navigation, so the return page the
-    // rail redirects to suppresses its own outcome.
-    expect(recallRedirectLeg(window.sessionStorage, SESSION_ID)).toBe(true);
-  });
-
-  it("never navigates when the session names no redirect, and does not mark the tab", async () => {
-    stubFetch(sessionEnvelope(null));
-
-    render(
-      <RedirectClient
-        sessionId={SESSION_ID}
-        apiBaseUrl="https://api.example"
-        initialLocale="fr"
-        branding={makeBranding()}
-      />,
-    );
-
-    // Give the async read time to settle.
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(assignMock).not.toHaveBeenCalled();
-    expect(recallRedirectLeg(window.sessionStorage, SESSION_ID)).toBe(false);
+    await findByText("Retour à l’application");
+    expect(assigned).toEqual([]);
+    // Not one request either: without a credential there is no session to
+    // read, so the page never even asks.
+    expect(stub.urls()).toHaveLength(before);
   });
 });
