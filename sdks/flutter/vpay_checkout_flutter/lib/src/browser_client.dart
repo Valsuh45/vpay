@@ -1,15 +1,28 @@
-/// The read half of `sdks/stripe-js/src/client.ts`, ported to Dart.
+/// `sdks/stripe-js/src/client.ts`, ported to Dart.
 ///
 /// Speaks vpay's `/v1/browser` surface
 /// (`backends/crates/vpay-api/src/browser/mod.rs`):
 ///
 /// - `GET /v1/browser/payment_intents/{id}?key=…&client_secret=…`
 /// - `GET /v1/browser/checkout/sessions/{id}?key=…&client_secret=…`
+/// - `POST /v1/browser/payment_intents/{id}/confirm` — form-encoded `key`,
+///   `client_secret`, `payment_method_data[…]`, `return_url` (issue #189:
+///   the native sheet drives a push/redirect rail through this method
+///   directly, rather than only reading the outcome of a confirm the
+///   browser-hosted page performed itself).
 ///
-/// There is no `confirm` here — that stays in the platform window, on the
-/// hosted page itself (D3: no JavaScript bridge, nothing for this package to
-/// call). This client exists to answer the one question the page's own URL
-/// cannot (D1): what did the payment intent actually do.
+/// **D3 (no JavaScript bridge) is unaffected by [confirmPaymentIntent].**
+/// D3 refuses a bridge *into a browser process this package does not
+/// control* — `VpayCheckout.start`'s window still has none. This method is
+/// a plain HTTP `POST` this Dart process makes directly, exactly the shape
+/// `sdks/stripe-js`'s own `confirmPayment` already is client-side; nothing
+/// here reaches into a WebView or a browser tab.
+///
+/// This client exists to answer the one question a page's own URL cannot
+/// (D1): what did the payment intent actually do — now including the one
+/// write this surface offers, gated the same way the read is (a
+/// publishable key plus the intent's own `client_secret`, never a merchant
+/// credential).
 library;
 
 import 'dart:convert';
@@ -201,6 +214,77 @@ final class BrowserClient {
     );
   }
 
+  /// `POST /v1/browser/payment_intents/{id}/confirm`.
+  ///
+  /// [railCode] is written under `payment_method_data[type]`, and
+  /// [payerFields] — the values a payer typed, keyed by [RailField.name] —
+  /// are nested under `payment_method_data[<railCode>][…]`, exactly the
+  /// bracket shape `sdks/stripe-js/src/client.ts`'s `confirmMobileMoneyPayment`
+  /// sends and `backends/crates/vpay-api/src/browser/mod.rs`'s `confirm`
+  /// decodes. **No rail code is ever branched on to build this request** —
+  /// [railCode] and [payerFields] both come from the caller (the sheet,
+  /// itself driven only by [RailSpec] — `models.dart`), so a rail this
+  /// package has never heard of confirms exactly the same way MTN does.
+  ///
+  /// [returnUrl] is the `return_url` a redirect rail's own page redirects
+  /// back to once the payer has decided — `null` for a push rail, which
+  /// never leaves this app.
+  Future<PaymentIntentResult> confirmPaymentIntent(
+    String clientSecret, {
+    required String railCode,
+    Map<String, String> payerFields = const {},
+    String? returnUrl,
+  }) async {
+    final _ParsedSecret? parsed = _parseSecretOrNull(clientSecret, 'pi_');
+    if (parsed == null) {
+      return PaymentIntentResult.err(
+        VpayError.invalidRequest(
+          'clientSecret is not a vpay payment-intent client secret.',
+          param: 'clientSecret',
+        ),
+      );
+    }
+    final Uri uri = Uri.parse(
+      '$baseUrl/v1/browser/payment_intents/${Uri.encodeComponent(parsed.id)}/confirm',
+    );
+    final Map<String, String> paymentMethodData = <String, String>{
+      _bracketKey(<String>['payment_method_data', 'type']): railCode,
+      for (final MapEntry<String, String> field in payerFields.entries)
+        _bracketKey(<String>['payment_method_data', railCode, field.key]):
+            field.value,
+    };
+    final String body = _encodeForm(<String, String>{
+      'key': publishableKey,
+      'client_secret': clientSecret,
+      ...paymentMethodData,
+      if (returnUrl != null) 'return_url': returnUrl,
+    });
+    final _FetchOutcome outcome = await _postForm(uri, body);
+    if (outcome.error != null) {
+      return PaymentIntentResult.err(outcome.error!);
+    }
+    if (outcome.ok! && PaymentIntent.isPaymentIntentJson(outcome.body)) {
+      final PaymentIntent? intent = _decode(
+        () => PaymentIntent.fromJson((outcome.body! as Map).cast()),
+      );
+      if (intent != null) {
+        return PaymentIntentResult.ok(intent);
+      }
+      return PaymentIntentResult.err(
+        VpayError.unexpectedResponse(outcome.status!),
+      );
+    }
+    if (outcome.ok!) {
+      return PaymentIntentResult.err(
+        VpayError.unexpectedResponse(outcome.status!),
+      );
+    }
+    return PaymentIntentResult.err(
+      VpayError.fromEnvelope(outcome.body) ??
+          VpayError.unexpectedResponse(outcome.status!),
+    );
+  }
+
   /// `GET /v1/browser/checkout/sessions/{id}?key=…&client_secret=…`.
   Future<CheckoutSessionResult> retrieveCheckoutSession(
     String clientSecret,
@@ -249,6 +333,83 @@ final class BrowserClient {
     return CheckoutSessionResult.err(
       VpayError.fromEnvelope(outcome.body) ??
           VpayError.unexpectedResponse(outcome.status!),
+    );
+  }
+
+  /// A nested field name in `form.ts`'s bracket syntax — three path
+  /// [segments] (`payment_method_data`, a rail code, a field name) become
+  /// `payment_method_data[<rail code>][<field name>]`.
+  ///
+  /// **The brackets are structural and must reach the wire literal,
+  /// unencoded; only each segment's own content is percent-encoded.**
+  /// `backends/crates/vpay-api/src/form.rs`'s own parser splits a raw key on
+  /// literal `[`/`]` *before* percent-decoding anything (its module doc:
+  /// "the split happens before any decoding") — the same rule
+  /// `form.ts`'s own doc states for the encoder's side of this contract.
+  /// Percent-encoding the brackets themselves (`%5B`/`%5D`) was a real bug
+  /// here until 2026-09-17, found on a real device against a real server: the
+  /// server's parser saw one flat key
+  /// (`payment_method_data%5Btype%5D`, decoded to the single string
+  /// `payment_method_data[type]`) instead of a nested `payment_method_data
+  /// -> type` path, and refused the confirm with "A confirm needs the
+  /// payment method to use, sent as `payment_method_data[type]`." —
+  /// `test/browser_client_test.dart`'s own coverage had used
+  /// `Uri.splitQueryString` to read the request back, which decodes the
+  /// whole key *before* handing it to the assertion and so could not have
+  /// caught this; the fixed test now also asserts on the literal wire bytes
+  /// (`request.body`) directly.
+  String _bracketKey(List<String> segments) {
+    final String head = Uri.encodeQueryComponent(segments.first);
+    final String rest = segments
+        .skip(1)
+        .map((String s) => '[${Uri.encodeQueryComponent(s)}]')
+        .join();
+    return '$head$rest';
+  }
+
+  /// `application/x-www-form-urlencoded`. [fields]' keys are already
+  /// wire-ready — either a plain identifier (`key`, `client_secret`,
+  /// `return_url`) or the output of [_bracketKey] — so only the *value* is
+  /// percent-encoded here; encoding the key a second time would re-encode
+  /// (or, for a [_bracketKey] result, corrupt) it. See [_bracketKey]'s own
+  /// doc comment for why the two cannot share one encoding step.
+  String _encodeForm(Map<String, String> fields) => fields.entries
+      .map(
+        (MapEntry<String, String> e) =>
+            '${e.key}=${Uri.encodeQueryComponent(e.value)}',
+      )
+      .join('&');
+
+  /// The `POST` transport — `confirmPaymentIntent`'s own, mirroring
+  /// `_fetchJson`'s rules (no thrown value ever reaches a message, no
+  /// `Authorization` header, no cookie) with the one addition a body needs:
+  /// `Content-Type: application/x-www-form-urlencoded`, the only header
+  /// `sdks/stripe-js`'s own browser client ever sets, so this request stays
+  /// a CORS-simple one on web exactly as that one does.
+  Future<_FetchOutcome> _postForm(Uri uri, String body) async {
+    late final http.Response response;
+    try {
+      response = await _httpClient.post(
+        uri,
+        headers: const <String, String>{
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: body,
+      );
+    } on Object {
+      // Deliberately not interpolated — see the module doc comment above.
+      return _FetchOutcome.error(VpayError.connection());
+    }
+    Object? decoded;
+    try {
+      decoded = response.body.isEmpty ? null : jsonDecode(response.body);
+    } on FormatException {
+      decoded = null;
+    }
+    return _FetchOutcome(
+      status: response.statusCode,
+      ok: response.statusCode >= 200 && response.statusCode < 300,
+      body: decoded,
     );
   }
 

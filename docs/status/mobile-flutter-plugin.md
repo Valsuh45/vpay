@@ -291,6 +291,69 @@ itself (the desktop target, as opposed to iOS) was not exercised in this
 pass. Evidence:
 [verification/2026-09-16-flutter-browser-cutover.md](verification/2026-09-16-flutter-browser-cutover.md).
 
+## Issue #189, lane 1 — the server-driven rail spec and the screen/return machines (2026-09-16)
+
+The browser cutover above removed the checkout `WebView` for the UX reasons
+issue #189 states; #189 itself is the next step, rendering the checkout as
+native Flutter widgets driven by the #186 rail spec instead of the browser
+at all. This is **lane 1 only — pure-Dart core, no widget renders**:
+`lib/src/models.dart` now parses `CheckoutSession.rails` (`RailSpec`,
+`RailField`, `RailFieldKind`, `RailDisplayName`, `RailFlow`,
+`CheckoutSessionPaymentStatus`); `lib/src/sheet/` carries the payment screen
+machine (`checkout_screen.dart`, the `machine.ts` port, 13 screens), the
+return machine (`return_screen.dart`, the `return.ts` port — structurally
+credential-free, D6), the shared poll-terminal rule
+(`outcome.dart`), the server-driven (never per-code) rail-support decision
+(`rails.dart`), and Dart ports of `money.ts`'s no-float digit surgery,
+`msisdn.ts`'s Cameroon normaliser and `failures.ts`'s `providerReason`.
+`flutter test` is 200 passed / 0 skipped (was 80 before this lane); three
+mutations pinning the money/poll-terminal/no-rail-code-branching traps were
+run against the real source and confirmed to fail the tests built for them,
+then reverted. `docs/sdks/parity.md` gained ten rows for what this lane
+proves. Evidence, including the pre-existing (not newly introduced)
+`just fmt-check-web` failure this run found:
+[verification/2026-09-16-flutter-rail-spec-screen-machine.md](verification/2026-09-16-flutter-rail-spec-screen-machine.md).
+
+**Not done, and owed to a later lane:** the sheet widget itself, i18n (the
+~71-key catalogue, French default), the "remember this number" feature, the
+test-mode banner, focus management/`Semantics`, wiring the jittered-poll
+primitive (`poll_jitter.dart`) into an actual controller, the `redirect`
+rail's hand-off back into the sheet, and the ADR issue #189 asks for on
+dropping D4/D8's iframe/`postMessage` concepts (`frame.ts`/`origins.ts`/
+`csp.ts`) as web-only with no native analogue.
+
+## Issue #189, lane 2 — the native checkout sheet, driven to `paid` by hand (2026-09-17)
+
+Everything lane 1 left owed above is now built: `VpayCheckoutSheet`
+(`showVpayCheckoutSheet`/`showVpayCheckoutSheetRoute`), `SheetController`
+(confirm, jittered poll, the redirect hand-off, D4-shaped `dismiss()`), the
+72-key i18n catalogue (French default), "remember this number"
+(`shared_preferences`, 90-day TTL, no PIN), the test-mode banner, focus
+management and a persistent `Semantics` live region. `BrowserClient` gained
+`confirmPaymentIntent` — the sheet drives a rail's confirm directly rather
+than only reading the outcome of a confirm the hosted page performed.
+`flutter test` is 258 passed / 0 skipped (was 200/0). **A real defect this
+lane's own gate caught, not a unit test:** the form encoder percent-encoded
+`payment_method_data[type]`'s own structural brackets, so the server's
+parser (which splits a raw key on the literal `[` before decoding anything)
+saw one flat key instead of a nested path and refused every confirm; every
+`MockClient` assertion had passed regardless because it read the request
+back through `Uri.splitQueryString`, which decodes before an assertion ever
+sees it. Fixed (`_bracketKey`), and the fix is proven decisive (reverting
+it fails the corrected test). **Driven by hand on `emulator-5554`, against
+a freshly rebuilt `vpay-demo` stack** (the running one was pre-#186 and had
+no `rails` key at all — confirmed stale on the pre-lane-2 commit too, not a
+regression): three cold launches to `paid` on MTN, one Orange redirect
+through the existing Custom Tab hand-off and back to `paid`, one genuine
+mid-payment dismissal (abandoned the rail's own page before pressing
+Pay/Cancel) that stayed `unpaid`/pending for the whole observed window,
+never a fabricated `canceled`. Every session/intent/order id, and exactly
+what was not touched (iOS, macOS, the Orange "remember" checkbox's own
+persistence, deep-link stop-URL matching — still the same
+unverified-everywhere signal the browser cutover left), is in the dated
+verification page. Evidence:
+[verification/2026-09-17-flutter-native-sheet.md](verification/2026-09-17-flutter-native-sheet.md).
+
 ## What is still not real
 
 - **No `just ci` gate** (D-M3). `install-flutter`/`analyze-flutter`/
@@ -311,14 +374,16 @@ pass. Evidence:
   `just test-flutter-web` running `web_checkout_platform_test.dart` in a
   real Chrome (2026-09-15), but no human or automated walk has ever opened
   the popup end to end against the real hosted page.
-- **Android has not been run on an emulator against the current
-  (browser) architecture.** It was run for real, repeatedly, on the
-  maintainer's own `emulator-5554` — but against the WebView-based modal
-  sheet the "Modal checkout sheet" section below describes, which the
-  "Browser, not WebView" section above has since replaced. `flutter build
-apk --debug`/`--release` on `example/` both still exit 0 (`BUILD
-SUCCESSFUL`); nothing has opened the Custom Tab surface on a device or
-  emulator since the cutover.
+- **Android's browser-cutover architecture itself (the redirect hand-off's
+  Custom Tab) has been run for real, on `emulator-5554`, as of issue #189
+  lane 2 (2026-09-17) — see that section above.** What is still true: it
+  was run driving the _native sheet's_ redirect hand-off, not the older
+  `VpayCheckout.start` full-checkout browser flow this document's earlier
+  sections describe; that path last ran on an emulator against the
+  WebView-based modal sheet the "Modal checkout sheet" section below
+  describes, which "Browser, not WebView" has since replaced, and has not
+  been re-driven against the current architecture. `flutter build apk
+--debug`/`--release` on `example/` both still exit 0.
 - **D8's tier 1** (Android App Links / iOS 17.4+ Associated Domains) is not
   implemented on any platform — see the D8 section above. Since the browser
   cutover this is no longer only a UX upgrade: tier 1 is what
@@ -370,3 +435,16 @@ SUCCESSFUL`); nothing has opened the Custom Tab surface on a device or
   exactly what remains unverified (deep-link return detection on every
   platform, macOS's own dismissal signal, and any device/emulator run of
   the new Android or macOS surface).
+- [verification/2026-09-16-flutter-rail-spec-screen-machine.md](verification/2026-09-16-flutter-rail-spec-screen-machine.md)
+  — issue #189 lane 1: `flutter test` 200/0 (was 80/0), `dart analyze`/
+  `dart format` clean, `verify-sdk-parity`/`verify-links` green, all three
+  mutation proofs run and reverted with their exact failure counts, and the
+  pre-existing (unchanged by this lane) `just fmt-check-web` failure.
+- [verification/2026-09-17-flutter-native-sheet.md](verification/2026-09-17-flutter-native-sheet.md)
+  — issue #189 lane 2: `flutter test` 258/0 (was 200/0), every gate's exit
+  code, the real `payment_method_data[type]` confirm defect this lane's own
+  hand-driven gate found and the decisive test that now catches it, and the
+  full walk on `emulator-5554` — three MTN cold launches and one Orange
+  redirect to `paid` in `examples/shop`'s own database, one genuine
+  mid-payment dismissal proven never to fabricate `canceled`, every
+  session/intent/order id, and exactly what this lane did not touch.

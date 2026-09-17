@@ -213,6 +213,7 @@ void main() {
       'url': 'https://checkout.example/c/cs_123#$_csSecret',
       'expires_at': 1700086400,
       'created': 1700000000,
+      'rails': const <Object?>[],
       // No `client_secret` key: the real session read never sends the
       // session's own secret back — see `CheckoutSession.clientSecret`'s
       // doc comment in `lib/src/models.dart`.
@@ -288,11 +289,13 @@ void main() {
         'payment_intent': _paymentIntentJson(),
         'ui_mode': 'hosted',
         'status': 'open',
+        'payment_status': 'unpaid',
         'success_url': 'https://shop.example/thanks',
         'cancel_url': 'https://shop.example/cancel',
         'url': 'https://checkout.example/c/cs_123#$_csSecret',
         'expires_at': 1700086400,
         'created': 1700000000,
+        'rails': const <Object?>[],
         // No `client_secret` key: the real session read never sends the
         // session's own secret back — see
         // `CheckoutSession.clientSecret`'s doc comment in
@@ -367,6 +370,156 @@ void main() {
       });
     },
   );
+
+  group('BrowserClient.confirmPaymentIntent', () {
+    test('POSTs form-encoded key, client_secret, payment_method_data[type] and the nested field', () async {
+      Uri? seenUri;
+      String? seenBody;
+      String? seenContentType;
+      final client = BrowserClient(
+        baseUrl: 'https://api.example',
+        publishableKey: 'pk_test_1',
+        httpClient: MockClient((request) async {
+          seenUri = request.url;
+          seenBody = request.body;
+          seenContentType = request.headers['Content-Type'];
+          return _json(_paymentIntentJson());
+        }),
+      );
+
+      final result = await client.confirmPaymentIntent(
+        _piSecret,
+        railCode: 'mtn_momo',
+        payerFields: const {'msisdn': '237690000000'},
+      );
+
+      expect(result.isError, isFalse);
+      expect(seenUri!.path, '/v1/browser/payment_intents/pi_123/confirm');
+      expect(seenContentType, 'application/x-www-form-urlencoded');
+
+      // The DECISIVE assertion, on the literal wire bytes: the structural
+      // brackets must reach the server unencoded — `payment_method_data[type]`,
+      // never `payment_method_data%5Btype%5D`. `Uri.splitQueryString` below
+      // decodes the whole key before an assertion ever sees it, so it
+      // cannot tell the two apart; that gap was measured for real on
+      // 2026-09-17 (`_bracketKey`'s own doc comment) — every assertion in
+      // this test passed against a MockClient while the real server refused
+      // every confirm with "A confirm needs the payment method to use,
+      // sent as `payment_method_data[type]`.". This line is what closes it.
+      expect(seenBody, contains('payment_method_data[type]=mtn_momo'));
+      expect(
+        seenBody,
+        contains('payment_method_data[mtn_momo][msisdn]=237690000000'),
+      );
+      expect(seenBody, isNot(contains('%5B')));
+      expect(seenBody, isNot(contains('%5D')));
+
+      final Map<String, String> form = Uri.splitQueryString(seenBody!);
+      expect(form['key'], 'pk_test_1');
+      expect(form['client_secret'], _piSecret);
+      expect(form['payment_method_data[type]'], 'mtn_momo');
+      expect(form['payment_method_data[mtn_momo][msisdn]'], '237690000000');
+    });
+
+    test('sends no return_url field when none is given', () async {
+      String? seenBody;
+      final client = BrowserClient(
+        baseUrl: 'https://api.example',
+        publishableKey: 'pk_test_1',
+        httpClient: MockClient((request) async {
+          seenBody = request.body;
+          return _json(_paymentIntentJson());
+        }),
+      );
+
+      await client.confirmPaymentIntent(_piSecret, railCode: 'orange_money');
+
+      expect(
+        Uri.splitQueryString(seenBody!).containsKey('return_url'),
+        isFalse,
+      );
+    });
+
+    test('includes return_url when given, for a redirect rail', () async {
+      String? seenBody;
+      final client = BrowserClient(
+        baseUrl: 'https://api.example',
+        publishableKey: 'pk_test_1',
+        httpClient: MockClient((request) async {
+          seenBody = request.body;
+          return _json(_paymentIntentJson());
+        }),
+      );
+
+      await client.confirmPaymentIntent(
+        _piSecret,
+        railCode: 'orange_money',
+        returnUrl: 'https://example.com/return?a=b',
+      );
+
+      final Map<String, String> form = Uri.splitQueryString(seenBody!);
+      expect(form['return_url'], 'https://example.com/return?a=b');
+    });
+
+    test('refuses a malformed clientSecret without sending anything', () async {
+      bool sent = false;
+      final client = BrowserClient(
+        baseUrl: 'https://api.example',
+        publishableKey: 'pk_test_1',
+        httpClient: MockClient((request) async {
+          sent = true;
+          return _json(_paymentIntentJson());
+        }),
+      );
+
+      final result = await client.confirmPaymentIntent(
+        'not-a-secret',
+        railCode: 'mtn_momo',
+      );
+
+      expect(result.isError, isTrue);
+      expect(sent, isFalse);
+    });
+
+    test('maps the uniform 404 the same way the reads do', () async {
+      final client = BrowserClient(
+        baseUrl: 'https://api.example',
+        publishableKey: 'pk_test_1',
+        httpClient: MockClient(
+          (request) async => _json({
+            'error': {'code': 'resource_missing', 'message': 'x'},
+          }, status: 404),
+        ),
+      );
+
+      final result = await client.confirmPaymentIntent(
+        _piSecret,
+        railCode: 'mtn_momo',
+        payerFields: const {'msisdn': '237690000000'},
+      );
+
+      expect(result.isError, isTrue);
+    });
+
+    test('reports a refused connection as api_connection_error', () async {
+      final client = BrowserClient(
+        baseUrl: 'https://api.example',
+        publishableKey: 'pk_test_1',
+        httpClient: MockClient(
+          (request) async => throw const SocketExceptionStub(),
+        ),
+      );
+
+      final result = await client.confirmPaymentIntent(
+        _piSecret,
+        railCode: 'mtn_momo',
+        payerFields: const {'msisdn': '237690000000'},
+      );
+
+      expect(result.isError, isTrue);
+      expect(result.error!.type, 'api_connection_error');
+    });
+  });
 }
 
 /// A stand-in for whatever `http.Client.get` throws on a refused connection
