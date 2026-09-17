@@ -368,8 +368,15 @@ and `rememberChecked` was never seeded from the stored record. Fixed in
 "manually edited" + empty text) and `sheet_controller.dart`
 (`rememberChecked` now seeds from `hasActiveRecord`, and memory state loads on the
 redirect entry screen too). The 90-day TTL was already enforced on read — this
-did not touch it. `flutter test` 305 passed / 0 skipped, `dart analyze
---fatal-infos` clean (Flutter 3.47.2). Evidence:
+did not touch it. A review pass found the `_rememberSeeded` guard on the new
+"an unticked submit clears the record" path set **before** the value it
+announces, so a submit inside the seed's own store read destroyed a record the
+payer never unticked; fixed, and pinned by a test that fails on the previous
+ordering. The web's `memory.last_used` badge on the rail picker is **not**
+ported — the string exists in both locales and nothing reads it.
+`flutter test` 305 passed / 0 skipped on Flutter 3.47.2, and 306 passed /
+0 skipped after the review pass on Flutter 3.48.0-1.0.pre-696 / Dart 3.14.0;
+`dart analyze --fatal-infos` clean on both. Evidence:
 [verification/2026-09-17-flutter-remember-msisdn-read.md](verification/2026-09-17-flutter-remember-msisdn-read.md).
 
 ## What is still not real

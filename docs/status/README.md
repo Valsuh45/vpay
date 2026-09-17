@@ -43,7 +43,9 @@ the order they were measured.
   transition while `defaultMsisdn` is populated asynchronously, and
   `rememberChecked` was never seeded from the stored record. Fixed and pinned
   by two widget + controller tests; `flutter test` 305 passed / 0
-  skipped, `dart analyze --fatal-infos` clean.
+  skipped, `dart analyze --fatal-infos` clean. A review pass then found the
+  new unticked-submit clear could destroy a record the payer never unticked,
+  fixed it, and re-measured at 306 passed / 0 skipped.
 - [verification/2026-09-16-adr-0022.md](verification/2026-09-16-adr-0022.md) —
   ADR-0022 (surface isolation and independent scaling): `deployment.surfaces`
   and conditional `/v1`/`/dash/v1` mounting, the dashboard runner stage's real

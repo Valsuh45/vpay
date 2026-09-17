@@ -209,6 +209,44 @@ class _GatedRememberedMsisdnStore implements VpayRememberedMsisdnStore {
   void release() => _gate.complete();
 }
 
+/// A store that answers its first [_readsBeforeGate] reads at once and holds
+/// the next one open until [release].
+///
+/// `SheetController._loadRememberedMsisdn` reads the store three times, in
+/// order — `hasRecord`, `read(railCode)`, then the `hasActiveRecord` that seeds
+/// the box. [_GatedRememberedMsisdnStore] gates the *first* of the three, which
+/// suspends the load before the seed is entered at all; gating the **third**
+/// suspends inside the seed itself, which is the window an unticked-submit
+/// guard actually has to survive — the box is not yet known, but the flag
+/// saying "the box is known" has already been set.
+class _SeedGatedRememberedMsisdnStore implements VpayRememberedMsisdnStore {
+  _SeedGatedRememberedMsisdnStore(this.record);
+
+  /// The two reads `_loadRememberedMsisdn` makes before the seed it gates.
+  static const int _readsBeforeGate = 2;
+
+  RememberedMsisdnRecord? record;
+  final Completer<void> _gate = Completer<void>();
+  int _reads = 0;
+
+  @override
+  Future<void> clear() async => record = null;
+
+  @override
+  Future<RememberedMsisdnRecord?> read() async {
+    _reads += 1;
+    if (_reads > _readsBeforeGate) {
+      await _gate.future;
+    }
+    return record;
+  }
+
+  @override
+  Future<void> write(RememberedMsisdnRecord r) async => record = r;
+
+  void release() => _gate.complete();
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   // `SheetController` reaches `SharedPreferencesRememberedMsisdnStore` (the
@@ -422,6 +460,50 @@ void main() {
         store.release();
       },
     );
+
+    test('an unticked submit while the box seed is itself in flight does not '
+        'clear the record — the guard has to cover the whole seed, not only '
+        'the reads before it', () async {
+      final store = _SeedGatedRememberedMsisdnStore(
+        RememberedMsisdnRecord(
+          msisdn: '237671234567',
+          railCode: 'mtn_momo',
+          rememberedAt: DateTime(2026, 1, 1),
+        ),
+      );
+      final scripted = _ScriptedClient(
+        session: _sessionJson(intent: _intentJson(), rails: [_mtnRailJson()]),
+        intentAnswers: [_intentJson(status: 'succeeded')],
+      );
+      final controller = SheetController(
+        client: scripted.build(),
+        sessionClientSecret: _csSecret,
+        remembered: VpayRememberedMsisdn(
+          store: store,
+          now: () => DateTime(2026, 1, 1),
+        ),
+      );
+
+      // `start()` cannot be awaited here: it awaits the load, and the load
+      // is suspended inside the seed's own store read.
+      unawaited(controller.start());
+      for (int i = 0; i < 10 && controller.defaultMsisdn == null; i++) {
+        await _flushMicrotasks();
+      }
+
+      // This is the window: the number has arrived, the tick has not.
+      expect(controller.state, isA<CheckoutCollectMsisdn>());
+      expect(controller.defaultMsisdn, '237671234567');
+      expect(controller.rememberChecked, isFalse);
+
+      await controller.submitMsisdn('+237 6 71 23 45 67');
+
+      // The payer never unticked anything. A box that is merely *unseeded*
+      // reads false exactly as a deliberately unticked one does, so it must
+      // not be allowed to destroy the record.
+      expect(store.record, isNotNull);
+      store.release();
+    });
   });
 
   group('SheetController — preloading the remembered record (issue #194)', () {

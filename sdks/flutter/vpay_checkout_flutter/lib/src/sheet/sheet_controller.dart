@@ -275,9 +275,17 @@ final class SheetController extends ChangeNotifier {
     // still remembers — `memory.ts`'s `parseMemoryRecord` returns `null` for
     // one, so the web's box is unticked too. `read` above is rail-scoped for
     // the number; the *tick* reflects any non-expired record, as the web's does.
+    // The flag is set **after** the value it announces, never before: it is
+    // read by [submitMsisdn] to decide whether an unticked box is a payer's
+    // deliberate "stop remembering" or merely a box nobody has filled in yet,
+    // and setting it first opens exactly the window it exists to close — a
+    // submit landing between the flag and the answer would see
+    // `_rememberSeeded == true` with `rememberChecked` still at its initial
+    // `false`, and clear a record the payer never unticked.
     if (!_rememberSeeded) {
+      final bool active = await remembered.hasActiveRecord();
+      rememberChecked = active;
       _rememberSeeded = true;
-      rememberChecked = await remembered.hasActiveRecord();
     }
     notifyListeners();
   }

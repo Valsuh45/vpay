@@ -35,11 +35,15 @@ _onControllerChanged` only wrote `_msisdnController.text` inside the
   and empty text (the `screens.tsx` "uncontrolled on purpose" rule: a payer
   editing a prefilled number is never overridden).
 - `sheet_controller.dart`: `_loadRememberedMsisdn` now seeds `rememberChecked`
-  from `hasRecord` (the web's `remember = record !== null`), and is also run
-  for the redirect entry screen (`CheckoutReadyRedirect`) so the box and the
-  "forget" affordance are offered there too — not just on the push form.
-  `read` stays rail-scoped for the number; the _tick_ reflects any non-expired
-  record, exactly as the web's does (see the review-pass bullet below).
+  from ~~`hasRecord`~~ `hasActiveRecord` (the web's
+  `remember = record !== null`), and is also run for the redirect entry screen
+  (`CheckoutReadyRedirect`) so the box and the "forget" affordance are offered
+  there too — not just on the push form. `read` stays rail-scoped for the
+  number; the _tick_ reflects any non-expired record, exactly as the web's does
+  (see the review-pass bullet below). _(This bullet named `hasRecord`, which is
+  the method that counts an **expired** record too — the opposite of what the
+  bullet four below it, and the code, actually do. Corrected on review,
+  2026-09-17.)_
 
 A review pass tightened consistency with the hosted page:
 
@@ -67,6 +71,28 @@ A review pass tightened consistency with the hosted page:
   payer who submits into the tiny pre-seed window never has a record they did
   not untick cleared for them.
 
+### The guard did not hold when it was first written (found on review, 2026-09-17)
+
+The bullet above was a claim, not a measurement, and it was false as first
+written. `_loadRememberedMsisdn` set `_rememberSeeded = true` **before**
+awaiting `hasActiveRecord()`, so the window the flag exists to close was open
+for the whole length of that read: a submit landing inside it saw
+`_rememberSeeded == true` with `rememberChecked` still at its initial `false`,
+took `submitMsisdn`'s unticked branch, and cleared a record the payer had never
+unticked.
+
+The test that was supposed to pin this could not catch it.
+`_GatedRememberedMsisdnStore` holds the **first** of the three reads
+`_loadRememberedMsisdn` makes (`hasRecord`, `read(railCode)`, then the
+`hasActiveRecord` that seeds the box), which suspends the load *before* the
+seed is entered at all — so it proved a window that was never the dangerous
+one, and passed on the broken ordering.
+
+Fixed by setting the flag **after** the value it announces.
+`_SeedGatedRememberedMsisdnStore` gates the **third** read instead — the seed's
+own — and pins the real window: on the previous ordering it fails with the
+record already destroyed (`Expected: not null / Actual: <null>`).
+
 ## Evidence
 
 On Flutter 3.47.2 / Dart 3.13.2 (the `flutter-toolchain.toml` pin):
@@ -85,6 +111,22 @@ The 305 figure is the full suite on the merged base — re-measured after this
 branch was rebased onto #196 (issue #193's deployment self-description), whose
 own tests are counted in it; the #194 tests themselves are unchanged and green.
 
+Re-measured on review (2026-09-17), on a **different** SDK than the pin —
+Flutter 3.48.0-1.0.pre-696, channel `main`, Dart 3.14.0, because that is what
+the reviewing host has and `flutter-toolchain.toml`'s own note already records
+that its pin is a host's version rather than a measured floor:
+
+- `flutter test` (the full suite) → **306 passed / 0 skipped**. 305 of those
+  are the figure above, reproduced exactly on the newer SDK; the 306th is
+  `_SeedGatedRememberedMsisdnStore`'s test for the guard window, added by the
+  review pass above.
+- `dart analyze --fatal-infos` → `No issues found!`
+- `dart format --set-exit-if-changed .` → `Formatted 59 files (0 changed)`.
+- `just verify-sdk-parity`, `just verify-links`, `just verify-status` → ok.
+
+No test is `skip`ped and none is `@Skip`/`markTestSkipped` — the "0 skipped"
+above is the runner reporting none, not a suite with none to report.
+
 Not affected by this change: the payment path itself (the same walk that found
 the bug settled to `paid` in the merchant DB), the write side, the "forget"
 affordance, the 90-day TTL (already on read), and the deliberately-unwritten
@@ -95,4 +137,15 @@ display-only there: `startRedirect` still persists nothing, a known,
 documented limitation.
 The rail picker is still shown on relaunch rather than jumping to the
 remembered rail — a deliberate match for the hosted page, which also shows the
-picker (with a "last used" badge), not an auto-selection side effect.
+picker, not an auto-selection side effect. `screens.tsx`'s `RailSelector` says
+why in its own words: `lastRail` is "a hint, never a preselection".
+
+**The hint itself is not ported, and this change does not port it.** The web
+marks the remembered rail with a `memory.last_used` badge
+(`screens.tsx:429-433`, `data-testid="last-used"`, fed by `lastRail` from the
+stored record). The sheet's rail picker renders no such badge: the string
+exists in both locales (`i18n.dart:136`, `:249`) and **nothing reads it** — it
+has no call site in `lib/`. So on relaunch the sheet shows an unmarked picker
+where the hosted page shows a marked one. Issue #194's "does the rail come back
+too?" is therefore answered only halfway: the decision not to auto-select is
+deliberate and matches the web, the missing badge is a gap, not a decision.
