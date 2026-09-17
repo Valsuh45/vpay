@@ -165,8 +165,17 @@ final class SheetController extends ChangeNotifier {
 
   /// Whether the "remember this number" box is ticked. Owned here (not by
   /// the widget's own `State`) so it survives whatever the widget tree does
-  /// between a payer ticking it and pressing Pay.
+  /// between a payer ticking it and pressing Pay. Seeded from the stored
+  /// record **once** per sheet, by [_loadRememberedMsisdn]'s first run (the
+  /// web's own `setRemember(record !== null)`, which also runs once at
+  /// startup); afterwards only the payer's own tap or [forgetRemembered]
+  /// changes it. So a payer who unticks and moves between rails keeps it
+  /// unticked rather than having it forced back on.
   bool rememberChecked = false;
+
+  /// Whether the box has been seeded from the store yet — see
+  /// [rememberChecked]'s doc comment for why this is once, not per entry.
+  bool _rememberSeeded = false;
 
   void setRememberChecked(bool value) {
     rememberChecked = value;
@@ -176,6 +185,10 @@ final class SheetController extends ChangeNotifier {
   Future<void> forgetRemembered() async {
     await remembered.forget();
     hasRememberedRecord = false;
+    // The box untick goes with the forgotten record — `checkout-client.tsx`'s
+    // `onForget` also does `setRemember(false)`, so after forgetting there is
+    // nothing to remember and the box must not stay ticked.
+    rememberChecked = false;
     forgotten = true;
     notifyListeners();
   }
@@ -234,12 +247,38 @@ final class SheetController extends ChangeNotifier {
       await _announceOutcome();
     } else if (s is CheckoutCollectMsisdn) {
       await _loadRememberedMsisdn(s.rail.code);
+    } else if (s is CheckoutReadyRedirect) {
+      // A redirect rail's entry screen shows the same memory control (the
+      // "remember this rail" box and the forget affordance), so its state is
+      // loaded on arrival too — not just the push form's.
+      await _loadRememberedMsisdn(s.rail.code);
     }
   }
 
   Future<void> _loadRememberedMsisdn(String railCode) async {
-    defaultMsisdn = await remembered.read(railCode);
+    // Invalidate any number loaded for a *different* rail before the async
+    // read for this one answers, so a payer who switches rails is never
+    // *newly* prefilled with the previous rail's number. This clears the
+    // prefill source, not the field's already-typed text — the widget owns
+    // the field and only writes into it when it is empty and unedited (the
+    // "uncontrolled on purpose" rule), so whatever the payer already typed
+    // is left alone.
+    defaultMsisdn = null;
     hasRememberedRecord = await remembered.hasRecord();
+    defaultMsisdn = await remembered.read(railCode);
+    // The box is seeded from the stored record exactly once per sheet, not on
+    // every entry — the hosted page's `setRemember(record !== null)` also runs
+    // once at startup (`checkout-client.tsx`), and thereafter only the payer's
+    // tap or "forget" changes it. The seed uses the *non-expired* half of
+    // `hasActiveRecord`, not [hasRememberedRecord]: an expired record is
+    // something to forget but nothing the box can truthfully say the device
+    // still remembers — `memory.ts`'s `parseMemoryRecord` returns `null` for
+    // one, so the web's box is unticked too. `read` above is rail-scoped for
+    // the number; the *tick* reflects any non-expired record, as the web's does.
+    if (!_rememberSeeded) {
+      _rememberSeeded = true;
+      rememberChecked = await remembered.hasActiveRecord();
+    }
     notifyListeners();
   }
 
@@ -247,6 +286,8 @@ final class SheetController extends ChangeNotifier {
     _setState(reduceCheckoutScreen(_state, CheckoutChooseRail(rail)));
     final CheckoutScreenState s = _state;
     if (s is CheckoutCollectMsisdn) {
+      unawaited(_loadRememberedMsisdn(s.rail.code));
+    } else if (s is CheckoutReadyRedirect) {
       unawaited(_loadRememberedMsisdn(s.rail.code));
     }
   }
@@ -288,12 +329,23 @@ final class SheetController extends ChangeNotifier {
       );
       return;
     }
-    // Written only here — a real, accepted submit — never from a keystroke
-    // and never before the server has taken the number (this file's own
-    // doc comment on `remember_msisdn.dart` states the same rule).
+    // Written (or cleared) only here — a real, accepted submit — never from
+    // a keystroke and never before the server has taken the number (this
+    // file's own doc comment on `remember_msisdn.dart` states the same rule).
     if (rememberChecked) {
       await remembered.remember(msisdn: msisdn, railCode: rail.code);
       hasRememberedRecord = true;
+    } else if (_rememberSeeded) {
+      // A payer who unticks and pays is deliberately telling the device to
+      // stop remembering — `checkout-client.tsx`'s `rememberOnSubmit` calls
+      // `pageMemory.clear()` when `remember` is false. Without this, an
+      // unticked submit would leave the old record standing and the number
+      // would come back on the next relaunch (issue #194's own read-back).
+      // The `_rememberSeeded` guard makes the destructive clear impossible
+      // before the box is known: if the async seed has not landed yet, the
+      // payer may have a record they never unticked, so we must not guess.
+      await remembered.forget();
+      hasRememberedRecord = false;
     }
     await _afterIntentResult(result.paymentIntent!);
   }

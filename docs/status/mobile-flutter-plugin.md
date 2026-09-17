@@ -354,6 +354,24 @@ unverified-everywhere signal the browser cutover left), is in the dated
 verification page. Evidence:
 [verification/2026-09-17-flutter-native-sheet.md](verification/2026-09-17-flutter-native-sheet.md).
 
+## Issue #194 — the "remember this number" read-back (2026-09-17)
+
+The lane-2 claim above did not survive a hand walk (iPhone 17 Pro / iOS 26.5,
+real `just demo-up`): write, the existence check and "forget" all worked, but
+reading the number back into the field was broken — the field came back empty
+and the box unticked after a cold relaunch, even though the "forget" control
+proved a record existed. Root cause was two wiring defects, not the store: the
+widget's prefill was gated on a screen transition while `defaultMsisdn` is
+populated asynchronously (so it always arrived after its one chance to run),
+and `rememberChecked` was never seeded from the stored record. Fixed in
+`checkout_sheet.dart` (prefill applied on every change, still guarded by
+"manually edited" + empty text) and `sheet_controller.dart`
+(`rememberChecked` now seeds from `hasActiveRecord`, and memory state loads on the
+redirect entry screen too). The 90-day TTL was already enforced on read — this
+did not touch it. `flutter test` 305 passed / 0 skipped, `dart analyze
+--fatal-infos` clean (Flutter 3.47.2). Evidence:
+[verification/2026-09-17-flutter-remember-msisdn-read.md](verification/2026-09-17-flutter-remember-msisdn-read.md).
+
 ## What is still not real
 
 - **No `just ci` gate** (D-M3). `install-flutter`/`analyze-flutter`/

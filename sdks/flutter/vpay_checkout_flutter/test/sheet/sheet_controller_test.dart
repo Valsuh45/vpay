@@ -180,6 +180,35 @@ class _InMemoryRememberedMsisdnStore implements VpayRememberedMsisdnStore {
   Future<void> write(RememberedMsisdnRecord r) async => record = r;
 }
 
+/// Lets an `unawaited` async load (e.g. the controller's own remembered-number
+/// read after a rail is chosen) finish, so a test can assert on its result.
+Future<void> _flushMicrotasks() async {
+  await Future<void>.delayed(Duration.zero);
+}
+
+/// A store whose `read` does not answer until [release] — lets a test hold the
+/// remembered-record seed in flight to prove behaviour *before* it lands.
+class _GatedRememberedMsisdnStore implements VpayRememberedMsisdnStore {
+  _GatedRememberedMsisdnStore(this.record);
+
+  RememberedMsisdnRecord? record;
+  final Completer<void> _gate = Completer<void>();
+
+  @override
+  Future<void> clear() async => record = null;
+
+  @override
+  Future<RememberedMsisdnRecord?> read() async {
+    await _gate.future;
+    return record;
+  }
+
+  @override
+  Future<void> write(RememberedMsisdnRecord r) async => record = r;
+
+  void release() => _gate.complete();
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   // `SheetController` reaches `SharedPreferencesRememberedMsisdnStore` (the
@@ -312,6 +341,284 @@ void main() {
         expect(store.record!.railCode, 'mtn_momo');
       },
     );
+
+    test('an unticked submit clears a previously-remembered number — paying '
+        'while unticked is a deliberate "stop remembering"', () async {
+      final store = _InMemoryRememberedMsisdnStore()
+        ..record = RememberedMsisdnRecord(
+          msisdn: '237671234567',
+          railCode: 'mtn_momo',
+          rememberedAt: DateTime(2026, 1, 1),
+        );
+      final scripted = _ScriptedClient(
+        session: _sessionJson(intent: _intentJson(), rails: [_mtnRailJson()]),
+        intentAnswers: [_intentJson(status: 'succeeded')],
+      );
+      final controller = SheetController(
+        client: scripted.build(),
+        sessionClientSecret: _csSecret,
+        remembered: VpayRememberedMsisdn(
+          store: store,
+          now: () => DateTime(2026, 1, 1),
+        ),
+      );
+
+      await controller.start();
+      expect(controller.hasRememberedRecord, isTrue);
+      // The fresh record seeds the box ticked...
+      expect(controller.rememberChecked, isTrue);
+
+      // ...the payer unticks and pays — a deliberate act that forgets.
+      controller.setRememberChecked(false);
+      await controller.submitMsisdn('+237 6 71 23 45 67');
+
+      expect(store.record, isNull);
+      expect(controller.hasRememberedRecord, isFalse);
+      expect(controller.rememberChecked, isFalse);
+    });
+
+    test(
+      'an unticked submit before the memory seed has landed does not clear a '
+      'record the payer never un-ticked',
+      () async {
+        final store = _GatedRememberedMsisdnStore(
+          RememberedMsisdnRecord(
+            msisdn: '237671234567',
+            railCode: 'mtn_momo',
+            rememberedAt: DateTime(2026, 1, 1),
+          ),
+        );
+        final scripted = _ScriptedClient(
+          session: _sessionJson(
+            intent: _intentJson(),
+            rails: [_mtnRailJson(), _orangeRailJson()],
+          ),
+          intentAnswers: [_intentJson(status: 'succeeded')],
+        );
+        final controller = SheetController(
+          client: scripted.build(),
+          sessionClientSecret: _csSecret,
+          remembered: VpayRememberedMsisdn(
+            store: store,
+            now: () => DateTime(2026, 1, 1),
+          ),
+        );
+
+        await controller.start();
+        expect(controller.state, isA<CheckoutSelectRail>());
+
+        // Picking MTN reaches the form and starts the (still-gated) seed: the
+        // box has not been seeded yet, so `rememberChecked` is its initial
+        // false and `_rememberSeeded` is false.
+        controller.chooseRail(
+          (controller.state as CheckoutSelectRail).rails.supported.first,
+        );
+        expect(controller.state, isA<CheckoutCollectMsisdn>());
+
+        await controller.submitMsisdn('+237 6 71 23 45 67');
+
+        // The unseeded, unticked submit must not have cleared the record.
+        expect(store.record, isNotNull);
+        store.release();
+      },
+    );
+  });
+
+  group('SheetController — preloading the remembered record (issue #194)', () {
+    test(
+      'a stored record for the single push rail preloads the number and ticks '
+      'the box on start',
+      () async {
+        final store = _InMemoryRememberedMsisdnStore()
+          ..record = RememberedMsisdnRecord(
+            msisdn: '237671234567',
+            railCode: 'mtn_momo',
+            rememberedAt: DateTime(2026, 1, 1),
+          );
+        final scripted = _ScriptedClient(
+          session: _sessionJson(intent: _intentJson(), rails: [_mtnRailJson()]),
+          intentAnswers: const [],
+        );
+        final controller = SheetController(
+          client: scripted.build(),
+          sessionClientSecret: _csSecret,
+          remembered: VpayRememberedMsisdn(
+            store: store,
+            now: () => DateTime(2026, 1, 1),
+          ),
+        );
+
+        await controller.start();
+
+        expect(controller.state, isA<CheckoutCollectMsisdn>());
+        expect(controller.defaultMsisdn, '237671234567');
+        expect(controller.hasRememberedRecord, isTrue);
+        expect(controller.rememberChecked, isTrue);
+      },
+    );
+
+    test('a redirect rail loads memory state (box + forget) even though it has '
+        'no number to recall', () async {
+      final store = _InMemoryRememberedMsisdnStore()
+        ..record = RememberedMsisdnRecord(
+          msisdn: '237671234567',
+          railCode: 'mtn_momo',
+          rememberedAt: DateTime(2026, 1, 1),
+        );
+      final scripted = _ScriptedClient(
+        session: _sessionJson(
+          intent: _intentJson(),
+          rails: [_orangeRailJson()],
+        ),
+        intentAnswers: const [],
+      );
+      final controller = SheetController(
+        client: scripted.build(),
+        sessionClientSecret: _csSecret,
+        remembered: VpayRememberedMsisdn(
+          store: store,
+          now: () => DateTime(2026, 1, 1),
+        ),
+      );
+
+      await controller.start();
+
+      expect(controller.state, isA<CheckoutReadyRedirect>());
+      expect(controller.defaultMsisdn, isNull);
+      expect(controller.hasRememberedRecord, isTrue);
+      expect(controller.rememberChecked, isTrue);
+    });
+
+    test('no stored record leaves the box unticked and no prefill', () async {
+      final scripted = _ScriptedClient(
+        session: _sessionJson(intent: _intentJson(), rails: [_mtnRailJson()]),
+        intentAnswers: const [],
+      );
+      final controller = SheetController(
+        client: scripted.build(),
+        sessionClientSecret: _csSecret,
+        remembered: VpayRememberedMsisdn(
+          store: _InMemoryRememberedMsisdnStore(),
+        ),
+      );
+
+      await controller.start();
+
+      expect(controller.defaultMsisdn, isNull);
+      expect(controller.hasRememberedRecord, isFalse);
+      expect(controller.rememberChecked, isFalse);
+    });
+
+    test('an expired record leaves the box unticked and no prefill, but still '
+        'offers forget (the web untick the same way)', () async {
+      final store = _InMemoryRememberedMsisdnStore()
+        ..record = RememberedMsisdnRecord(
+          msisdn: '237671234567',
+          railCode: 'mtn_momo',
+          rememberedAt: DateTime(2025, 1, 1), // well past the 90-day TTL
+        );
+      final scripted = _ScriptedClient(
+        session: _sessionJson(intent: _intentJson(), rails: [_mtnRailJson()]),
+        intentAnswers: const [],
+      );
+      final controller = SheetController(
+        client: scripted.build(),
+        sessionClientSecret: _csSecret,
+        remembered: VpayRememberedMsisdn(
+          store: store,
+          now: () => DateTime(2026, 1, 1),
+        ),
+      );
+
+      await controller.start();
+
+      expect(controller.state, isA<CheckoutCollectMsisdn>());
+      // `read` applies the TTL -> no number comes back.
+      expect(controller.defaultMsisdn, isNull);
+      // `hasRecord` still counts the stale record -> the forget affordance
+      // is offered (the Dart's own, documented decision).
+      expect(controller.hasRememberedRecord, isTrue);
+      // ...but the box is unticked: there is nothing the device can
+      // truthfully say it still remembers — `memory.ts` returns null for an
+      // expired record, so the web's box is unticked too.
+      expect(controller.rememberChecked, isFalse);
+    });
+
+    test(
+      'an untick survives moving between rails — the box is seeded once, '
+      'not on every entry (the web seeds remember once at startup)',
+      () async {
+        final store = _InMemoryRememberedMsisdnStore()
+          ..record = RememberedMsisdnRecord(
+            msisdn: '237671234567',
+            railCode: 'mtn_momo',
+            rememberedAt: DateTime(2026, 1, 1),
+          );
+        final scripted = _ScriptedClient(
+          session: _sessionJson(
+            intent: _intentJson(),
+            rails: [_mtnRailJson(), _orangeRailJson()],
+          ),
+          intentAnswers: const [],
+        );
+        final controller = SheetController(
+          client: scripted.build(),
+          sessionClientSecret: _csSecret,
+          remembered: VpayRememberedMsisdn(
+            store: store,
+            now: () => DateTime(2026, 1, 1),
+          ),
+        );
+
+        await controller.start();
+        expect(controller.state, isA<CheckoutSelectRail>());
+
+        final SupportedRail mtn =
+            (controller.state as CheckoutSelectRail).rails.supported.first;
+        controller.chooseRail(mtn);
+        await _flushMicrotasks();
+        expect(controller.state, isA<CheckoutCollectMsisdn>());
+        expect(controller.rememberChecked, isTrue);
+
+        controller.setRememberChecked(false);
+        controller.back();
+        controller.chooseRail(mtn);
+        await _flushMicrotasks();
+
+        expect(controller.state, isA<CheckoutCollectMsisdn>());
+        expect(controller.rememberChecked, isFalse);
+      },
+    );
+
+    test('forget unticks the box, matching the web\'s onForget -> setRemember(false)', () async {
+      final store = _InMemoryRememberedMsisdnStore()
+        ..record = RememberedMsisdnRecord(
+          msisdn: '237671234567',
+          railCode: 'mtn_momo',
+          rememberedAt: DateTime(2026, 1, 1),
+        );
+      final scripted = _ScriptedClient(
+        session: _sessionJson(intent: _intentJson(), rails: [_mtnRailJson()]),
+        intentAnswers: const [],
+      );
+      final controller = SheetController(
+        client: scripted.build(),
+        sessionClientSecret: _csSecret,
+        remembered: VpayRememberedMsisdn(
+          store: store,
+          now: () => DateTime(2026, 1, 1),
+        ),
+      );
+
+      await controller.start();
+      expect(controller.rememberChecked, isTrue);
+
+      await controller.forgetRemembered();
+
+      expect(controller.rememberChecked, isFalse);
+      expect(controller.hasRememberedRecord, isFalse);
+      expect(controller.forgotten, isTrue);
+    });
   });
 
   group('SheetController — redirect rail hand-off', () {

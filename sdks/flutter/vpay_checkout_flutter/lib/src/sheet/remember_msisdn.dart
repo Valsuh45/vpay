@@ -161,6 +161,18 @@ final class VpayRememberedMsisdn {
   /// background sweep has run.
   Future<bool> hasRecord() async => (await store.read()) != null;
 
+  /// Whether this device holds a record still within its TTL — used to seed
+  /// the "remember" box on (re)entry. Unlike [hasRecord], an expired record
+  /// does **not** count: there is something to *forget*, but nothing the box
+  /// can truthfully say the device still remembers. This is the Dart half of
+  /// the hosted page's `setRemember(record !== null)` — where `record` is
+  /// `parseMemoryRecord`'s answer, which is `null` for an expired record
+  /// (`memory.ts`), so the web's box is unticked for one too.
+  Future<bool> hasActiveRecord() async {
+    final RememberedMsisdnRecord? record = await store.read();
+    return record != null && !record.isExpired(_now());
+  }
+
   /// Writes [msisdn] against [railCode] with the current time —
   /// called **only** from a real submit (this file's own doc comment).
   Future<void> remember({required String msisdn, required String railCode}) =>

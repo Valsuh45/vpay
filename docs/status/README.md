@@ -35,6 +35,15 @@ Named by the newest date in each block, not by a single date: entries were
 appended to `docs/status.md` in the order branches landed, which is not always
 the order they were measured.
 
+- [verification/2026-09-17-flutter-remember-msisdn-read.md](verification/2026-09-17-flutter-remember-msisdn-read.md) —
+  issue #194: the Flutter sheet's "remember this number" **read** — prefilling
+  the MSISDN field and reflecting the saved state in the checkbox on relaunch
+  — was broken (write, existence and "forget" all worked). Two wiring defects
+  in the widget/controller, not the store: the prefill was gated on a screen
+  transition while `defaultMsisdn` is populated asynchronously, and
+  `rememberChecked` was never seeded from the stored record. Fixed and pinned
+  by two widget + controller tests; `flutter test` 305 passed / 0
+  skipped, `dart analyze --fatal-infos` clean.
 - [verification/2026-09-16-adr-0022.md](verification/2026-09-16-adr-0022.md) —
   ADR-0022 (surface isolation and independent scaling): `deployment.surfaces`
   and conditional `/v1`/`/dash/v1` mounting, the dashboard runner stage's real

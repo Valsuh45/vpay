@@ -338,12 +338,6 @@ class _VpayCheckoutSheetState extends State<VpayCheckoutSheet> {
     if (screen != _lastAnnouncedScreen) {
       _lastAnnouncedScreen = screen;
       _msisdnManuallyEdited = false;
-      final String? prefill = _controller.defaultMsisdn;
-      if (prefill != null &&
-          !_msisdnManuallyEdited &&
-          _msisdnController.text.isEmpty) {
-        _msisdnController.text = prefill;
-      }
       final String heading = _titleFor(_controller.state, widget.locale);
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) {
@@ -364,6 +358,22 @@ class _VpayCheckoutSheetState extends State<VpayCheckoutSheet> {
           TextDirection.ltr,
         );
       });
+    }
+    // The remembered number is applied on every change, not only on a screen
+    // transition: `defaultMsisdn` is populated *after* the transition that
+    // shows the form (the store read is async and is unawaited in the
+    // controller), so gating the prefill on the transition alone let the
+    // value arrive after its one chance to be used — issue #194's read bug:
+    // write and "forget" worked, the number never came back. The guard stays
+    // `_msisdnManuallyEdited` + empty text, so a payer who is already typing
+    // into a field is never overridden (`screens.tsx`'s own "uncontrolled on
+    // purpose" rule, restated).
+    final String? prefill = _controller.defaultMsisdn;
+    if (_controller.state is CheckoutCollectMsisdn &&
+        prefill != null &&
+        !_msisdnManuallyEdited &&
+        _msisdnController.text.isEmpty) {
+      _msisdnController.text = prefill;
     }
     if (!_popRequested && _controller.state is CheckoutForwarding) {
       _popRequested = true;
