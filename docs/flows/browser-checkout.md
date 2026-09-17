@@ -396,6 +396,17 @@ checkout, and every rail in that walk answered from a container.
 
 ## Status
 
+**Updated 2026-09-17: the return page knows a sheet's redirect leg.** Issue
+#195 — the Flutter native sheet's redirect rail landed the payer back on this
+return page, which rendered a full outcome on top of the sheet's own. There is
+now a `/c/{cs_id}/redirect` page the sheet opens in the browser instead of the
+rail's raw URL: it reads the session, marks the tab as a sheet's redirect leg
+(`sessionStorage`, `src/lib/redirect-leg.ts`), and sends the browser to the
+rail. When the rail returns the payer here, `src/lib/return.ts`'s
+`redirect_leg` state renders a neutral "returning to the app" screen and never
+starts the return controller — the sheet reports the outcome, so the payer
+sees it once. See [mobile-checkout.md](mobile-checkout.md).
+
 **Updated 2026-09-05: the confirm consults the intent's checkout session.**
 The bullet above about the `client_secret` lasting the intent's whole life now
 carries its one exception; the rule itself, its seven container-backed cases

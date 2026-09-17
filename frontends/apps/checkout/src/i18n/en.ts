@@ -89,6 +89,17 @@ export const en = {
   "state.forwarding_body": "Returning you to {merchant}.",
   "state.forwarding_body_unnamed": "Returning you to the shop.",
 
+  /*
+   * The browser leg of a native sheet's redirect rail (issue #195). The
+   * sheet is the outcome reporter; this page must not show one too. These
+   * strings are deliberately neutral — no amount, no rail, no outcome — so
+   * the payer sees the result once, in the sheet's own language and format,
+   * and simply dismisses the browser window.
+   */
+  "redirect_leg.title": "Returning to the app",
+  "redirect_leg.body":
+    "You can close this window. The app will confirm your payment.",
+
   "failure.insufficient_funds": "There was not enough money in the account.",
   "failure.payer_timeout": "You did not approve the payment in time.",
   "failure.payer_declined": "You declined the payment.",

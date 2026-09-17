@@ -859,6 +859,30 @@ export function OutcomePanel({
   );
 }
 
+/** The neutral screen a native sheet's redirect leg shows (issue #195). */
+export function RedirectLegNeutral({ t }: { t: Translate }) {
+  return (
+    <section>
+      <div className="flex flex-col gap-4">
+        <ScreenHeading screen="redirect_leg">
+          {t("redirect_leg.title")}
+        </ScreenHeading>
+        {/*
+          `role="status"` (a polite live region) so a payer on a screen reader
+          is told the page is done and the app will confirm — a page that
+          renders nothing interactive still has to say what it is. It also
+          gives axe a rule to evaluate here, so the anti-vacuity guard in
+          `screens.axe.test.tsx` cannot mistake this minimal screen for an
+          empty one.
+        */}
+        <div role="status" aria-atomic="true">
+          <p className="text-muted-foreground">{t("redirect_leg.body")}</p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 /** Expired, refused, or a read this page could not make. One shape for all three. */
 export function NoticePanel({
   t,

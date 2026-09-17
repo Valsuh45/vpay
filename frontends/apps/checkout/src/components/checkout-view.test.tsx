@@ -678,6 +678,27 @@ describe("the return view", () => {
     );
     unmount();
   });
+
+  it("renders the neutral redirect-leg screen with no outcome, no header, no locale switch", () => {
+    const { container, unmount } = renderReturn(
+      RETURN_SCREENS["redirect_leg"]!,
+      "fr",
+    );
+    expect(container.textContent).toContain(
+      DICTIONARIES.fr["redirect_leg.title"],
+    );
+    // The sheet reports the outcome; this page must not render its own.
+    expect(container.querySelector("[data-outcome]")).toBeNull();
+    expect(container.textContent).not.toContain(
+      DICTIONARIES.fr["outcome.succeeded_title"],
+    );
+    // No brand header, no language switch, no payment summary — the foreign
+    // surface carries nothing the sheet's own outcome would duplicate.
+    expect(screen.queryByTestId("brand-name")).toBeNull();
+    expect(container.querySelector("#vpay-locale")).toBeNull();
+    expect(screen.queryByTestId("amount")).toBeNull();
+    unmount();
+  });
 });
 
 describe("branding, from the deployment’s own branding.yaml", () => {

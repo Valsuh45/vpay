@@ -225,6 +225,30 @@ default. This document does not touch
 
 ## Status
 
+**Added 2026-09-17 — issue #195: the browser leg of a redirect rail is a
+vpay-controlled surface, and the return page suppresses its own outcome when
+it is a sheet's redirect leg.** The double screen the ticket named is closed:
+`SheetController.startRedirect` no longer hands the rail's own URL to the
+browser. It opens `/c/{id}/redirect` (a page on vpay's origin) with the key in
+the query and the session `client_secret` in the fragment; that page reads the
+session, marks the tab as a sheet's redirect leg, and sends the browser to the
+rail. When the rail returns the payer to `/c/{id}/return`, the return page
+sees the marker and renders a neutral "returning to the app" screen instead of
+a full outcome — the sheet remains the outcome reporter, in its own language
+and money format, so the payer sees the result once and simply dismisses the
+browser. The rail URL is deliberately never passed to the redirect page (it
+re-derives it from the server), so a payment origin cannot be turned into an
+open redirect. Browser-side suppression is the mechanism; the sheet's own
+poll/report path is unchanged (D1/D4). Changes: the new route
+(`frontends/apps/checkout/app/c/[id]/redirect`), the marker
+(`src/lib/redirect-leg.ts`), the return page's `redirect_leg` state, and the
+`redirectLegUrlFor` hand-off in `sheet_controller.dart`. Proven by the new
+Dart `redirectLegUrlFor` tests plus `test/sheet/sheet_controller_test.dart`'s
+hand-off assertion, and the hosted app's `redirect.ts`/`redirect-leg.ts`/
+`entry.ts`/return-view tests. Not proven on a real device in this change —
+the same unverified-on-every-platform dismissal signal the section below
+describes, with D4's poll making it correct regardless.
+
 **2026-09-14, after the review of Lanes A, B and C, and narrowed the same
 day by D8.** All three lanes have landed on one branch and been reviewed
 adversarially; this section replaces the Lane-B-only text that stood here,

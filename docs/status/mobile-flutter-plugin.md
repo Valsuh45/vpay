@@ -322,6 +322,26 @@ rail's hand-off back into the sheet, and the ADR issue #189 asks for on
 dropping D4/D8's iframe/`postMessage` concepts (`frame.ts`/`origins.ts`/
 `csp.ts`) as web-only with no native analogue.
 
+## Issue #195 — the browser leg is a controlled surface, the return page suppresses its outcome (2026-09-17)
+
+The double outcome the ticket named is closed. `SheetController.startRedirect`
+no longer hands the rail's own URL to the browser: it opens `/c/{id}/redirect`
+(a vpay-origin page) and the rail URL is deliberately never passed — that page
+re-derives it from the server, so a payment origin cannot be an open redirect.
+The return page `/c/{id}/return`, seeing the `sessionStorage` redirect-leg
+marker, renders a neutral "returning to the app" screen instead of a full
+outcome and never starts its controller; the sheet stays the outcome reporter,
+in its own language and money format. Proven by the new Dart
+`redirectLegUrlFor` tests, the updated hand-off assertion in
+`test/sheet/sheet_controller_test.dart` (the URL handed to the platform is the
+redirect-leg URL, never `orange.example`), and the hosted app's
+`redirect.ts`/`redirect-leg.ts`/`entry.ts`/return-view tests. `flutter test`
+297 passed / 0 skipped, `dart analyze --fatal-infos` clean; `just test-web`,
+`verify-ui`, `verify-status`, `verify-links` and `verify-sdk-parity` green.
+Not proven on a real device in this change — the same unverified-everywhere
+dismissal signal the lane-2 section below describes, with D4's poll making it
+correct regardless. Evidence below is the lane-2 entry, unchanged.
+
 ## Issue #189, lane 2 — the native checkout sheet, driven to `paid` by hand (2026-09-17)
 
 Everything lane 1 left owed above is now built: `VpayCheckoutSheet`

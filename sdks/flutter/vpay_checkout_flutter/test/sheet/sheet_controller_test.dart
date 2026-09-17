@@ -141,6 +141,7 @@ class _FakePlatform extends VpayCheckoutPlatform {
 
   final CheckoutWindowOutcome outcome;
   bool shown = false;
+  String? shownUrl;
   final StreamController<CheckoutWindowEvent> _events =
       StreamController<CheckoutWindowEvent>.broadcast();
   final List<String> order = [];
@@ -152,6 +153,7 @@ class _FakePlatform extends VpayCheckoutPlatform {
     required bool allowInsecureUrl,
   }) async {
     shown = true;
+    shownUrl = url;
     order.add('platform.show');
     unawaited(
       Future<void>.microtask(
@@ -354,6 +356,14 @@ void main() {
       await controller.startRedirect();
 
       expect(platform.shown, isTrue);
+      // Issue #195: the browser is handed the vpay-controlled redirect-leg
+      // page, never the rail's own URL. The rail URL (`https://orange.example/
+      // pay/abc`) must not appear anywhere in the hand-off.
+      expect(
+        platform.shownUrl,
+        'https://api.example/c/cs_123/redirect?key=pk_test_1#$_csSecret',
+      );
+      expect(platform.shownUrl, isNot(contains('orange.example')));
       // redirect_required (-> CheckoutRedirecting) must appear in the
       // recorded state history strictly before the platform host was
       // asked to show anything.
@@ -509,6 +519,43 @@ void main() {
         errorMessageKey(VpayError.unexpectedResponse(502)),
         'error.unexpected',
       );
+    });
+  });
+
+  group('SheetController.redirectLegUrlFor', () {
+    test('builds a vpay-controlled /redirect URL with the key in the query and the secret in the fragment', () {
+      expect(
+        SheetController.redirectLegUrlFor(
+          baseUrl: 'https://api.example',
+          sessionId: 'cs_123',
+          publishableKey: 'pk_test_1',
+          sessionClientSecret: _csSecret,
+        ),
+        'https://api.example/c/cs_123/redirect?key=pk_test_1#$_csSecret',
+      );
+    });
+
+    test('strips a trailing slash from the base URL', () {
+      expect(
+        SheetController.redirectLegUrlFor(
+          baseUrl: 'https://api.example/',
+          sessionId: 'cs_123',
+          publishableKey: 'pk_test_1',
+          sessionClientSecret: _csSecret,
+        ),
+        'https://api.example/c/cs_123/redirect?key=pk_test_1#$_csSecret',
+      );
+    });
+
+    test('never carries a rail URL — the redirect page re-derives it from the server', () {
+      final String url = SheetController.redirectLegUrlFor(
+        baseUrl: 'https://api.example',
+        sessionId: 'cs_123',
+        publishableKey: 'pk_test_1',
+        sessionClientSecret: _csSecret,
+      );
+      expect(url, isNot(contains('orange.example')));
+      expect(url, isNot(contains('url=')));
     });
   });
 }

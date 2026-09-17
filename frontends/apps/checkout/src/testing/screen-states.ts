@@ -143,6 +143,7 @@ export const CHECKOUT_SCREENS: Record<string, CheckoutState> = {
 
 export const RETURN_SCREENS: Record<string, ReturnState> = {
   loading: { name: "loading" },
+  redirect_leg: { name: "redirect_leg" },
   error: { name: "error", error: { code: "error.missing_return_token" } },
   polling: {
     name: "polling",

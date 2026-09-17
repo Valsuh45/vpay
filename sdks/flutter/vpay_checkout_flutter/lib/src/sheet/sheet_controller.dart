@@ -41,7 +41,7 @@ library;
 
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show ChangeNotifier;
+import 'package:flutter/foundation.dart' show ChangeNotifier, visibleForTesting;
 
 import '../browser_client.dart';
 import '../checkout_controller.dart' show StopUrlSpec, SystemClock, VpayClock;
@@ -340,8 +340,56 @@ final class SheetController extends ChangeNotifier {
       return;
     }
     // Redirect recorded BEFORE the hand-off — controller.ts's own ordering.
+    // `CheckoutRedirectRequired` still carries the rail's URL (that is what
+    // this state means — a redirect for this rail), but the browser is NOT
+    // handed it: the sheet opens a vpay-controlled redirect-leg page instead
+    // of the rail's own URL (issue #195), so the browser leg never renders a
+    // full outcome on top of the sheet that is about to render its own. See
+    // [redirectLegUrlFor] for why the rail URL is deliberately not passed on.
     _setState(reduceCheckoutScreen(_state, CheckoutRedirectRequired(url)));
-    await _handOffToBrowser(url);
+    await _handOffToBrowser(
+      redirectLegUrlFor(
+        baseUrl: client.baseUrl,
+        sessionId: s.context.session.id,
+        publishableKey: client.publishableKey,
+        sessionClientSecret: sessionClientSecret,
+      ),
+    );
+  }
+
+  /// The vpay-controlled URL the sheet opens in the browser for a redirect
+  /// rail, instead of the rail's own URL (issue #195).
+  ///
+  /// `/c/{id}/redirect` is a page on vpay's own origin that reads the
+  /// session, marks this tab as a sheet's redirect leg, and sends the
+  /// browser to the rail — so the rail's URL never reaches the browser seam
+  /// directly, and the return page suppresses its own outcome because the
+  /// sheet is the outcome reporter.
+  ///
+  /// The credential shape is D6's: the publishable key in the query (public),
+  /// the session's `client_secret` in the fragment (never a log or a
+  /// `Referer`). The rail URL itself is deliberately **not** passed as a
+  /// parameter — the redirect page re-derives it from the server, so a
+  /// crafted URL can never turn a payment origin into an open redirect.
+  @visibleForTesting
+  static String redirectLegUrlFor({
+    required String baseUrl,
+    required String sessionId,
+    required String publishableKey,
+    required String sessionClientSecret,
+  }) {
+    final String base = baseUrl.trim().endsWith('/')
+        ? baseUrl.trim().substring(0, baseUrl.trim().length - 1)
+        : baseUrl.trim();
+    // The session `client_secret` is written raw into the fragment, exactly
+    // as the server mints the hosted URL (`{base}/c/{id}#{secret}`) —
+    // percent-encoding it would double-decode when the browser exposes
+    // `location.hash` and `parsePageCredentials` calls `decodeURIComponent`
+    // again. The secret's alphabet is URL-safe alphanumerics + `_`, so raw
+    // is correct and matches the server's own shape.
+    return '$base/c/${Uri.encodeComponent(sessionId)}/redirect'
+        '?key=${Uri.encodeQueryComponent(publishableKey)}'
+        '#$sessionClientSecret';
   }
 
   /// Hands the redirecting state's URL to [VpayCheckoutPlatform] — the

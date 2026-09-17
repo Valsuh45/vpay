@@ -109,6 +109,10 @@ export const fr: Record<MessageKey, string> = {
   "memory.forgotten": "Cet appareil ne mémorise plus rien.",
   "memory.last_used": "Dernier utilisé",
 
+  "redirect_leg.title": "Retour à l’application",
+  "redirect_leg.body":
+    "Vous pouvez fermer cette fenêtre. L’application confirmera votre paiement.",
+
   "refusal.embed_title": "Cette page ne s’affichera pas ici",
   "refusal.embed_body":
     "vpay n’affiche une page de paiement intégrée que sur un site enregistré par le marchand. Demandez au marchand d’ajouter ce site à ses origines de paiement.",
