@@ -98,7 +98,7 @@ unticked.
 The test that was supposed to pin this could not catch it.
 `_GatedRememberedMsisdnStore` holds the **first** of the three reads
 `_loadRememberedMsisdn` makes (`hasRecord`, `read(railCode)`, then the
-`hasActiveRecord` that seeds the box), which suspends the load *before* the
+`hasActiveRecord` that seeds the box), which suspends the load _before_ the
 seed is entered at all — so it proved a window that was never the dangerous
 one, and passed on the broken ordering.
 
