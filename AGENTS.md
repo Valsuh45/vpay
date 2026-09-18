@@ -58,10 +58,14 @@ database column the migrations create is classified in
 `schemas/privacy-inventory.yaml`, in both directions. The two were written on
 branches that never saw each other, exactly as `verify-npm-scope` and
 `check-schema` were on 2026-09-05, and the count was reconciled where they
-met. _(This paragraph said "twelve" and stopped at `verify-migrations` until
-2026-09-17; it had been wrong since #201 merged earlier that day. The
-sentence below it said "Eleven of the thirteen" and was arithmetic on a list
-of twelve.)_
+met. _(Both sides of that merge were stale in their own way, and this note
+said so imprecisely until 2026-09-18. On `master` at `eb078020` this paragraph
+said "twelve" and stopped at `verify-migrations`, and the sentence below it
+said "Ten of the twelve" — both wrong since #201 merged earlier that day and
+made them thirteen and eleven. On this branch at `de11c9cf` they said
+"thirteen" and "Eleven of the thirteen", which was right for a tree that had
+not seen #201. Neither was right for the merge, which is fourteen and
+twelve.)_
 Twelve of the fourteen are `cargo xtask` commands; `check-schema` and `verify-ui` are
 justfile recipes — the first shells out to the CrateStack CLI, a binary this
 workspace does not build, and the second is a handful of `git grep`s.
