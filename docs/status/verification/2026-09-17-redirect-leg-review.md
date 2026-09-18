@@ -1,20 +1,27 @@
-# Issue #195 — review of the redirect leg, and the two defects it found
+# Issue #195 — review of the redirect leg, and the three defects it found
 
-**Dates:** 2026-09-17 (the two fixes) and 2026-09-18 (this re-run, every number
-below re-measured from scratch). **Branch:**
+**Dates:** 2026-09-17 (the first two fixes), 2026-09-18 (the re-run, every
+number re-measured from scratch) and 2026-09-18 (§3, the third defect, found
+when this branch was merged with `origin/master`). **Branch:**
 `fix/195-redirect-sheet-suppresses-outcome` (PR #200), which merges cleanly onto
-`origin/master` `eb078020`. **Host:** macOS (darwin 25.6.0), Flutter
-3.48.0-1.0.pre / Dart 3.14 dev, pnpm 9.15, node 24.
+`origin/master` `eb078020` and, for §3 below, onto `84143e1d` (PR #208).
+**Host:** macOS (darwin 25.6.0), Flutter 3.48.0-1.0.pre / Dart 3.14 dev, pnpm
+9.15, node 24.
 
 This page records a **partial** run: the web and Flutter halves, four
 `cargo xtask` gates, and `just test-storybook`. `just ci` was **not** run —
 another agent held the Rust build on this host — so nothing here is evidence
 about the Rust workspace.
 
-## The two defects
+_(This page was titled "the two defects it found" until 2026-09-18. §3 is a
+third instance of §2's root cause, on a different page of the same app, and it
+was found by this branch's honest stub rather than by reading — which is the
+argument for the stub change §2 made.)_
 
-Both were shipped green: `flutter test` 297 / 0, `just test-web` 536 / 1,
-`dart analyze` clean, CI's `web` job passing. Each one on its own means the
+## The defects
+
+The first two were shipped green: `flutter test` 297 / 0, `just test-web` 536 /
+1, `dart analyze` clean, CI's `web` job passing. Each one on its own means the
 payer's browser never reaches the rail, so the redirect rail was **more**
 broken than the duplicate outcome screen the issue reported.
 
@@ -67,16 +74,76 @@ scheme check still gates the navigation.
 checkout-session routes — the one place it diverged from the API, and what made
 this invisible to any stub-backed test. It now answers `null` there.
 
+### 3. The hosted page read it off the same route, on a reload (2026-09-18)
+
+Found where this branch met `origin/master` `84143e1d`, and by the stub change
+§2 made rather than by reading. PR #199 (`164d566b`, on `master`) gave the
+hosted page a `resume_redirect` state for a payer who abandoned a redirect
+rail's page and came back: `machine.ts`'s `stateForContext` reduces a
+`requires_action` intent to it, with the URL from `redirectUrlOf(intent)`. The
+intent it reduces arrives on `GET /v1/browser/checkout/sessions/{id}` — the same
+route as §2, with the same `next_action: None`. Its own comment cited
+`payment_intents.rs`'s `rendered_intent` as the reason a URL would always be
+there, which is the route that does attach one and not the route the intent came
+from.
+
+So on a real deployment the reducer fell through to its `waiting` fallback: a
+"check your phone" spinner, for a redirect rail that never sees a payer's phone
+number, on a payment only the payer can move — until the poll budget dies. That
+is the exact screen #199 was written to remove.
+
+**Why the test did not see it:** #199's two cases passed against the stub as it
+then was, which rendered `next_action` on the session route. Against §2's honest
+stub they fail — and the shape of the failure is a second finding: the controller
+falls back to `waiting`, polls `GET /v1/browser/payment_intents/{id}`, and the
+stub settles the intent after its poll budget, so the payer lands on a
+**succeeded outcome screen for a payment nobody completed**. That is the stub's
+own `pollsBeforeTerminal` model, not the server's behaviour, but it is what made
+the failure read as `outcome` rather than as `waiting`.
+
+**Fix:** the same two-read ladder, in the controller instead of the page.
+`CheckoutController.start` now calls `#withNextAction`, which — only for an
+intent the session read answered as `requires_action` with no `next_action` on
+it — re-reads the intent with `@vaam-apps/vpay-stripe-js`'s
+`retrievePaymentIntent`, using the intent `client_secret` the session read
+carries (`redirect.ts`'s `intentClientSecretOf`, the same helper
+`redirect-client.tsx` uses). The reducer then sees an intent that names the rail,
+and `machine.ts` stays pure — it fetches nothing and its contract is unchanged.
+
+Every failure of the second read leaves the context exactly as the session
+answered it, so the reducer's existing `waiting` fallback stands and no state is
+invented; `resume_redirect` is still reachable only with a URL the server sent,
+and `redirectUrlOf`'s `http:`/`https:` check still gates the navigation.
+`start()` is the only place a session read reaches `stateForContext` —
+`#announceOutcome`'s re-read dispatches `session_refreshed`, which the reducer
+applies only from `outcome` and only to the session half — so this is one call
+site, not a pattern to repeat.
+
+**The test that refuses the regression** is a third case in `controller.test.ts`
+§ "the Orange redirect", and it fails in both directions (both mutations are in
+the table below). It reads the session route itself and asserts what it actually
+answers for a `requires_action` intent — `next_action` `null`, and
+`redirectUrlOf` of it `null`, so a controller reducing from that response alone
+has no URL to offer — and then asserts the request sequence `resumed.start()`
+produces, verbatim: `GET /v1/browser/checkout/sessions/{id}` followed by
+`GET /v1/browser/payment_intents/{id}`. A controller that went back to reading
+`next_action` off the session would make only the first, and a stub that started
+rendering one would fail the first assertion. #199's two cases assert the state
+and the navigation and are kept as they were; only the comment that explained
+the old mechanism was rewritten.
+
 ## Mutation checks
 
 Each fix was reverted in place and the suite re-run, so the tests are known to
 fail on the defect rather than assumed to. Both mutations were re-run on
 2026-09-18 and the results below are that run's own output.
 
-| Mutation                                                                | Result                                                                                                                                                                                                                                 |
-| ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sessionPageUrl: '${widget.baseUrl}/c/cs_123'` in `checkout_sheet.dart` | `flutter test` 301 passed, **1 failed** — `checkout_sheet_test.dart`'s new case, `Expected: https://checkout.e … Actual: https://api.exampl …`. Every `redirectLegUrlFor` unit test still passes, which is why the widget test exists. |
-| `redirect-client.tsx` restored to PR #200's session read                | `redirect-client.test.tsx` **2 failed / 2 passed**, both failures on "never navigated to the rail" (`assigned` was `[]`, expected `["https://orange.example/pay/abc"]`).                                                               |
+| Mutation                                                                                                                             | Result                                                                                                                                                                                                                                                                 |
+| ------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sessionPageUrl: '${widget.baseUrl}/c/cs_123'` in `checkout_sheet.dart`                                                              | `flutter test` 301 passed, **1 failed** — `checkout_sheet_test.dart`'s new case, `Expected: https://checkout.e … Actual: https://api.exampl …`. Every `redirectLegUrlFor` unit test still passes, which is why the widget test exists.                                 |
+| `redirect-client.tsx` restored to PR #200's session read                                                                             | `redirect-client.test.tsx` **2 failed / 2 passed**, both failures on "never navigated to the rail" (`assigned` was `[]`, expected `["https://orange.example/pay/abc"]`).                                                                                               |
+| §3: `#withNextAction` in `controller.ts` returns the session's context unchanged (an early `return context;` before the intent read) | `controller.test.ts` **3 failed / 29 passed** — #199's two resume cases (`expected 'outcome' to be 'resume_redirect'`, each after ~2 s of real polling) and the new case below.                                                                                        |
+| §3: `browser-stub.ts`'s session route restored to `intentObject(true)` — the stub lying again                                        | `controller.test.ts` **1 failed / 31 passed**, on the new case's `expect(read.value.payment_intent.next_action).toBeNull()`: `expected { type: 'redirect_to_url', …(1) } to be null`. The other two pass, which is precisely why they are not sufficient on their own. |
 
 ## Commands and results
 
@@ -104,6 +171,28 @@ Measured 2026-09-18 on this branch.
 `just verify-versions` is red there for the same release-please change and does
 not exist on this branch at all. Prettier was therefore run over this PR's own
 files only, and they are clean.
+
+### The §3 re-run, 2026-09-18
+
+A second, narrower run on the merge of this branch's head `a61fa919` with
+`origin/master` `84143e1d` (PR #208) — the tree §3 was found on and fixed on.
+The numbers above are **not** superseded; they were measured on a different
+tree and both are kept.
+
+| Command                                                             | Result                                                                                                                                                                                        |
+| ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `just test-web`                                                     | checkout **556 passed / 1 skipped** (30 files), dashboard 316 / 1 skipped (31 files), shop 108, stripe-js 146, nodejs 222, config 60, tokens 10, api-client 4 — exit 0                        |
+| `pnpm exec vitest run src/lib/controller.test.ts` before the §3 fix | **2 failed / 29 passed** — `expected { name: 'outcome', …(4) } to match object { name: 'resume_redirect', …(1) }`, and `expected 'outcome' to be 'resume_redirect'`; ~2 s each, spent polling |
+| `just lint-web`                                                     | exit 0 (eslint `--max-warnings 0`, prettier, `tsc --noEmit` across the workspace)                                                                                                             |
+| `just verify-ui`                                                    | exit 0                                                                                                                                                                                        |
+| `just verify-status`                                                | ok — 1 unimplemented item, all declared in `docs/status.md`, all still in shipping code                                                                                                       |
+| `just verify-links`                                                 | ok — 1719 links in 400 tracked markdown files                                                                                                                                                 |
+| `pnpm exec prettier --check` over this change's own files           | clean                                                                                                                                                                                         |
+
+`just test-storybook` was **not** re-run for §3 and is not evidence about it:
+this change touches `src/lib/` and `src/testing/` only — no screen, no story,
+no theme. `just ci` and the Rust workspace were not run either, for the same
+reason the top of this page gives.
 
 ## Composition with PR #197
 

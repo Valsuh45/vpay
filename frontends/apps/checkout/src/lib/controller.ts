@@ -14,6 +14,11 @@
  * - `vpay:complete` is posted after a re-read of the session, so the status
  *   the parent receives is the session's own, not this page's guess from the
  *   intent.
+ * - a `requires_action` intent is re-read from the payment-intents route
+ *   before the reducer sees it, because that is the only route that renders
+ *   `next_action` — without it a payer who abandoned a redirect rail's page
+ *   lands on a spinner nothing will ever resolve. `#withNextAction` has the
+ *   mechanism.
  */
 import type { Stripe, StripeError } from "@vaam-apps/vpay-stripe-js";
 
@@ -26,11 +31,17 @@ import {
   contextOf,
   redirectUrlOf,
   reduce,
+  type CheckoutContext,
   type CheckoutEvent,
   type CheckoutState,
 } from "./machine";
 import type { SupportedRail } from "./rails";
-import type { CheckoutError, PaymentIntent } from "./types";
+import { intentClientSecretOf } from "./redirect";
+import type {
+  CheckoutError,
+  CheckoutSessionView,
+  PaymentIntent,
+} from "./types";
 
 /** Maps a `@vaam-apps/vpay-stripe-js` error onto a message this page can show in either language. */
 export function messageForStripeError(error: StripeError): MessageKey {
@@ -124,7 +135,14 @@ export class CheckoutController {
     this.#dispatch({ type: "refuse", reason: "embed_not_allowed" });
   }
 
-  /** Reads the session and enters the state it implies. Resumes a poll when one is owed. */
+  /**
+   * Reads the session and enters the state it implies. Resumes a poll when
+   * one is owed.
+   *
+   * Two reads, not one, for a `requires_action` intent — see `#withNextAction`
+   * below. The session read is the only one that authorises the second, and
+   * the second is the only one that carries a rail URL.
+   */
   async start(): Promise<void> {
     const result = await this.#options.api.readSession(
       this.#options.sessionId,
@@ -136,13 +154,77 @@ export class CheckoutController {
     }
     this.#dispatch({
       type: "loaded",
-      context: contextOf(result.value, this.#options.allowedMethods ?? null),
+      context: await this.#withNextAction(result.value),
     });
     if (this.#state.name === "waiting") {
       await this.#poll();
     } else if (this.#state.name === "outcome") {
       await this.#announceOutcome();
     }
+  }
+
+  /**
+   * The session read as a context, with `next_action` filled in from the
+   * route that renders it — for the one status where the difference decides
+   * a screen.
+   *
+   * **`GET /v1/browser/checkout/sessions/{id}` never answers a
+   * `next_action`.** Its expanded intent is
+   * `PaymentIntentObject::try_from(&row)`, whose `next_action` is `None`
+   * unconditionally — "`next_action` lives on the charge, not the intent",
+   * `vpay_api::model`'s own comment — and neither checkout-session route
+   * calls `with_next_action`, which is the only thing that attaches one. The
+   * route that does is `GET /v1/browser/payment_intents/{id}`: it answers
+   * through `v1::payment_intents::rendered_intent`, which reconstructs
+   * `next_action` from the stored charge row for a `requires_action` intent
+   * and hard-errors rather than answering `null`.
+   *
+   * So a payer who abandoned a redirect rail's page and came back is
+   * `requires_action` with nowhere to go **on the session read's object**,
+   * and a reducer given only that would put them on `waiting` — a spinner
+   * for a payment nothing is going to move, because the thing that stopped
+   * is the payer. One more read turns it into `resume_redirect` carrying the
+   * rail's own URL. `redirect.ts`'s module doc is the same two-read ladder
+   * for `/c/{id}/redirect`, and says why reading `next_action` off the
+   * session "looks right, type-checks, and passes against any stub that
+   * renders one — and answers `null` on every real deployment".
+   *
+   * This lives here and not in `machine.ts` because `stateForContext` is
+   * pure: it reduces whatever intent it is handed, and filling one in is a
+   * `fetch`.
+   *
+   * Every way the second read can fail leaves the context exactly as the
+   * session answered it, so the reducer falls back to `waiting` rather than
+   * to a state this page invented — and `resume_redirect` is never reached
+   * with a URL that did not come from the server.
+   */
+  async #withNextAction(view: CheckoutSessionView): Promise<CheckoutContext> {
+    const context = contextOf(view, this.#options.allowedMethods ?? null);
+    if (context.intent.status !== "requires_action") {
+      return context;
+    }
+    if (redirectUrlOf(context.intent) !== null) {
+      // Already there. A server that begins rendering `next_action` on this
+      // route costs the page a request rather than a behaviour.
+      return context;
+    }
+    const intentSecret = intentClientSecretOf(view);
+    if (intentSecret === null) {
+      // No credential for the intent route — the session is no longer
+      // `open`, so the server stopped rendering one. Nothing to resume.
+      return context;
+    }
+    const result =
+      await this.#options.stripe.retrievePaymentIntent(intentSecret);
+    if (result.paymentIntent === undefined) {
+      return context;
+    }
+    // The fresher read replaces the intent whole rather than being spliced
+    // into the older one: it is the same object from a route that renders
+    // strictly more, and an intent that moved on between the two reads (the
+    // payer finished on the rail in another tab) should land on its outcome
+    // rather than on a redirect that is already spent.
+    return { ...context, intent: result.paymentIntent };
   }
 
   chooseRail(rail: SupportedRail): void {
@@ -266,9 +348,9 @@ export class CheckoutController {
    * the rail's page they abandoned.
    *
    * No confirm, no dispatch — the URL was already resolved from a stored
-   * charge row on the read that put this state on screen
-   * (`redirectUrlOf`/`stateForContext` in `machine.ts`), so there is
-   * nothing to attempt again, only somewhere to go back to. Goes through
+   * charge row by the reads that put this state on screen (`#withNextAction`
+   * here, then `redirectUrlOf`/`stateForContext` in `machine.ts`), so there
+   * is nothing to attempt again, only somewhere to go back to. Goes through
    * the same `#navigateTopLevel` the initial redirect uses, so the
    * framed/popup/top-level split stays decided in the one place that owns
    * it (D8).

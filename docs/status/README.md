@@ -36,7 +36,7 @@ appended to `docs/status.md` in the order branches landed, which is not always
 the order they were measured.
 
 - [verification/2026-09-17-redirect-leg-review.md](verification/2026-09-17-redirect-leg-review.md)
-  — issue #195: the review of the native sheet's redirect leg, and the two
+  — issue #195: the review of the native sheet's redirect leg, and the **three**
   defects it found. The leg URL was built on the **API**'s origin, which serves
   no `/c/` route, and the `/c/{id}/redirect` page read `next_action` off the
   checkout-session route, which never renders one — either alone means no payer
@@ -46,7 +46,13 @@ the order they were measured.
   `flutter test` 302 / 0, `just test-web` checkout 538 / 1,
   `just test-storybook` 24 stories, four `cargo xtask` gates green. `just ci`
   was not run. Carries the throwaway-merge result with PR #197, which needs one
-  hand edit `git merge` does not report.
+  hand edit `git merge` does not report. **§3, added 2026-09-18 when this
+  branch met `origin/master` `84143e1d`:** PR #199's `resume_redirect` state on
+  the hosted page reads `next_action` off the same route, for the same reason,
+  and so never offered the payer their abandoned rail back — the third instance
+  of one root cause, and the first found by the honest stub §2 left behind
+  rather than by reading source. Fixed in `CheckoutController.start`;
+  `just test-web` checkout **556 / 1**, mutation-checked in both directions.
 - [verification/2026-09-17-flutter-remember-msisdn-read.md](verification/2026-09-17-flutter-remember-msisdn-read.md) —
   issue #194: the Flutter sheet's "remember this number" **read** — prefilling
   the MSISDN field and reflecting the saved state in the checkbox on relaunch
