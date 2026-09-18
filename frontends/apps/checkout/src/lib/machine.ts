@@ -357,13 +357,27 @@ export function stateForContext(context: CheckoutContext): CheckoutState {
     // is "on their phone" — a redirect rail never sees a payer's number) and
     // unresolvable, until the poll budget dies.
     //
+    // Whether a redirect URL is on this intent is the **caller's** job, not
+    // this reducer's, and it depends on which route the intent came off.
     // `payment_intents.rs`'s `rendered_intent` reconstructs `next_action`
     // from the stored charge row on every read of a `requires_action`
-    // intent and hard-errors when it cannot, so a redirect URL is here
-    // unless the server itself is broken — in which case falling back to
-    // `waiting` is the same "this page has learnt nothing that says
-    // otherwise" answer the rest of this file gives a claim it cannot
-    // support, not a state invented for the occasion.
+    // intent and hard-errors when it cannot — but that is
+    // `GET /v1/browser/payment_intents/{id}`. The two **checkout-session**
+    // routes render `PaymentIntentObject::try_from(&row)`, whose
+    // `next_action` is `None` unconditionally, so an intent that arrived on
+    // a session read never carries one. `controller.ts`'s `#withNextAction`
+    // is what fetches it before reducing; this branch is correct either way
+    // because it reads the intent it is handed and nothing else.
+    //
+    // _(This comment cited `rendered_intent` alone until 2026-09-18, and was
+    // wrong from the moment it was written: it named the route that does
+    // attach a `next_action` as the reason one would be present on a read
+    // that goes through the two that never do — issue #195, PR #200.)_
+    //
+    // Falling back to `waiting` where the URL is still absent is the same
+    // "this page has learnt nothing that says otherwise" answer the rest of
+    // this file gives a claim it cannot support, not a state invented for
+    // the occasion.
     const url = redirectUrlOf(intent);
     return url === null
       ? { name: "waiting", context, rail: null, notice: null }

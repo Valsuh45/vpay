@@ -225,6 +225,57 @@ default. This document does not touch
 
 ## Status
 
+**Added 2026-09-17 — issue #195: the browser leg of a redirect rail is a
+vpay-controlled surface, and the return page suppresses its own outcome when
+it is a sheet's redirect leg.** `SheetController.startRedirect` no longer
+hands the rail's own URL to the browser. It opens `/c/{id}/redirect` (a page
+on the **checkout** origin) with the key in the query and the session
+`client_secret` in the fragment; that page reads the session for the intent's
+credential, reads the **intent** for the rail's URL, marks the tab as a
+sheet's redirect leg, and sends the browser to the rail. When the rail
+returns the payer to `/c/{id}/return`, the return page sees the marker and
+renders a neutral "returning to the app" screen instead of a full outcome —
+the sheet remains the outcome reporter, in its own language and money format,
+so the payer sees the result once and dismisses the browser. The rail URL is
+deliberately never passed to the redirect page (it asks the server), so a
+payment origin cannot be turned into an open redirect. Browser-side
+suppression is the mechanism; the sheet's own poll/report path is unchanged
+(D1/D4). Changes: the new route
+(`frontends/apps/checkout/app/c/[id]/redirect`), the marker
+(`src/lib/redirect-leg.ts`), the return page's `redirect_leg` state, and the
+`redirectLegUrlFor`/`sessionPageUrlFrom` hand-off in `sheet_controller.dart`.
+
+**Two things about it that only a run would have found, and the second one
+is why the first is worth writing down.** The hand-off was first built on
+`BrowserClient.baseUrl` — the **API**'s origin, which serves no `/c/` route
+at all; and the redirect page first read `next_action` off the session
+response, which the server never renders there
+(`PaymentIntentObject::try_from` sets it `None`, and only
+`with_next_action` — which that route does not call — attaches one). Either
+one alone sends the payer somewhere that is not the rail. Both type-checked,
+and both passed a full green suite, because the Dart test used one string
+for both origins and the page's test hand-wrote a `fetch` answer carrying a
+`next_action`. Fixed, with the tests rebuilt so they could fail: two
+different origins in the Dart suites plus a widget test over
+`VpayCheckoutSheet` (the seam that chooses between them), and the page's
+suite driven against `src/testing/browser-stub.ts`, the real `node:http`
+server, whose session routes now answer `next_action: null` exactly as the
+API does. Both mutations were run and observed failing.
+
+**What is not proven.** Nobody has driven this leg end to end — not on a
+device, not against `just demo-up`. What is measured, on 2026-09-18 and
+written up in
+[status/verification/2026-09-17-redirect-leg-review.md](../status/verification/2026-09-17-redirect-leg-review.md),
+is `flutter test` 302 passed / 0 skipped, `dart analyze --fatal-infos` clean,
+and the hosted app's 538 passed / 1 skipped, including four cases over
+`/c/{id}/redirect` against the stub server. And one consequence to know
+before reading the section below: a suppressed return page renders no
+"return to the merchant" button, so the browser leg can no longer reach one
+of `stopUrls` by itself. The sheet therefore resolves this rail on the
+**dismissal** signal alone — which D4's poll makes correct regardless, and
+which is the same signal the lane-2 section already calls unverified on
+every platform.
+
 **2026-09-14, after the review of Lanes A, B and C, and narrowed the same
 day by D8.** All three lanes have landed on one branch and been reviewed
 adversarially; this section replaces the Lane-B-only text that stood here,

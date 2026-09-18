@@ -396,6 +396,50 @@ checkout, and every rail in that walk answered from a container.
 
 ## Status
 
+**Updated 2026-09-17: the return page knows a sheet's redirect leg.** Issue
+#195 — the Flutter native sheet's redirect rail landed the payer back on this
+return page, which rendered a full outcome on top of the sheet's own. There is
+now a `/c/{cs_id}/redirect` page the sheet opens in the browser instead of the
+rail's raw URL: it reads the session for the intent's `client_secret`, reads
+`GET /v1/browser/payment_intents/{id}` for the rail's URL, marks the tab as a
+sheet's redirect leg (`sessionStorage`, `src/lib/redirect-leg.ts`), and sends
+the browser to the rail. When the rail returns the payer here,
+`src/lib/return.ts`'s `redirect_leg` state renders a neutral "returning to
+the app" screen and never starts the return controller — the sheet reports
+the outcome, so the payer sees it once.
+
+**Two reads, not one, and that is the contract rather than an oversight.**
+`GET /v1/browser/checkout/sessions/{id}` expands the intent but never
+renders a `next_action`: that route builds the object with
+`PaymentIntentObject::try_from(&row)`, whose `next_action` is `None`
+unconditionally, and the only thing that attaches one — `with_next_action` —
+is called by the payment-intent routes and by `confirm`, never here. So the
+rail URL has to come from the intent read, which is the route whose own doc
+promises it ("including `next_action` on a redirect rail"). The first
+version of this page read it off the session response, which type-checks and
+renders nothing but the neutral screen on every real deployment.
+`src/testing/browser-stub.ts` now answers `next_action: null` on both
+checkout-session routes for the same reason, so no later test can certify
+that shape again. See [mobile-checkout.md](mobile-checkout.md).
+
+The new page carries **the same credential shape and the same headers as
+every other page here**, and one deliberate omission. Its credentials are
+`/c/{cs_id}`'s exactly — the publishable key in the query, the session
+`client_secret` in the fragment, `src/lib/link.ts`'s `parsePageCredentials`
+for both — and the rail's URL is never one of them, which is the whole reason
+a crafted link to a payment origin cannot become an open redirect;
+`redirectUrlOf`'s `http:`/`https:` check still gates the navigation it does
+make. `middleware.ts` gives it `no-referrer`, `no-store`, `nosniff` and
+`frame-ancestors 'none'` like everything else on this origin (the matcher is
+every path), and **no** merchant-origin lookup, because unlike `/c/{id}`,
+`/e/{id}` and `/c/{id}/return` it neither frames nor `postMessage`s. What is
+**not** proven is the marker itself on a real in-app browser: whether
+`SFSafariViewController` and Chrome Custom Tabs carry `sessionStorage` across
+the rail's cross-origin redirect is reasoned about in `src/lib/redirect-leg.ts`
+and asserted in jsdom, never measured. It fails to the duplicate screen, never
+to a wrong outcome — the rail's `return_url` carries both `t` and `key`, so a
+return page that finds no marker still has every credential it needs.
+
 **Updated 2026-09-05: the confirm consults the intent's checkout session.**
 The bullet above about the `client_secret` lasting the intent's whole life now
 carries its one exception; the rule itself, its seven container-backed cases

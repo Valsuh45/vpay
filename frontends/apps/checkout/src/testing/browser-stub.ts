@@ -298,7 +298,23 @@ export function startCheckoutStub(
     };
   };
 
-  const intentObject = (withSecret: boolean): Record<string, unknown> => {
+  /**
+   * An expanded intent.
+   *
+   * `nextAction: false` on the two **checkout-session** routes, because that
+   * is what the server does and it is load-bearing. Those routes render
+   * `PaymentIntentObject::try_from(&row)`, whose `next_action` is `None`
+   * unconditionally — "`next_action` lives on the charge, not the intent"
+   * (`vpay_api::model`) — and neither of them calls `with_next_action`, the
+   * only thing that attaches one. A stub that answered a rail URL there
+   * would certify a page that never redirects anybody on a real deployment:
+   * exactly the shape issue #195's first fix took, and exactly what this
+   * stub exists to refuse.
+   */
+  const intentObject = (
+    withSecret: boolean,
+    { nextAction = true }: { nextAction?: boolean } = {},
+  ): Record<string, unknown> => {
     const body: Record<string, unknown> = {
       id: intent.id,
       object: "payment_intent",
@@ -306,7 +322,7 @@ export function startCheckoutStub(
       currency,
       status: intent.status,
       payment_method_types: paymentMethodTypes,
-      next_action: intent.next_action,
+      next_action: nextAction ? intent.next_action : null,
       last_payment_error: intent.last_payment_error,
       metadata: {},
       description: null,
@@ -388,7 +404,7 @@ export function startCheckoutStub(
         }
         json(res, 200, {
           ...sessionObject(true),
-          payment_intent: intentObject(true),
+          payment_intent: intentObject(true, { nextAction: false }),
           ...merchantMember(),
         });
         return;
@@ -420,7 +436,7 @@ export function startCheckoutStub(
         }
         json(res, 200, {
           ...sessionObject(false),
-          payment_intent: intentObject(false),
+          payment_intent: intentObject(false, { nextAction: false }),
           ...merchantMember(),
         });
         return;

@@ -109,7 +109,7 @@ nothing.
 
 `just verify` is **fourteen gates and one advisory report**. What each one
 refuses, and what each printed when all fourteen were re-run, one invocation
-each, on **2026-09-18** on this branch's merge of `master` at `84143e1d`, on
+each, on **2026-09-18** on this branch's merge of `master` at `bd5c85d1`, on
 macOS with `cratestack` 0.12.0 on `PATH`. _(The column before it was 2026-09-17
 on the merge of `eb078020`, and before that 2026-09-16 on `888b00c3` with
 `DOCKER_HOST=unix:///run/user/1000/docker.sock`. It is re-run rather than
@@ -142,7 +142,7 @@ no longer exists; the history is the paragraph you are reading.)_
 | `verify-status`            | an undeclared — or a stale — `NotImplemented` token                                                                                                                             | 1 unimplemented item                                  |
 | `verify-errors`            | an unclassified error type, or `anyhow` in a library crate                                                                                                                      | 20 error types, 17 `#[from]` variants                 |
 | `verify-sdk-parity`        | an SDK capability with no row, or a row naming no capability                                                                                                                    | 662 proving tests, 37 dated gaps, 35 methods, 39 rows |
-| `verify-links`             | a repository link that resolves to no tracked path                                                                                                                              | 1 733 links in 401 files                              |
+| `verify-links`             | a repository link that resolves to no tracked path                                                                                                                              | 1 741 links in 402 files                              |
 | `verify-npm-scope`         | an unpublishable manifest, or a retired package name outside the record                                                                                                         | 2 publishable packages, 1 private                     |
 | `check-schema`             | a `schemas/vpay.cstack` that does not type-check                                                                                                                                | 27 declarations, under 0.12.0; see the note below     |
 | `verify-serde`             | a serialisable type that does not spell the wire convention                                                                                                                     | 102 types, 17 exemptions                              |
@@ -190,10 +190,11 @@ listed.
 `verify-privacy-inventory` did **not** move — the same 295 columns across 25
 elements before and after a parser hardening pass, which is what a hardening
 pass should do. And a fourth time the same day, merging `master` at `5af959b2`
-(#204 and #206, then #197 and #208 at `84143e1d` hours later):
-`verify-links` 1 723/399→**1 733/401**, `verify-sdk-parity` 661→**662**, and
-`verify-versions` from red to its first green run, **21 version references, all
-0.1.1**. The first reading taken for the links row said 2 011/408; it was taken
+(#204 and #206, then #197 and #208, then #209 and #200 at `bd5c85d1`, all
+within the day): `verify-links` 1 723/399→**1 741/402**, `verify-sdk-parity`
+661→**662**, and `verify-versions` from red to its first green run, **21
+version references, all 0.1.1**. Nothing else moved across all four merges —
+`verify-privacy-inventory` read 295/25/10 on every one of them. The first reading taken for the links row said 2 011/408; it was taken
 with the merge still conflicted, and `git ls-files` — which is how that gate
 learns what the repository tracks — lists a conflicted path once per stage.
 Measure a gate on a committed tree or do not quote it.)_

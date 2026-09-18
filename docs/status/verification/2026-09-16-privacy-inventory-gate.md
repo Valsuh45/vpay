@@ -325,9 +325,56 @@ The third is **not** in `just ci` and so is not in that CI run either:
 ```
 $ just docs-check-citations
 xtask: 1 cited id(s) do not exist in vaam-apps/vpay. …
-  - run 46733123454 does not exist (HTTP 404), cited at docs/runbooks/live-sandbox-test.md:173, docs/runbooks/live-sandbox-test.md:231, docs/status/verification/2026-09-15.md:18
+  - run 4673…3454 does not exist (HTTP 404), cited at docs/runbooks/live-sandbox-test.md:173, docs/runbooks/live-sandbox-test.md:231, docs/status/verification/2026-09-15.md:18
 ```
 
 All three cited lines are on `master` unchanged and none of the three files is
 touched here. This page's own new citation — run `35275177452`, 6 citations —
 resolves.
+
+_(The id above is elided on purpose, and it was not on 2026-09-18 when this
+block was first written. Quoting the gate's output verbatim made **this page**
+the fourth site citing that run: `verify-citations` reads an eleven-digit
+number near a cue and cannot tell a quotation from a claim, so the next run
+named this file alongside the two that really do cite it. Two middle digits
+are dropped rather than the sentence rewritten, so the output still reads as
+what the gate printed. A page recording a dangling citation must not become
+one.)_
+
+### Two of those three are fixed, and a fourth arrived — 2026-09-18, later
+
+This branch merged `origin/master` four more times the same day, ending at
+`bd5c85d1`. Re-measured on that head:
+
+- **`just verify-versions`: green**, `21 version references all say 0.1.1` — its
+  first green run since it landed.
+  [#204](https://github.com/vaam-apps/vpay/pull/204) found the cause (a
+  **bare-string** `extra-files` entry routes to a document updater rather than
+  the annotation-only one), restored both files and taught the gate to refuse a
+  bare string; [#206](https://github.com/vaam-apps/vpay/pull/206) gave it nine
+  tests. `just verify` now prints **fourteen** and passes.
+- **`AGENTS.md` and `CHANGELOG.md`: clean.** #206 formatted the first and put
+  the second in `.prettierignore`, with the reason: release-please splices a new
+  section into the changelog at every release, so formatting it buys one clean
+  run and makes every future release pull request red.
+- **`just docs-check-citations`: still red, same one id**, and still in three
+  files none of which this branch touches.
+- **And `just fmt-check` is red again, on a file that did not exist in this
+  list before.** `.github/workflows/release.yml` fails `prettier --check` on two
+  lines [#209](https://github.com/vaam-apps/vpay/pull/209) added —
+  `registry-url: 'https://registry.npmjs.org'`, single-quoted where
+  `.prettierrc.json`'s `"singleQuote": false` wants double. Confirmed to be
+  `master`'s by extracting `origin/master`'s own copy of the file and checking
+  it in isolation; this branch does not touch it
+  (`git diff --stat origin/master...HEAD -- .github/workflows/release.yml` is
+  empty). It is the same shape as the `CHANGELOG.md` failure #206 cleared:
+  `just fmt-check` is a whole-tree recipe, so any red file anywhere makes it red
+  here, whoever wrote it.
+
+Everything else on this branch is unchanged across all four merges.
+`verify-privacy-inventory` read **295 columns / 25 elements / 10 surfaces** on
+every one of them; `cargo test -p xtask` is **285 passed, 0 ignored** (276 of
+this branch's plus #206's nine `version_tests`), of which **26** are
+`privacy_inventory_tests`; `just test-doc` **121 passed, 1 ignored**;
+`just clippy` and `just verify-links` green, the latter at **1 741 links in 402
+files**.

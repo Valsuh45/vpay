@@ -29,6 +29,7 @@ import { decideReturnEntry } from "../lib/entry";
 import { forwardKindFor, forwardTarget } from "../lib/forward";
 import { createFrameChannel, type FrameChannel } from "../lib/frame";
 import { recallPublishableKey } from "../lib/link";
+import { clearRedirectLeg, recallRedirectLeg } from "../lib/redirect-leg";
 import {
   RETURN_INITIAL_STATE,
   ReturnController,
@@ -60,6 +61,27 @@ export function ReturnClient(props: ReturnClientProps) {
   }, [locale]);
 
   useEffect(() => {
+    const redirectLeg = recallRedirectLeg(
+      window.sessionStorage,
+      props.sessionId,
+    );
+    if (redirectLeg) {
+      // Issue #195: this tab is a native sheet's redirect leg. The sheet is
+      // the outcome reporter, so this page renders a neutral "returning to
+      // the app" screen and never starts a controller — no poll, no outcome.
+      // The marker is cleared so a later normal web checkout in the same tab
+      // is not suppressed. Checked BEFORE the entry decision so a redirect
+      // leg always renders the neutral screen, whatever the shape of the
+      // return URL the rail handed back (a malformed one must not re-surface
+      // a foreign error screen on top of the sheet's outcome).
+      clearRedirectLeg(window.sessionStorage, props.sessionId);
+      // The neutral screen is the one setState on the synchronous entry path
+      // — the effect's real work (the controller) is async, so this is a
+      // React-lint false positive worth the one-line reason.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setState({ name: "redirect_leg" });
+      return;
+    }
     const decision = decideReturnEntry({
       search: window.location.search,
       rememberedKey: recallPublishableKey(
@@ -72,7 +94,6 @@ export function ReturnClient(props: ReturnClientProps) {
     if (decision.kind === "error") {
       // REAL finding, same shape as `checkout-client.tsx`: the return trip's
       // token is read from the URL, which only the browser can do.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setState({ name: "error", error: { code: decision.code } });
       return;
     }
