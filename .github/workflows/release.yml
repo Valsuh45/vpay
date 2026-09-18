@@ -436,7 +436,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
-          registry-url: 'https://registry.npmjs.org'
+          registry-url: "https://registry.npmjs.org"
           # `package-manager-cache: false`, explicitly — setup-node's own
           # default is `true` (caches automatically off the manifest's
           # `packageManager` field). This job holds NPM_TOKEN and publishes
@@ -533,7 +533,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
-          registry-url: 'https://registry.npmjs.org'
+          registry-url: "https://registry.npmjs.org"
           # `package-manager-cache: false`, explicitly — setup-node's own
           # default is `true` (caches automatically off the manifest's
           # `packageManager` field). This job holds NPM_TOKEN and publishes
