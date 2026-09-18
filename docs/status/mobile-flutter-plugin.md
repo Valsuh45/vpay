@@ -324,23 +324,71 @@ dropping D4/D8's iframe/`postMessage` concepts (`frame.ts`/`origins.ts`/
 
 ## Issue #195 — the browser leg is a controlled surface, the return page suppresses its outcome (2026-09-17)
 
-The double outcome the ticket named is closed. `SheetController.startRedirect`
-no longer hands the rail's own URL to the browser: it opens `/c/{id}/redirect`
-(a vpay-origin page) and the rail URL is deliberately never passed — that page
-re-derives it from the server, so a payment origin cannot be an open redirect.
-The return page `/c/{id}/return`, seeing the `sessionStorage` redirect-leg
-marker, renders a neutral "returning to the app" screen instead of a full
-outcome and never starts its controller; the sheet stays the outcome reporter,
-in its own language and money format. Proven by the new Dart
-`redirectLegUrlFor` tests, the updated hand-off assertion in
-`test/sheet/sheet_controller_test.dart` (the URL handed to the platform is the
-redirect-leg URL, never `orange.example`), and the hosted app's
-`redirect.ts`/`redirect-leg.ts`/`entry.ts`/return-view tests. `flutter test`
-297 passed / 0 skipped, `dart analyze --fatal-infos` clean; `just test-web`,
-`verify-ui`, `verify-status`, `verify-links` and `verify-sdk-parity` green.
-Not proven on a real device in this change — the same unverified-everywhere
-dismissal signal the lane-2 section below describes, with D4's poll making it
-correct regardless. Evidence below is the lane-2 entry, unchanged.
+`SheetController.startRedirect` no longer hands the rail's own URL to the
+browser: it opens `/c/{id}/redirect` (a page on the **checkout** origin) and
+the rail URL is deliberately never passed — that page asks the server for it,
+so a payment origin cannot be an open redirect. The return page
+`/c/{id}/return`, seeing the `sessionStorage` redirect-leg marker, renders a
+neutral "returning to the app" screen instead of a full outcome and never
+starts its controller; the sheet stays the outcome reporter, in its own
+language and money format.
+
+**Two defects were found in review and are what the evidence below is
+actually about**, because each one on its own meant no payer ever reached
+the rail — strictly worse than the duplicate screen this closes:
+
+1. The leg URL was built on `BrowserClient.baseUrl`, the **API**'s origin
+   (`deployment.public_base_url`). `/c/…` is served by
+   `frontends/apps/checkout` on `checkout.public_base_url` — a second
+   deployable, `:8080` vs `:3080` in `compose.demo.yml`, and the API mounts
+   no `/c/` route. It now comes from the server-minted session URL the sheet
+   already holds (`SheetController.sessionPageUrlFrom`).
+2. The redirect page read `next_action` off the session response, which the
+   server never renders there (`PaymentIntentObject::try_from` sets it
+   `None`; only `with_next_action` attaches one, and that route does not
+   call it). It now reads the session for the intent's credential and
+   `GET /v1/browser/payment_intents/{id}` for the rail URL.
+
+Both passed a fully green suite before review: the Dart test used
+`https://api.example` as both origins, and the page's test hand-wrote a
+`fetch` answer carrying a `next_action`. The tests were rebuilt so they can
+fail — two distinct origins in both Dart suites plus a `checkout_sheet_test`
+widget case over the seam that chooses between them, and the page driven
+against `src/testing/browser-stub.ts` (whose session routes now answer
+`next_action: null`, as the API does). Each fix was mutated back and
+observed failing.
+
+Measured on this branch on 2026-09-18, and written up with both mutation runs
+in
+[verification/2026-09-17-redirect-leg-review.md](verification/2026-09-17-redirect-leg-review.md):
+`flutter test` **302 passed / 0 skipped**, `dart analyze --fatal-infos` clean,
+`dart format --set-exit-if-changed` clean; `just test-web` checkout **538
+passed / 1 skipped**, dashboard 316 / 1 skipped, shop 108; `just
+test-storybook` checkout **24 stories**, dashboard 25, axe clean including
+`color-contrast`; `just lint-web` exit 0; `verify-ui`, `verify-status`,
+`verify-links`, `verify-sdk-parity` green. `just ci` was **not** run — the
+Rust workspace was held by another agent — so nothing here is evidence about
+it.
+
+**Merging this beside PR #197 needs one hand edit, and `git merge` will not
+say so.** The two branches touch `sheet_controller.dart` in different places
+and merge without a conflict, but #197 adds nine `SheetController(...)`
+constructions to `test/sheet/sheet_controller_test.dart` and this change makes
+`sessionPageUrl` a **required** parameter, so the merged file fails
+`dart analyze` with nine `missing_required_argument` errors. One line per site
+(`sessionPageUrl: _sessionPageUrl,`) fixes it; measured on a throwaway merge,
+after which `flutter test` is **314 passed / 0 failed** and `dart analyze
+--fatal-infos` is clean. Whichever of the two merges second owns that edit.
+
+**Not proven: the leg end to end.** Nobody has driven it on a device or
+against `just demo-up` — the same unverified-everywhere dismissal signal the
+lane-2 section below describes, with D4's poll making it correct regardless.
+One consequence of the suppression is worth knowing on call: a neutral
+return page renders no "return to the merchant" button, so the browser leg
+can no longer reach one of `stopUrls` on its own and the sheet resolves this
+rail on the dismissal signal alone. **And the skills still describe the
+pre-#192 window**, so `vpay-skills` owes a companion PR — AGENTS.md
+§ "Docs↔skills parity". Evidence below is the lane-2 entry, unchanged.
 
 ## Issue #189, lane 2 — the native checkout sheet, driven to `paid` by hand (2026-09-17)
 

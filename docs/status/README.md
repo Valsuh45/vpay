@@ -35,6 +35,18 @@ Named by the newest date in each block, not by a single date: entries were
 appended to `docs/status.md` in the order branches landed, which is not always
 the order they were measured.
 
+- [verification/2026-09-17-redirect-leg-review.md](verification/2026-09-17-redirect-leg-review.md)
+  — issue #195: the review of the native sheet's redirect leg, and the two
+  defects it found. The leg URL was built on the **API**'s origin, which serves
+  no `/c/` route, and the `/c/{id}/redirect` page read `next_action` off the
+  checkout-session route, which never renders one — either alone means no payer
+  reaches the rail, and both shipped green because one test used a single string
+  for two origins and the other hand-wrote a `fetch` answer the server does not
+  send. Both fixed, both mutations re-run and observed failing;
+  `flutter test` 302 / 0, `just test-web` checkout 538 / 1,
+  `just test-storybook` 24 stories, four `cargo xtask` gates green. `just ci`
+  was not run. Carries the throwaway-merge result with PR #197, which needs one
+  hand edit `git merge` does not report.
 - [verification/2026-09-16-adr-0022.md](verification/2026-09-16-adr-0022.md) —
   ADR-0022 (surface isolation and independent scaling): `deployment.surfaces`
   and conditional `/v1`/`/dash/v1` mounting, the dashboard runner stage's real
