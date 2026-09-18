@@ -5867,27 +5867,60 @@ fn migrations_db_columns(root: &Path) -> Result<BTreeSet<(String, String)>, Stri
             if stmt.is_empty() {
                 continue;
             }
-            if let Some((table, body)) = create_table_parts(stmt) {
-                let cols = tables.entry(table).or_default();
-                for column in create_table_columns(body) {
-                    cols.insert(column);
+            match create_table_parts(stmt) {
+                CreateTable::Columns(table, body) => {
+                    let columns = create_table_columns(body);
+                    if columns.is_empty() {
+                        return Err(format!(
+                            "{MIGRATIONS_DIR}/{name}: `CREATE TABLE {table}` yields no columns. \
+                             A `(LIKE other)` body — or any shape this parser cannot split into \
+                             column definitions — derives an empty table, and a table with no \
+                             columns is one the inventory can never be asked about. Model the \
+                             form in `create_table_columns` rather than letting it through."
+                        ));
+                    }
+                    let cols = tables.entry(table).or_default();
+                    for column in columns {
+                        cols.insert(column);
+                    }
                 }
-            } else if let Some(dropped) = drop_table_targets(stmt) {
-                for table in dropped {
-                    tables.remove(&table);
+                CreateTable::Unmodelled(table) => {
+                    return Err(format!(
+                        "{MIGRATIONS_DIR}/{name}: `CREATE TABLE {table}` is a form this parser \
+                         does not model — `AS SELECT`, `PARTITION OF`, `INHERITS`, or no column \
+                         list where one belongs. Its columns would be derived as none at all, so \
+                         BOTH directions of this gate would agree about a table neither can see. \
+                         Model it before landing the migration."
+                    ));
                 }
-            } else if let Some(table) = alter_table_target(stmt) {
-                let cols = tables.entry(table).or_default();
-                if let Some((from, to)) = alter_rename_column(stmt)
-                    && cols.remove(&from)
-                {
-                    cols.insert(to);
-                }
-                for column in alter_add_columns(stmt) {
-                    cols.insert(column);
-                }
-                for column in alter_drop_columns(stmt) {
-                    cols.remove(&column);
+                CreateTable::No => {
+                    if let Some(dropped) = drop_table_targets(stmt) {
+                        for table in dropped {
+                            tables.remove(&table);
+                        }
+                    } else if let Some(table) = alter_table_target(stmt) {
+                        if kw_end(stmt, &["RENAME", "TO"]).is_some() {
+                            return Err(format!(
+                                "{MIGRATIONS_DIR}/{name}: `ALTER TABLE {table} RENAME TO ...` is \
+                                 not modelled. Every column would stay filed under `{table}`, so \
+                                 the inventory would have to keep naming a table that no longer \
+                                 exists in order to pass. Model the rename before landing the \
+                                 migration."
+                            ));
+                        }
+                        let cols = tables.entry(table).or_default();
+                        if let Some((from, to)) = alter_rename_column(stmt)
+                            && cols.remove(&from)
+                        {
+                            cols.insert(to);
+                        }
+                        for column in alter_add_columns(stmt) {
+                            cols.insert(column);
+                        }
+                        for column in alter_drop_columns(stmt) {
+                            cols.remove(&column);
+                        }
+                    }
                 }
             }
         }
@@ -5902,73 +5935,224 @@ fn migrations_db_columns(root: &Path) -> Result<BTreeSet<(String, String)>, Stri
     Ok(out)
 }
 
-/// Remove `--` to end-of-line and `/* ... */` comments, preserving length with
-/// spaces so offsets elsewhere stay stable.
+/// Remove `--` to end-of-line and `/* ... */` comments, replacing every removed
+/// byte with a space so the result lines up with `src` byte for byte.
 ///
 /// String-aware: a `--` or `/*` inside a single-quoted SQL string literal is
 /// data, not a comment. This matters for real migrations — 0007's
 /// `CHECK (private_key_pem LIKE '-----BEGIN%KEY-----%')` begins with `--`, and
 /// a naive stripper turns that whole expression into a comment and leaves the
 /// `CHECK (` unclosed.
+///
+/// Bytes throughout, which is the correction rather than a style preference.
+/// This pushed `byte as char`, and that maps each byte of a multi-byte
+/// character to its own Latin-1 code point and re-encodes it as two: these
+/// migrations' comments and `COMMENT ON` bodies are full of `§`, `—` and `±`,
+/// so the output was mojibake *and longer than the input* while the doc comment
+/// above it claimed length was preserved. Nothing downstream indexed back into
+/// `src`, so nothing misparsed — the false claim was the whole of the defect,
+/// and in this repository that is the part that matters. The output is valid
+/// UTF-8 by construction (a multi-byte character is either copied whole or
+/// blanked whole), so the lossy decode never has anything to replace.
 fn strip_sql_comments(src: &str) -> String {
     let b = src.as_bytes();
-    let mut out = String::with_capacity(src.len());
+    let mut out: Vec<u8> = Vec::with_capacity(src.len());
     let mut i = 0;
     let mut in_str = false;
     while let Some(&c) = b.get(i) {
         if c == b'\'' {
             in_str = !in_str;
-            out.push(c as char);
+            out.push(c);
             i += 1;
             continue;
         }
         if !in_str {
             if c == b'-' && b.get(i + 1) == Some(&b'-') {
                 while b.get(i).is_some_and(|&x| x != b'\n') {
-                    out.push(' ');
+                    out.push(b' ');
                     i += 1;
                 }
                 continue;
             }
             if c == b'/' && b.get(i + 1) == Some(&b'*') {
-                out.push(' ');
-                out.push(' ');
+                out.push(b' ');
+                out.push(b' ');
                 i += 2;
                 while b.get(i).is_some()
                     && !(b.get(i) == Some(&b'*') && b.get(i + 1) == Some(&b'/'))
                 {
-                    out.push(' ');
+                    out.push(b' ');
                     i += 1;
                 }
                 if b.get(i).is_some() {
-                    out.push(' ');
-                    out.push(' ');
+                    out.push(b' ');
+                    out.push(b' ');
                     i += 2;
                 }
                 continue;
             }
         }
-        out.push(c as char);
+        out.push(c);
         i += 1;
     }
-    out
+    String::from_utf8_lossy(&out).into_owned()
 }
 
-/// If `stmt` is a `CREATE TABLE`, the (normalised table name, body between the
-/// outer parentheses).
-fn create_table_parts(stmt: &str) -> Option<(String, &str)> {
-    let up = stmt.to_uppercase();
-    let pos = up.find("CREATE TABLE")?;
+/// The byte offset just past `words` — matched in order, ASCII-case-
+/// insensitively, separated by one or more whitespace characters, at a word
+/// boundary on both ends, and outside any single-quoted string literal.
+///
+/// This replaces `stmt.to_uppercase().find("CREATE TABLE")`, which was wrong in
+/// three ways that all fail the same direction — **open**, with the gate still
+/// green. Measured, each one, against this parser before the change:
+///
+/// * **One literal space.** `CREATE  TABLE t (...)`, `CREATE\tTABLE`, or a
+///   `CREATE` left at the end of a wrapped line matched nothing at all, so the
+///   whole table — every column of it — was invisible to both directions.
+///   `ALTER  TABLE t ADD COLUMN email` silently lost `email`; `DROP  TABLE t`
+///   silently left `t` standing, which is the exact defect
+///   [`drop_table_targets`] was added to close, reachable again through a
+///   second space. Nothing in this repository reformats SQL, so the only thing
+///   keeping the old spelling correct was that all 48 migrations happen to be
+///   typed with exactly one space.
+/// * **No word boundary.** `RECREATE TABLE` contains `CREATE TABLE`.
+/// * **String literals.** These migrations' `COMMENT ON` bodies are essays that
+///   discuss migrations; one containing the words `DROP TABLE customers` would
+///   have removed the real `customers` table from the derived set, silently.
+///
+/// Matching the bytes of `stmt` itself rather than an uppercased copy also
+/// closes a latent offset bug: `str::to_uppercase` is not length-preserving for
+/// every input (`'ﬁ'` is three bytes, `"FI"` is two), and offsets found in the
+/// copy were being used to index the original.
+fn kw_end(stmt: &str, words: &[&str]) -> Option<usize> {
     let b = stmt.as_bytes();
-    let mut i = pos + "CREATE TABLE".len();
-    while b.get(i).is_some_and(|&c| c.is_ascii_whitespace()) {
+    let mut in_str = false;
+    for i in 0..b.len() {
+        if b.get(i) == Some(&b'\'') {
+            in_str = !in_str;
+            continue;
+        }
+        if in_str {
+            continue;
+        }
+        if i > 0 && b.get(i - 1).is_some_and(|c| is_sql_ident_byte(*c)) {
+            continue;
+        }
+        if let Some(end) = words_at(b, i, words) {
+            return Some(end);
+        }
+    }
+    None
+}
+
+/// `words` in order starting exactly at `at`, whitespace-separated, ending on a
+/// word boundary — the offset just past the last one.
+///
+/// Unlike [`kw_end`] this does not search: it answers "is this the keyword
+/// sequence, right here", which is what an optional clause such as
+/// `IF NOT EXISTS` needs after the caller has skipped to its position.
+fn words_at(b: &[u8], at: usize, words: &[&str]) -> Option<usize> {
+    let mut i = at;
+    for (n, word) in words.iter().enumerate() {
+        if n > 0 {
+            let before = i;
+            i = skip_space(b, i);
+            if i == before {
+                return None;
+            }
+        }
+        let end = i.checked_add(word.len())?;
+        if !b
+            .get(i..end)
+            .is_some_and(|s| s.eq_ignore_ascii_case(word.as_bytes()))
+        {
+            return None;
+        }
+        i = end;
+    }
+    if b.get(i).is_some_and(|c| is_sql_ident_byte(*c)) {
+        return None;
+    }
+    Some(i)
+}
+
+/// The first offset at or after `from` that is not ASCII whitespace.
+fn skip_space(b: &[u8], from: usize) -> usize {
+    let mut i = from;
+    while b.get(i).is_some_and(|c| c.is_ascii_whitespace()) {
         i += 1;
     }
-    if up.get(i..)?.starts_with("IF NOT EXISTS") {
-        i += "IF NOT EXISTS".len();
-        while b.get(i).is_some_and(|&c| c.is_ascii_whitespace()) {
-            i += 1;
-        }
+    i
+}
+
+/// Whether `c` can appear inside an unquoted SQL identifier, so that a keyword
+/// match beginning or ending on it is a match in the middle of a name.
+fn is_sql_ident_byte(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || c == b'_' || c == b'$'
+}
+
+/// A table or column name as the derived set spells it: last dot-segment,
+/// unquoted, no trailing semicolon, lowercased.
+///
+/// **Schema qualification is dropped, not kept.** The five
+/// `CREATE TABLE authkestra.oauth_*` tables in `0006`/`0013` are filed under
+/// their bare names, which is the spelling `schemas/privacy-inventory.yaml`
+/// uses and the one `docs/reference/personal-data-inventory.md` publishes. Two
+/// tables of the same bare name in different schemas would merge into one entry
+/// here, and a column of either would then satisfy a classification written for
+/// the other. No such pair exists today — 31 created tables, 31 distinct bare
+/// names — and the reference page says so in its own words rather than leaving
+/// the reader to rediscover it.
+fn normalise_sql_name(raw: &str) -> String {
+    raw.rsplit('.')
+        .next()
+        .unwrap_or(raw)
+        .trim_matches('"')
+        .trim_end_matches(';')
+        .to_lowercase()
+}
+
+/// What a statement is, as far as deriving a column set goes.
+///
+/// # Why an `Unmodelled` arm exists
+///
+/// The alternative is silence, and silence here is the one failure this
+/// repository will not accept from a check. A `CREATE TABLE` this parser could
+/// not decompose used to return `None`, fall through to the `DROP`/`ALTER`
+/// branches, match neither, and be skipped — so the table entered the derived
+/// set as *nothing*. Both directions of the gate then agree, for the same
+/// reason: direction A cannot report columns it never derived, and direction B
+/// has no stale row to find because an honest author classified none. A green
+/// gate over an unclassified table is precisely what
+/// `verify-privacy-inventory` exists to make impossible.
+///
+/// Measured against this parser before the change, each deriving an empty set
+/// and passing: `CREATE TABLE t AS SELECT ...`,
+/// `CREATE TABLE t (LIKE u INCLUDING ALL)`, and
+/// `CREATE TABLE t PARTITION OF u FOR VALUES ...`. None of the three appears in
+/// `backends/migrations` today. The refusal is what keeps that a fact the gate
+/// holds rather than one a reviewer has to re-establish.
+#[derive(Debug, PartialEq, Eq)]
+enum CreateTable<'a> {
+    /// Not a `CREATE TABLE` statement.
+    No,
+    /// `CREATE TABLE <name> (<body>)`: the normalised name, and the body
+    /// between the outer parentheses.
+    Columns(String, &'a str),
+    /// A `CREATE TABLE` whose column list this parser cannot read. Carries the
+    /// table name, for the refusal message.
+    Unmodelled(String),
+}
+
+/// Classify `stmt`, and if it is a `CREATE TABLE` read its name and body.
+fn create_table_parts(stmt: &str) -> CreateTable<'_> {
+    let Some(after_kw) = kw_end(stmt, &["CREATE", "TABLE"]) else {
+        return CreateTable::No;
+    };
+    let b = stmt.as_bytes();
+    let mut i = skip_space(b, after_kw);
+    if let Some(end) = words_at(b, i, &["IF", "NOT", "EXISTS"]) {
+        i = skip_space(b, end);
     }
     let name_start = i;
     while b
@@ -5977,36 +6161,46 @@ fn create_table_parts(stmt: &str) -> Option<(String, &str)> {
     {
         i += 1;
     }
-    let raw = stmt.get(name_start..i)?;
-    let table = raw
-        .rsplit('.')
-        .next()
-        .unwrap_or(raw)
-        .trim_matches('"')
-        .to_lowercase();
-    while b.get(i).is_some_and(|&c| c.is_ascii_whitespace()) {
-        i += 1;
+    let Some(raw) = stmt.get(name_start..i) else {
+        return CreateTable::No;
+    };
+    let table = normalise_sql_name(raw);
+    if table.is_empty() {
+        return CreateTable::Unmodelled(raw.to_string());
     }
+    i = skip_space(b, i);
     if b.get(i) != Some(&b'(') {
-        return None;
+        // `AS SELECT`, `PARTITION OF`, or anything else where a column list
+        // should be.
+        return CreateTable::Unmodelled(table);
     }
     let body_start = i + 1;
     let mut depth = 1i32;
+    let mut in_str = false;
     let mut j = body_start;
     while j < b.len() {
         match b.get(j) {
-            Some(&b'(') => depth += 1,
-            Some(&b')') => {
+            Some(&b'\'') => in_str = !in_str,
+            Some(&b'(') if !in_str => depth += 1,
+            Some(&b')') if !in_str => {
                 depth -= 1;
                 if depth == 0 {
-                    return Some((table, stmt.get(body_start..j)?));
+                    let (Some(body), Some(tail)) = (stmt.get(body_start..j), stmt.get(j..)) else {
+                        return CreateTable::Unmodelled(table);
+                    };
+                    // `INHERITS (parent)` adds every column of the parent, and
+                    // this parse sees none of them.
+                    if kw_end(tail, &["INHERITS"]).is_some() {
+                        return CreateTable::Unmodelled(table);
+                    }
+                    return CreateTable::Columns(table, body);
                 }
             }
             _ => {}
         }
         j += 1;
     }
-    None
+    CreateTable::Unmodelled(table)
 }
 
 /// The column names defined in a `CREATE TABLE` body (skips constraint lines).
@@ -6114,28 +6308,15 @@ fn is_constraint_line(part: &str) -> bool {
 /// [`create_table_parts`] and [`alter_table_target`] normalise them, or the
 /// name removed would not be the name inserted.
 fn drop_table_targets(stmt: &str) -> Option<Vec<String>> {
-    let up = stmt.to_uppercase();
-    let pos = up.find("DROP TABLE")?;
-    let mut rest = stmt.get(pos + "DROP TABLE".len()..)?.trim_start();
-    if rest.to_uppercase().starts_with("IF EXISTS") {
-        rest = rest.get("IF EXISTS".len()..)?.trim_start();
+    let after_kw = kw_end(stmt, &["DROP", "TABLE"])?;
+    let b = stmt.as_bytes();
+    let mut start = skip_space(b, after_kw);
+    if let Some(end) = words_at(b, start, &["IF", "EXISTS"]) {
+        start = skip_space(b, end);
     }
     let mut out = Vec::new();
-    for raw in rest.split(',') {
-        let name = raw
-            .split_whitespace()
-            .next()
-            .unwrap_or_default()
-            .trim_end_matches(';');
-        if name.is_empty() {
-            continue;
-        }
-        let name = name
-            .rsplit('.')
-            .next()
-            .unwrap_or(name)
-            .trim_matches('"')
-            .to_lowercase();
+    for raw in stmt.get(start..)?.split(',') {
+        let name = normalise_sql_name(raw.split_whitespace().next().unwrap_or_default());
         if name.is_empty() || name == "cascade" || name == "restrict" {
             continue;
         }
@@ -6145,22 +6326,42 @@ fn drop_table_targets(stmt: &str) -> Option<Vec<String>> {
 }
 
 /// If `stmt` is an `ALTER TABLE`, the normalised target table name.
+///
+/// `ALTER TABLE ONLY t ...` would read `only` as the table — a form no
+/// migration uses, and one that fails *closed*: the columns land under a table
+/// nothing classifies, so direction A reports them. Named here rather than
+/// handled, because a fail-closed gap costs a reviewer one run and a
+/// fail-open one costs nothing until it matters.
 fn alter_table_target(stmt: &str) -> Option<String> {
-    let up = stmt.to_uppercase();
-    let pos = up.find("ALTER TABLE")?;
-    let mut rest = stmt.get(pos + "ALTER TABLE".len()..)?.trim_start();
-    if rest.to_uppercase().starts_with("IF EXISTS") {
-        rest = rest.get("IF EXISTS".len()..)?.trim_start();
+    let after_kw = kw_end(stmt, &["ALTER", "TABLE"])?;
+    let b = stmt.as_bytes();
+    let mut i = skip_space(b, after_kw);
+    if let Some(end) = words_at(b, i, &["IF", "EXISTS"]) {
+        i = skip_space(b, end);
     }
-    let end = rest.find(|c: char| c.is_whitespace())?;
-    let raw = rest.get(..end)?;
-    Some(
-        raw.rsplit('.')
-            .next()
-            .unwrap_or(raw)
-            .trim_matches('"')
-            .to_lowercase(),
-    )
+    let start = i;
+    while b.get(i).is_some_and(|&c| !c.is_ascii_whitespace()) {
+        i += 1;
+    }
+    let name = normalise_sql_name(stmt.get(start..i)?);
+    if name.is_empty() { None } else { Some(name) }
+}
+
+/// Whether the character before `at` would put a keyword match in the middle of
+/// an identifier.
+///
+/// [`is_constraint_line`] grew a word boundary on the *trailing* side for the
+/// same reason; this is the leading one, and it was missing from both
+/// [`alter_add_columns`] and [`alter_drop_columns`]. Measured:
+/// `ALTER TABLE t ADD COLUMN c my_add TEXT` derived a phantom column `text`,
+/// because the `add` ending `my_add` matched. That direction fails *closed* —
+/// a column nothing classifies is reported — so it cost a confusing gate
+/// failure rather than a silent pass, but a parser that invents columns is one
+/// nobody can read the output of.
+fn preceded_by_ident_char(chars: &[char], at: usize) -> bool {
+    at.checked_sub(1)
+        .and_then(|p| chars.get(p))
+        .is_some_and(|c| is_ident_char(*c))
 }
 
 /// Whether `chars[j..]` begins with `kw` (case-insensitive), when that many
@@ -6194,8 +6395,8 @@ fn alter_add_columns(stmt: &str) -> Vec<String> {
         }
         let is_add = !in_str
             && depth == 0
-            && (ch == 'A' || ch == 'a')
-            && is_kw_at(&chars, i + 1, "DD")
+            && !preceded_by_ident_char(&chars, i)
+            && is_kw_at(&chars, i, "ADD")
             && chars
                 .get(i + 3)
                 .is_none_or(|c| c.is_whitespace() || *c == '(');
@@ -6252,6 +6453,7 @@ fn alter_add_columns(stmt: &str) -> Vec<String> {
 fn alter_drop_columns(stmt: &str) -> Vec<String> {
     let chars: Vec<char> = stmt.chars().collect();
     let mut out = Vec::new();
+    let mut depth = 0i32;
     let mut in_str = false;
     let mut i = 0;
     while i < chars.len() {
@@ -6259,7 +6461,14 @@ fn alter_drop_columns(stmt: &str) -> Vec<String> {
         if ch == '\'' {
             in_str = !in_str;
         }
+        match ch {
+            '(' if !in_str => depth += 1,
+            ')' if !in_str => depth -= 1,
+            _ => {}
+        }
         let is_drop = !in_str
+            && depth == 0
+            && !preceded_by_ident_char(&chars, i)
             && is_kw_at(&chars, i, "DROP")
             && chars
                 .get(i + 4)
@@ -6311,25 +6520,29 @@ fn alter_drop_columns(stmt: &str) -> Vec<String> {
 }
 
 /// The `(from, to)` of an `ALTER TABLE ... RENAME COLUMN a TO b`, if any.
+///
+/// `RENAME CONSTRAINT a TO b` (migration `0010`) and `RENAME TO b` are *not*
+/// this: [`kw_end`] requires `RENAME` and `COLUMN` to be adjacent words, so
+/// neither matches. The table rename is refused outright in
+/// [`migrations_db_columns`] rather than silently treated as no-op.
 fn alter_rename_column(stmt: &str) -> Option<(String, String)> {
-    let up = stmt.to_uppercase();
-    let pos = up.find("RENAME COLUMN")?;
-    let rest = stmt.get(pos + "RENAME COLUMN".len()..)?.trim_start();
-    let from_end = rest.find(|c: char| c.is_whitespace())?;
-    let from = rest.get(..from_end)?.trim_matches('"').to_lowercase();
-    let tail = rest.get(from_end..)?.trim_start();
-    let tail_up = tail.to_uppercase();
-    let to_start = if tail_up.starts_with("TO") {
-        tail.get("TO".len()..)?.trim_start()
-    } else {
-        tail
-    };
-    let to = to_start
-        .split(|c: char| c.is_whitespace())
-        .next()
-        .unwrap_or_default()
-        .trim_matches('"')
-        .to_lowercase();
+    let after_kw = kw_end(stmt, &["RENAME", "COLUMN"])?;
+    let b = stmt.as_bytes();
+    let mut i = skip_space(b, after_kw);
+    let from_start = i;
+    while b.get(i).is_some_and(|&c| !c.is_ascii_whitespace()) {
+        i += 1;
+    }
+    let from = normalise_sql_name(stmt.get(from_start..i)?);
+    i = skip_space(b, i);
+    if let Some(end) = words_at(b, i, &["TO"]) {
+        i = skip_space(b, end);
+    }
+    let to_start = i;
+    while b.get(i).is_some_and(|&c| !c.is_ascii_whitespace()) {
+        i += 1;
+    }
+    let to = normalise_sql_name(stmt.get(to_start..i)?);
     if from.is_empty() || to.is_empty() {
         None
     } else {
@@ -6626,6 +6839,179 @@ non_db_surfaces:
             "err: {err}"
         );
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_out_of_vocabulary_subject_fails() {
+        let root = tmp_root();
+        let inv = OK_INV.replace("subject: payer", "subject: payor");
+        write(&root, OK_MIG, &inv);
+        let err = verify_privacy_inventory(&root).unwrap_err();
+        assert!(
+            err.contains("not one of {payer, staff, merchant, none, system}"),
+            "err: {err}"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_unsupported_copy_kind_fails() {
+        let root = tmp_root();
+        let inv = OK_INV.replace(
+            "- kind: column\n      table: customers",
+            "- kind: logline\n      table: customers",
+        );
+        write(&root, OK_MIG, &inv);
+        let err = verify_privacy_inventory(&root).unwrap_err();
+        assert!(
+            err.contains("unsupported copy kind `logline`"),
+            "err: {err}"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_inventory_of_another_version_is_refused_rather_than_read() {
+        let root = tmp_root();
+        write(&root, OK_MIG, &OK_INV.replace("version: 1", "version: 2"));
+        let err = verify_privacy_inventory(&root).unwrap_err();
+        assert!(err.contains("unsupported version 2"), "err: {err}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// The derived column set for one migration file, or the gate's refusal.
+    fn derive(sql: &str) -> Result<BTreeSet<(String, String)>, String> {
+        let root = tmp_root();
+        fs::write(root.join("backends/migrations/0001_test.sql"), sql).unwrap();
+        let out = migrations_db_columns(&root);
+        let _ = fs::remove_dir_all(&root);
+        out
+    }
+
+    fn has(cols: &BTreeSet<(String, String)>, table: &str, column: &str) -> bool {
+        cols.contains(&(table.to_string(), column.to_string()))
+    }
+
+    #[test]
+    fn a_keyword_pair_survives_any_whitespace_between_its_words() {
+        // THE defect this parser could have shipped with. `up.find("CREATE
+        // TABLE")` matched one literal space, so a second space, a tab, or a
+        // line break after `CREATE` made the whole table — every column of it —
+        // invisible to BOTH directions of the gate, silently. Nothing in this
+        // repository reformats SQL; the only thing keeping it correct was that
+        // all 48 migrations happen to be typed with one space.
+        for sql in [
+            "CREATE  TABLE t (id TEXT, email TEXT);",
+            "CREATE\tTABLE t (id TEXT, email TEXT);",
+            "CREATE\n  TABLE t (id TEXT, email TEXT);",
+        ] {
+            let cols = derive(sql).unwrap();
+            assert!(has(&cols, "t", "email"), "sql: {sql:?} -> {cols:?}");
+        }
+
+        // The same for the other two statement kinds: an added column must not
+        // go missing, and a dropped table must not survive.
+        let cols =
+            derive("CREATE TABLE t (id TEXT);\nALTER  TABLE t ADD COLUMN email TEXT;").unwrap();
+        assert!(has(&cols, "t", "email"), "{cols:?}");
+        let cols = derive("CREATE TABLE t (id TEXT);\nDROP\nTABLE t;").unwrap();
+        assert!(
+            cols.is_empty(),
+            "a dropped table must not survive: {cols:?}"
+        );
+        let cols =
+            derive("CREATE TABLE t (id TEXT);\nALTER TABLE t RENAME  COLUMN id TO kid;").unwrap();
+        assert!(has(&cols, "t", "kid") && !has(&cols, "t", "id"), "{cols:?}");
+    }
+
+    #[test]
+    fn a_keyword_inside_an_identifier_is_not_a_keyword() {
+        // Leading word boundary. `RECREATE TABLE` is not `CREATE TABLE`, and
+        // the `add` that ends `my_add` is not an `ADD` clause — the latter used
+        // to invent a column called `text`.
+        let cols =
+            derive("CREATE TABLE t (id TEXT);\nALTER TABLE t ADD COLUMN c my_add TEXT;").unwrap();
+        assert!(has(&cols, "t", "c"), "{cols:?}");
+        assert!(!has(&cols, "t", "text"), "no phantom column: {cols:?}");
+        assert_eq!(kw_end("RECREATE TABLE t", &["CREATE", "TABLE"]), None);
+    }
+
+    #[test]
+    fn a_ddl_keyword_inside_a_string_literal_is_data() {
+        // These migrations' `COMMENT ON` bodies are essays that discuss
+        // migrations. One containing the words `DROP TABLE customers` must not
+        // remove the real `customers` table from the derived set — that is a
+        // silent, fail-open erasure of every column the gate would have asked
+        // about.
+        let cols = derive(
+            "CREATE TABLE customers (email TEXT);\n             COMMENT ON TABLE customers IS 'migration 0009 ran DROP TABLE customers here';",
+        )
+        .unwrap();
+        assert!(has(&cols, "customers", "email"), "{cols:?}");
+    }
+
+    #[test]
+    fn a_create_table_the_parser_cannot_read_is_refused_not_skipped() {
+        // Each of these derived an EMPTY column set and passed, before the
+        // refusal: no columns to report unclassified, and no inventory row to
+        // call stale, so both directions agreed about a table neither could
+        // see. None appears in backends/migrations today — the refusal is what
+        // keeps that true rather than re-checked.
+        for sql in [
+            "CREATE TABLE t AS SELECT a, b FROM u;",
+            "CREATE TABLE t PARTITION OF u FOR VALUES FROM (1) TO (2);",
+            "CREATE TABLE t (id TEXT) INHERITS (u);",
+        ] {
+            let err = derive(sql).unwrap_err();
+            assert!(
+                err.contains("does not model") && err.contains("`CREATE TABLE t`"),
+                "sql: {sql:?} err: {err}"
+            );
+        }
+        // A `(LIKE other)` body parses, but every part of it reads as a
+        // constraint, so the table derives no columns at all.
+        let err = derive("CREATE TABLE t (LIKE u INCLUDING ALL);").unwrap_err();
+        assert!(err.contains("yields no columns"), "err: {err}");
+    }
+
+    #[test]
+    fn a_table_rename_is_refused_rather_than_silently_ignored() {
+        // `ALTER TABLE t RENAME TO u` left every column filed under `t`, so the
+        // inventory could only pass by naming a table that no longer exists.
+        let err = derive("CREATE TABLE t (id TEXT);\nALTER TABLE t RENAME TO u;").unwrap_err();
+        assert!(err.contains("RENAME TO"), "err: {err}");
+        // A column rename and a CONSTRAINT rename are not that, and must still
+        // work — migration 0010 does both.
+        let cols = derive(
+            "CREATE TABLE t (id TEXT);\n             ALTER TABLE t RENAME CONSTRAINT c1 TO c2;\n             ALTER TABLE t RENAME COLUMN id TO kid;",
+        )
+        .unwrap();
+        assert!(has(&cols, "t", "kid"), "{cols:?}");
+    }
+
+    #[test]
+    fn strip_comments_preserves_byte_length_and_multibyte_text() {
+        // It pushed `byte as char`, which re-encoded every byte of a multi-byte
+        // character as its own Latin-1 code point: the output was mojibake and
+        // LONGER than the input, while the doc comment claimed length was
+        // preserved. These migrations are full of `§`, `—` and `±`.
+        let src = "-- a § comment —
+COMMENT ON TABLE t IS 'RFC 7523 §3 — ±1 step';";
+        let out = strip_sql_comments(src);
+        assert_eq!(out.len(), src.len(), "byte length must be preserved");
+        assert!(out.contains("'RFC 7523 §3 — ±1 step'"), "out: {out}");
+        assert!(!out.contains("comment"), "out: {out}");
+    }
+
+    #[test]
+    fn an_alter_clause_inside_parentheses_is_not_a_column_operation() {
+        // `alter_add_columns` guarded on depth; `alter_drop_columns` did not, so
+        // a `DROP` inside a constraint body was read as a dropped column.
+        let cols = derive(
+            "CREATE TABLE t (id TEXT, email TEXT);\n             ALTER TABLE t ADD CONSTRAINT c CHECK (id <> 'x' AND (DROP email) IS NULL);",
+        )
+        .unwrap();
+        assert!(has(&cols, "t", "email"), "{cols:?}");
     }
 }
 
