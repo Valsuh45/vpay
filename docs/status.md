@@ -140,7 +140,7 @@ worse than no table:
 | `verify-status`            | an undeclared — or a stale — `NotImplemented` token                                                                                                              | 1 unimplemented item                                  |
 | `verify-errors`            | an unclassified error type, or `anyhow` in a library crate                                                                                                       | 20 error types, 17 `#[from]` variants                 |
 | `verify-sdk-parity`        | an SDK capability with no row, or a row naming no capability                                                                                                     | 661 proving tests, 37 dated gaps, 35 methods, 39 rows |
-| `verify-links`             | a repository link that resolves to no tracked path                                                                                                               | 1 719 links in 399 files                              |
+| `verify-links`             | a repository link that resolves to no tracked path                                                                                                               | 1 723 links in 399 files                              |
 | `verify-npm-scope`         | an unpublishable manifest, or a retired package name outside the record                                                                                          | 2 publishable packages, 1 private                     |
 | `check-schema`             | a `schemas/vpay.cstack` that does not type-check                                                                                                                 | 27 declarations, under 0.12.0; see the note below     |
 | `verify-serde`             | a serialisable type that does not spell the wire convention                                                                                                      | 102 types, 17 exemptions                              |
@@ -172,9 +172,12 @@ carrying the caveat. It happened again nine days' worth of merges later, on
 `verify-privacy-inventory` 303→**295** columns, that last one because this
 branch's own review taught the gate to read `DROP TABLE`. Same conclusion,
 twice: re-run the column, do not annotate it. And a third time, smaller, on
-2026-09-18: `verify-links` 1 718/399→**1 719/399**, because that day's review
-added one link to
-[reference/personal-data-inventory.md](reference/personal-data-inventory.md).
+2026-09-18: `verify-links` 1 718/399→**1 723/399**. Five links, all added by
+that day's review: to
+[reference/personal-data-inventory.md](reference/personal-data-inventory.md)
+from the gate's own section and from this footnote, and the rest around the
+privacy verification page, which [status/README.md](status/README.md) had never
+listed.
 `verify-privacy-inventory` did **not** move — the same 295 columns across 25
 elements before and after a parser hardening pass, which is what a hardening
 pass should do.)_

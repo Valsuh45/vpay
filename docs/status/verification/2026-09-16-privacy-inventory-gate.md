@@ -108,9 +108,14 @@ merchant credentials. `drop_table_targets` and a word boundary in
   25 elements (16 personal-data, 17 necessary), both directions against the 295
   the migrations derive; 10 non-database surfaces registered (6 not yet
   statically enumerable, 6 with an unmet note, 4 elements name a recipient).
-- `cargo test -p xtask`: see the `just ci` page for this branch. The
-  `privacy_inventory_tests` module is **16** cases.
-- `cargo xtask verify-links`: see the same page.
+- `cargo test -p xtask`: **266 passed, 0 ignored**, of which **16** were
+  `privacy_inventory_tests`. _(This read "see the `just ci` page for this
+  branch" until 2026-09-18, and there was no such page. The number is recorded
+  here now rather than pointed at, and it is **266**, not the 263 the bullet
+  above quotes: 263 was the delivered branch before the merge, and merging
+  `master` brought three more xtask cases with `verify-versions`. The
+  2026-09-18 section below re-measures both on the head of this branch.)_
+- `cargo xtask verify-links`: ok — 1 718 links in 399 tracked markdown files.
 
 **Two things this branch inherits red and does not fix**, both `master`'s at
 `eb078020` and both reproduced locally here:
@@ -129,8 +134,14 @@ merchant credentials. `drop_table_targets` and a word boundary in
 `master`'s CI run
 [35275177452](https://github.com/vaam-apps/vpay/actions/runs/35275177452) is
 red on both steps. No file behind either failure is touched by this change.
-`git diff --name-only origin/master...HEAD | xargs pnpm exec prettier --check`
-— every file this branch does touch — passes.
+~~`git diff --name-only origin/master...HEAD | xargs pnpm exec prettier
+--check` — every file this branch does touch — passes.~~ **Struck 2026-09-18:
+that was not true when it was written.** `AGENTS.md` is a file this branch
+touches **and** one of the four that recipe fails on, so the command reports
+it. What is true, and is what the sentence meant, is that `AGENTS.md` fails on
+`master`'s two lines and on no line this branch wrote — established by
+formatting both copies and diffing them, in the 2026-09-18 section below.
+Every other file this branch touches passes.
 
 **What this addendum still does not claim.** Every unmet criterion listed on
 2026-09-16 is still unmet, and the review added three more — five `redact`
@@ -138,3 +149,185 @@ columns nothing redacts, `jobs.last_error`'s classification, and ADR-0020 §1's
 missing per-copy necessity/control. They are in
 [../../reference/personal-data-inventory.md](../../reference/personal-data-inventory.md)
 and they keep #144 open.
+
+## 2026-09-18 — the review's second pass, and the `just ci` this page owed
+
+The 2026-09-16 section ends "**No full `just ci` was run** on this branch", and
+the pull request body says the same. It has now been run, on the merge of
+`origin/master` at `eb078020`, macOS 25.6.0, cargo 1.98.0, `cratestack` 0.12.0
+on `PATH`. `just ci` stops at its first failing recipe and the first one it
+reaches is `fmt-check-web` — `master`'s failure, not this branch's — so every
+step was run separately, in `just ci`'s own order, and every one is below with
+what it printed.
+
+### What the pass changed in the gate
+
+`verify-privacy-inventory` derived its authoritative column set with
+`stmt.to_uppercase().find("CREATE TABLE")`. Four defects, each measured by
+driving `migrations_db_columns` over temp trees, each failing **open** with the
+gate green:
+
+1. **One literal space.** `CREATE  TABLE t (…)` with two spaces,
+   `CREATE<TAB>TABLE`, or a `CREATE` left at the end of a wrapped line derived
+   **nothing at all** — the whole table, every column of it, invisible to both
+   directions. `ALTER  TABLE t ADD COLUMN email` lost `email`. `DROP  TABLE t`
+   left `t` standing, re-opening through a second space the `0009` hole the
+   2026-09-17 pass had just closed. `RENAME  COLUMN a TO b` left the old name
+   live. Nothing in this repository reformats SQL: the only thing keeping the
+   gate correct was that all 48 migrations happen to be typed with one space.
+2. **No word boundary** (`RECREATE TABLE` contains `CREATE TABLE`) and **no
+   string-literal awareness** — in a repository whose `COMMENT ON` bodies are
+   essays about migrations, so one containing the words `DROP TABLE customers`
+   would have removed the real table from the derived set.
+3. **Offsets taken from an uppercased copy indexed the original.**
+   `str::to_uppercase` is not length-preserving for every input.
+4. **`strip_sql_comments` pushed `byte as char`**, re-encoding each byte of a
+   multi-byte character as its own Latin-1 code point. These migrations are full
+   of `§`, `—` and `±`, so its output was mojibake **and longer than the input**
+   while its own doc comment claimed length was preserved. Nothing indexed back
+   into the source, so nothing misparsed: the false claim was the defect.
+
+`kw_end`/`words_at` replace the matching — in order, ASCII-case-insensitive,
+whitespace-tolerant, boundary-anchored, string-aware, on the bytes of the
+statement itself. **And the forms the parser cannot read are now refused rather
+than skipped.** `CREATE TABLE … AS SELECT`, `… PARTITION OF …`,
+`… INHERITS (…)`, a `(LIKE …)` body and `ALTER TABLE … RENAME TO` each derived
+an empty table and **passed**; each now fails the gate by name. The 2026-09-16
+page had named three of the five as unmodelled and left them as an observation,
+which is not a gate. Ten new cases pin all of it
+(`privacy_inventory_tests` 16 → **26**), none of them touching a shipped
+migration, because `verify-migrations` checksums those.
+
+The gate derives **the same 295 columns across 25 elements** before and after,
+which is what a hardening pass should do.
+
+### What the pass would not decide
+
+Ten `subject: payer|staff|merchant` columns and ten `subject: none|system`
+columns were read against the migration that defines each. No fabricated
+compliance claim, no invented lawful basis, no retention period stated as a
+commitment; every RFC-0002 D1–D13 answer is still open, and the six
+`enumerable: false` surfaces are still rendered as unmet criteria everywhere
+they appear. Two outright false statements on
+[../../reference/personal-data-inventory.md](../../reference/personal-data-inventory.md)
+were fixed, because they were claims and not judgements: its field table listed
+four `subject` values where the gate enforces five, and it credited
+`provider_requests.error_kind` with "a closed operator-label vocabulary" that
+`0016_create-provider-requests.sql:32-36` says does not exist ("Free text on
+purpose"). **Six classifications the migrations' own comments contradict were
+recorded, not changed**, in that page's § "Classifications the review could not
+settle" — each needs an element split or an RFC-0002 D1 answer, and quietly
+re-deciding a GDPR artifact in a review pass is what this directory exists to
+prevent.
+
+### Evidence, in `just ci`'s order
+
+| Step                         | Result                                                                                                                                                                                                                                               |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `just fmt-check-rust`        | **ok** — `cargo fmt --all -- --check`, exit 0                                                                                                                                                                                                        |
+| `just fmt-check-web`         | **FAILS** — `master`'s, see below                                                                                                                                                                                                                    |
+| `just clippy`                | **ok**, exit 0                                                                                                                                                                                                                                       |
+| `just verify`                | **stops at `verify-versions`**, the thirteenth gate — `master`'s, see below. The twelve before it are below; the two after it were run separately                                                                                                    |
+| ‣ `verify-no-mocks`          | ok — no test double reachable from a shipping binary                                                                                                                                                                                                 |
+| ‣ `verify-status`            | ok — 1 unimplemented item, declared and still in shipping code                                                                                                                                                                                       |
+| ‣ `verify-errors`            | ok — 20 error types, all classified; 17 `#[from]` variants delegate                                                                                                                                                                                  |
+| ‣ `verify-sdk-parity`        | ok — 661 proving tests, 37 dated gaps, 35 methods, 39 rows                                                                                                                                                                                           |
+| ‣ `verify-links`             | ok — **1 723** links in 399 tracked markdown files                                                                                                                                                                                                   |
+| ‣ `verify-npm-scope`         | ok — 2 publishable packages, 1 private                                                                                                                                                                                                               |
+| ‣ `check-schema`             | ok — 27 declarations, `cratestack` **0.12.0**, the version `justfile` pins                                                                                                                                                                           |
+| ‣ `verify-serde`             | ok — 102 types, 17 exemptions                                                                                                                                                                                                                        |
+| ‣ `verify-repositories`      | ok — 4 implementations, 84 source files outside `vpay-db`                                                                                                                                                                                            |
+| ‣ `verify-toolchain`         | ok — 1.98.0, matching the one `FROM rust:` in `backends/Dockerfile`                                                                                                                                                                                  |
+| ‣ `verify-ui`                | ok — silent on success, exit 0 only                                                                                                                                                                                                                  |
+| ‣ `verify-migrations`        | ok — 48 files match `MANIFEST.sha256`                                                                                                                                                                                                                |
+| ‣ `verify-privacy-inventory` | ok — **295** columns across **25** elements (16 personal-data, 17 necessary), both directions against the 295 the migrations derive; **10** non-database surfaces (6 not statically enumerable, 6 with an unmet note, 4 elements naming a recipient) |
+| ‣ `verify-docs`              | the advisory report, exit 0                                                                                                                                                                                                                          |
+| `just test-rust`             | **2 015 run, 2 011 passed, 4 failed, 0 skipped** — the four are macOS-only and pre-existing, see below                                                                                                                                               |
+| `cargo test -p xtask`        | **276 passed, 0 failed, 0 ignored**, of which **26** are `privacy_inventory_tests`                                                                                                                                                                   |
+| `just test-doc`              | **121 passed, 1 ignored** across 14 crates — a separate runner from `nextest`, which runs no doctest                                                                                                                                                 |
+| `just verify-ignored`        | ok — 0 ignored (expected 0), 48 test binaries (expected 48), 2 015 total (minimum 1 080)                                                                                                                                                             |
+| `just lint-web`              | **ok**, exit 0                                                                                                                                                                                                                                       |
+| `just test-web`              | **ok**, exit 0                                                                                                                                                                                                                                       |
+| `just audit-web`             | ok — no moderate, high or critical advisory in the workspace                                                                                                                                                                                         |
+| `just deny`                  | ok — advisories ok, bans ok, licenses ok, sources ok                                                                                                                                                                                                 |
+| `just docs-check-citations`  | **FAILS** on one pre-existing dangling id — see below. Not part of `just ci`; it needs the network                                                                                                                                                   |
+
+### Four Rust failures that are this machine, not this branch
+
+`backends/` is untouched by this branch — `git diff --stat origin/master...HEAD
+-- backends/` is empty — and all four failures are in
+`backends/tests/integration/tests/staff_sign_in.rs`:
+`a_forwarded_for_header_from_an_untrusted_peer_buys_no_fresh_budget`,
+`the_second_factor_is_rate_limited_and_not_only_the_password`,
+`the_sign_in_rate_limit_is_per_source_address` and
+`two_replicas_share_one_sign_in_budget`. Each ends:
+
+```
+  1: client error (Connect)
+  2: tcp bind local error
+  3: Can't assign requested address (os error 49)
+```
+
+They simulate distinct client source addresses with
+`reqwest::ClientBuilder::local_address` — `staff_sign_in.rs:1496`, `:1601`
+(`127.0.0.4`), `:1760` (`127.0.0.20`), `:2110` (`127.0.0.30 + n`). **Linux
+assigns the whole `127.0.0.0/8` to `lo`, macOS assigns only `127.0.0.1` to
+`lo0`** (`ifconfig lo0` on this host shows exactly one `inet`), so the bind
+returns `EADDRNOTAVAIL`. They fail identically alone
+(`cargo nextest run -p vpay-tests-integration --test staff_sign_in
+--no-fail-fast`: 27 run, 23 passed, the same 4 failed), so this is a platform
+fact and not a load effect, and it is why CI is green on them. A
+`sudo ifconfig lo0 alias 127.0.0.N up` per address is the local fix; nothing
+here changes the tests.
+
+_(Two other tests failed once each, earlier in the day, on runs taken while
+other suites were building on the same host —
+`checkout_sessions::the_housekeeping_sweep_expires_a_stale_session_and_spares_a_paying_one`
+and `adapter_conformance::not_found_is_never_on_its_own_a_failure::case_2_orange_money`.
+Both passed in isolation and both passed in the clean run above. They are
+recorded because a number on this page should say what was seen, not the best
+of three.)_
+
+### The three failures this branch inherits and does not fix
+
+`master`'s own CI run
+[35275177452](https://github.com/vaam-apps/vpay/actions/runs/35275177452) at
+`eb078020` fails on exactly the first two — queried rather than assumed:
+`self-checks (no-mocks, status)` fails at
+`verify-versions (release-please's bump is complete)`, and `web` fails at
+`fmt-check-web (prettier --check)`.
+
+```
+$ just verify-versions
+xtask: release version references disagree, or a release-please annotation is missing:
+  deploy/helm/vpay/Chart.yaml: listed in release-please-config.json's extra-files but carries no x-release-please-version line, so release-please will never change it
+  sdks/flutter/vpay_checkout_flutter/pubspec.yaml: listed in release-please-config.json's extra-files but carries no x-release-please-version line, so release-please will never change it
+```
+
+```
+$ just fmt-check-web
+[warn] AGENTS.md
+[warn] CHANGELOG.md
+[warn] deploy/helm/vpay/Chart.yaml
+[warn] sdks/flutter/vpay_checkout_flutter/pubspec.yaml
+```
+
+`AGENTS.md` is the only one of those four this branch edits, and its failure is
+**byte-identical to `master`'s**: prettier wants `_new_`/`_not_` where the
+§ Releasing block #201 added writes `*new*`/`*not*` — `master`'s lines 397 and
+409, this branch's 416 and 428, the same two lines displaced by insertions
+above them. Established by formatting both copies and diffing the results, not
+by reading. Every other file this branch touches passes
+`pnpm exec prettier --check`.
+
+The third is **not** in `just ci` and so is not in that CI run either:
+
+```
+$ just docs-check-citations
+xtask: 1 cited id(s) do not exist in vaam-apps/vpay. …
+  - run 46733123454 does not exist (HTTP 404), cited at docs/runbooks/live-sandbox-test.md:173, docs/runbooks/live-sandbox-test.md:231, docs/status/verification/2026-09-15.md:18
+```
+
+All three cited lines are on `master` unchanged and none of the three files is
+touched here. This page's own new citation — run `35275177452`, 6 citations —
+resolves.
