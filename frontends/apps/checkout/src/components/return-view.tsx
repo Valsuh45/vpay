@@ -22,6 +22,7 @@ import {
   NoticePanel,
   OutcomePanel,
   PaymentSummary,
+  RedirectLegNeutral,
   StatusPanel,
   SupportLine,
   merchantLine,
@@ -50,103 +51,125 @@ export function ReturnView(props: ReturnViewProps) {
   return (
     <main>
       <ScreenStack className="mx-auto w-full max-w-md p-6">
-        <header className="flex items-center justify-between gap-4">
-          <BrandHeader t={t} branding={props.branding} />
-          <LocaleSwitch t={t} locale={locale} onChange={props.onLocaleChange} />
-        </header>
+        {state.name === "redirect_leg" ? (
+          // Issue #195: the neutral screen is the only thing this page
+          // renders for a sheet's redirect leg — no brand header, no
+          // language switch, no payment summary, no outcome. The sheet
+          // reports the result in its own language and money format, so
+          // there is nothing a second, foreign surface should add.
+          <RedirectLegNeutral t={t} />
+        ) : (
+          <>
+            <header className="flex items-center justify-between gap-4">
+              <BrandHeader t={t} branding={props.branding} />
+              <LocaleSwitch
+                t={t}
+                locale={locale}
+                onChange={props.onLocaleChange}
+              />
+            </header>
 
-        {context === null ? null : (
-          <PaymentSummary
-            t={t}
-            merchant={merchant}
-            amount={amount}
-            reference={context.session.id}
-            livemode={context.session.livemode}
-          />
+            {context === null ? null : (
+              <PaymentSummary
+                t={t}
+                merchant={merchant}
+                amount={amount}
+                reference={context.session.id}
+                livemode={context.session.livemode}
+              />
+            )}
+
+            <div
+              aria-live="polite"
+              aria-atomic="true"
+              data-testid="live-region"
+            >
+              {(() => {
+                switch (state.name) {
+                  case "loading":
+                    return (
+                      <StatusPanel
+                        t={t}
+                        screen="loading"
+                        title={t("state.loading")}
+                        body={null}
+                      />
+                    );
+                  case "error":
+                    return (
+                      <NoticePanel
+                        t={t}
+                        screen="error"
+                        title={t("error.title")}
+                        body={t(state.error.code)}
+                        code={state.error.serverCode}
+                      />
+                    );
+                  case "expired":
+                    return (
+                      <NoticePanel
+                        t={t}
+                        screen="expired"
+                        title={t("expired.title")}
+                        body={merchantLine(
+                          t,
+                          merchant,
+                          "expired.body",
+                          "expired.body_unnamed",
+                        )}
+                      />
+                    );
+                  case "polling":
+                    return (
+                      <StatusPanel
+                        t={t}
+                        screen="polling"
+                        title={t("state.waiting_title")}
+                        body={t("state.waiting_body", { amount })}
+                        notice={state.notice}
+                      />
+                    );
+                  case "outcome":
+                    return (
+                      <OutcomePanel
+                        t={t}
+                        kind={state.kind}
+                        failure={failureMessage(state.failure)}
+                        reason={state.reason}
+                        merchant={merchant}
+                        amount={amount}
+                        destination={props.destination}
+                        onBack={props.onReturnToMerchant}
+                      />
+                    );
+                  case "forwarding":
+                    return (
+                      <StatusPanel
+                        t={t}
+                        screen="forwarding"
+                        title={t("state.forwarding_title")}
+                        body={merchantLine(
+                          t,
+                          merchant,
+                          "state.forwarding_body",
+                          "state.forwarding_body_unnamed",
+                        )}
+                      />
+                    );
+                  default: {
+                    // Exhaustive: `state` is narrowed here to exclude
+                    // `redirect_leg`, which the outer ternary returns early
+                    // for.
+                    const unreachable: never = state;
+                    return unreachable;
+                  }
+                }
+              })()}
+            </div>
+
+            <SupportLine t={t} branding={props.branding} />
+          </>
         )}
-
-        <div aria-live="polite" aria-atomic="true" data-testid="live-region">
-          {(() => {
-            switch (state.name) {
-              case "loading":
-                return (
-                  <StatusPanel
-                    t={t}
-                    screen="loading"
-                    title={t("state.loading")}
-                    body={null}
-                  />
-                );
-              case "error":
-                return (
-                  <NoticePanel
-                    t={t}
-                    screen="error"
-                    title={t("error.title")}
-                    body={t(state.error.code)}
-                    code={state.error.serverCode}
-                  />
-                );
-              case "expired":
-                return (
-                  <NoticePanel
-                    t={t}
-                    screen="expired"
-                    title={t("expired.title")}
-                    body={merchantLine(
-                      t,
-                      merchant,
-                      "expired.body",
-                      "expired.body_unnamed",
-                    )}
-                  />
-                );
-              case "polling":
-                return (
-                  <StatusPanel
-                    t={t}
-                    screen="polling"
-                    title={t("state.waiting_title")}
-                    body={t("state.waiting_body", { amount })}
-                    notice={state.notice}
-                  />
-                );
-              case "outcome":
-                return (
-                  <OutcomePanel
-                    t={t}
-                    kind={state.kind}
-                    failure={failureMessage(state.failure)}
-                    reason={state.reason}
-                    merchant={merchant}
-                    amount={amount}
-                    destination={props.destination}
-                    onBack={props.onReturnToMerchant}
-                  />
-                );
-              case "forwarding":
-                return (
-                  <StatusPanel
-                    t={t}
-                    screen="forwarding"
-                    title={t("state.forwarding_title")}
-                    body={merchantLine(
-                      t,
-                      merchant,
-                      "state.forwarding_body",
-                      "state.forwarding_body_unnamed",
-                    )}
-                  />
-                );
-              default: {
-                const unreachable: never = state;
-                return unreachable;
-              }
-            }
-          })()}
-        </div>
-
-        <SupportLine t={t} branding={props.branding} />
       </ScreenStack>
     </main>
   );

@@ -41,7 +41,7 @@ library;
 
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show ChangeNotifier;
+import 'package:flutter/foundation.dart' show ChangeNotifier, visibleForTesting;
 
 import '../browser_client.dart';
 import '../checkout_controller.dart' show StopUrlSpec, SystemClock, VpayClock;
@@ -86,6 +86,7 @@ String errorMessageKey(VpayError error) {
 final class SheetController extends ChangeNotifier {
   SheetController({
     required this.client,
+    required this.sessionPageUrl,
     required this.sessionClientSecret,
     this.merchantName,
     this.allowedMethods,
@@ -99,6 +100,26 @@ final class SheetController extends ChangeNotifier {
   }) : _platform = platform ?? VpayCheckoutPlatform.instance;
 
   final BrowserClient client;
+
+  /// `{checkout_base}/c/{cs_id}` — this session's own hosted page, with its
+  /// query and fragment (both credentials) already stripped.
+  ///
+  /// **Not derivable from [client].** `BrowserClient.baseUrl` is the
+  /// **API**'s origin — the thing `/v1/browser/...` hangs off
+  /// (`deployment.public_base_url`, `http://localhost:8080` in
+  /// `compose.demo.yml`). The checkout page is a second deployable on a
+  /// second origin (`checkout.public_base_url`, `http://localhost:3080`
+  /// there), and `config/application.yml` says so at length. Building a
+  /// `/c/{id}/…` URL on the API's origin sends the payer to a route the API
+  /// does not serve, which is a 404 instead of a payment.
+  ///
+  /// So it comes from the one string that always carries the right origin:
+  /// the **server-minted** session URL, `{checkout_base}/c/{cs_id}?key=…#…`
+  /// (`vpay_api::v1::checkout_sessions`), which the sheet is handed and
+  /// already parses for [sessionClientSecret]. A path prefix survives it
+  /// (`https://api.example/checkout/c/cs_1` is a legal deployment), which
+  /// no re-derivation from a configured base would.
+  final String sessionPageUrl;
 
   /// `cs_…_secret_…` — read once at construction, exactly as
   /// `VpayCheckout.start`'s `_SessionUrl.clientSecret` is.
@@ -400,8 +421,79 @@ final class SheetController extends ChangeNotifier {
       return;
     }
     // Redirect recorded BEFORE the hand-off — controller.ts's own ordering.
+    // `CheckoutRedirectRequired` still carries the rail's URL (that is what
+    // this state means — a redirect for this rail), but the browser is NOT
+    // handed it: the sheet opens a vpay-controlled redirect-leg page instead
+    // of the rail's own URL (issue #195), so the browser leg never renders a
+    // full outcome on top of the sheet that is about to render its own. See
+    // [redirectLegUrlFor] for why the rail URL is deliberately not passed on.
     _setState(reduceCheckoutScreen(_state, CheckoutRedirectRequired(url)));
-    await _handOffToBrowser(url);
+    await _handOffToBrowser(
+      redirectLegUrlFor(
+        sessionPageUrl: sessionPageUrl,
+        publishableKey: client.publishableKey,
+        sessionClientSecret: sessionClientSecret,
+      ),
+    );
+  }
+
+  /// The vpay-controlled URL the sheet opens in the browser for a redirect
+  /// rail, instead of the rail's own URL (issue #195).
+  ///
+  /// `/c/{id}/redirect` is a page on vpay's own origin that reads the
+  /// session, marks this tab as a sheet's redirect leg, and sends the
+  /// browser to the rail — so the rail's URL never reaches the browser seam
+  /// directly, and the return page suppresses its own outcome because the
+  /// sheet is the outcome reporter.
+  ///
+  /// The credential shape is D6's: the publishable key in the query (public),
+  /// the session's `client_secret` in the fragment (never a log or a
+  /// `Referer`). The rail URL itself is deliberately **not** passed as a
+  /// parameter — the redirect page re-derives it from the server, so a
+  /// crafted URL can never turn a payment origin into an open redirect.
+  ///
+  /// [sessionPageUrl] is this session's own hosted page and is therefore
+  /// already on the **checkout** origin — see that field for why the API's
+  /// own base URL is the wrong answer here and what it breaks.
+  @visibleForTesting
+  static String redirectLegUrlFor({
+    required String sessionPageUrl,
+    required String publishableKey,
+    required String sessionClientSecret,
+  }) {
+    // Trailing slashes only: the caller has already stripped the query and
+    // the fragment (`sessionPageUrlFrom`), and a `//redirect` would be a
+    // path segment the app does not route.
+    final String base = sessionPageUrl.trim().replaceAll(RegExp(r'/+$'), '');
+    // The session `client_secret` is written raw into the fragment, exactly
+    // as the server mints the hosted URL (`{base}/c/{id}#{secret}`) —
+    // percent-encoding it would double-decode when the browser exposes
+    // `location.hash` and `parsePageCredentials` calls `decodeURIComponent`
+    // again. The secret's alphabet is URL-safe alphanumerics + `_`, so raw
+    // is correct and matches the server's own shape.
+    return '$base/redirect'
+        '?key=${Uri.encodeQueryComponent(publishableKey)}'
+        '#$sessionClientSecret';
+  }
+
+  /// `{checkout_base}/c/{cs_id}` out of a server-minted session URL —
+  /// everything before the first `?` or `#`, which is where both of that
+  /// URL's credentials live.
+  ///
+  /// The counterpart of `checkout_sheet.dart`'s own fragment read, and here
+  /// rather than there so [redirectLegUrlFor]'s input is defined beside it:
+  /// these two functions are the whole of "which origin does the payer's
+  /// browser go to", and splitting them across files is how they would
+  /// drift.
+  ///
+  /// Public rather than `@visibleForTesting`: [VpayCheckoutSheet] calls it,
+  /// and so must anyone constructing a [SheetController] by hand — which is
+  /// the point, because the alternative every caller reaches for first
+  /// (`client.baseUrl`) is the wrong origin.
+  static String sessionPageUrlFrom(String sessionUrl) {
+    final String trimmed = sessionUrl.trim();
+    final int cut = trimmed.indexOf(RegExp(r'[?#]'));
+    return cut == -1 ? trimmed : trimmed.substring(0, cut);
   }
 
   /// Sends a payer who came back without finishing back to the rail's own

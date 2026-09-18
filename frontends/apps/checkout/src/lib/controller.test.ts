@@ -12,7 +12,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { startCheckoutStub, type CheckoutStub } from "../testing/browser-stub";
 import { BrowserCheckoutApi } from "./api";
-import { CheckoutController } from "./controller";
+import { CheckoutController, redirectUrlOf } from "./controller";
 import type { ChildMessage, FrameChannel } from "./frame";
 import type { SupportedRail } from "./rails";
 
@@ -239,8 +239,12 @@ describe("the Orange redirect", () => {
     // status a payer who closed Orange's hosted page and came back (or
     // reloaded) sits in, forever — nothing about the stored intent moves on
     // its own from there. A second controller against the same session is
-    // this page after a reload; `stub`'s session route serves the live
-    // intent every read, with no poll budget to run out.
+    // this page after a reload.
+    //
+    // The URL it lands with cannot have come from the session read: that
+    // route answers `next_action: null` for every intent, here and on the
+    // server (`browser-stub.ts`'s `intentObject`, and the test below that
+    // pins it). It comes from the intent read `#withNextAction` makes.
     const h = await harness({
       paymentMethodTypes: ["orange_money"],
       redirectUrl: "https://rail.example/stub-hosted-page/tok_abc",
@@ -314,6 +318,75 @@ describe("the Orange redirect", () => {
         type: "vpay:redirect",
         url: "https://rail.example/stub-hosted-page/tok_123",
       },
+    ]);
+  });
+
+  it("takes the rail URL off the payment-intents route, because the session read answers none", async () => {
+    // The regression this pins is the one #199 shipped and #200's stub
+    // exposed: reading `next_action` off the session read. It looks right,
+    // type-checks, and passes against any stub that renders one — and
+    // answers `null` on every real deployment, which is a payer who never
+    // gets back to the rail. `redirect.ts`'s module doc is the same finding
+    // for `/c/{id}/redirect`.
+    //
+    // Two halves, and both have to hold. First: the session read really
+    // does answer `next_action: null` for a `requires_action` intent, so a
+    // controller reducing from it alone has no URL to offer. Second: the
+    // controller reaches `resume_redirect` anyway — and the only new
+    // request that could have told it where to go is the GET on the
+    // payment-intents route, asserted verbatim rather than counted.
+    const h = await harness({
+      paymentMethodTypes: ["orange_money"],
+      redirectUrl: "https://rail.example/stub-hosted-page/tok_abc",
+    });
+    await h.controller.start();
+    await h.controller.startRedirect();
+
+    const read = await new BrowserCheckoutApi({
+      baseUrl: h.stub.url,
+    }).readSession(h.stub.sessionId, {
+      key: h.stub.publishableKey,
+      clientSecret: h.stub.sessionSecret,
+    });
+    if (!read.ok) {
+      throw new Error("the stub answers the session read");
+    }
+    expect(read.value.payment_intent.status).toBe("requires_action");
+    expect(read.value.payment_intent.next_action).toBeNull();
+    expect(redirectUrlOf(read.value.payment_intent)).toBeNull();
+
+    const intentId = read.value.payment_intent.id;
+    const before = h.stub.requests.length;
+    const stripe = await loadStripe(h.stub.publishableKey, {
+      baseUrl: h.stub.url,
+    });
+    const resumed = new CheckoutController({
+      sessionId: h.stub.sessionId,
+      credentials: {
+        key: h.stub.publishableKey,
+        clientSecret: h.stub.sessionSecret,
+      },
+      api: new BrowserCheckoutApi({ baseUrl: h.stub.url }),
+      stripe,
+      navigate: () => undefined,
+      channel: null,
+    });
+    await resumed.start();
+
+    expect(resumed.state).toMatchObject({
+      name: "resume_redirect",
+      url: "https://rail.example/stub-hosted-page/tok_abc",
+    });
+    expect(
+      h.stub.requests
+        .slice(before)
+        .map(
+          (r) =>
+            `${r.method} ${new URL(r.url, "http://stub.invalid").pathname}`,
+        ),
+    ).toEqual([
+      `GET /v1/browser/checkout/sessions/${h.stub.sessionId}`,
+      `GET /v1/browser/payment_intents/${intentId}`,
     ]);
   });
 });

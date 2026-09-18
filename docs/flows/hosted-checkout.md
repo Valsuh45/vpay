@@ -602,3 +602,39 @@ the real page's DOM for a background. The 22 states are the ones
 `checkout-view.test.tsx` asserts against; Lane 3b's unnamed-merchant screens
 remain covered by vitest and not by a story. And the dashboard's screens have
 no equivalent gate.
+
+**Updated 2026-09-18: a payer who abandons a redirect rail's page and comes
+back lands on an offer to reopen it, and that takes two reads.** PR #199 added
+the `resume_redirect` state — `requires_action` is where a payer who closed
+Orange's hosted page sits, forever, because nothing about the stored intent
+moves on its own from there, and `waiting`'s "check your phone" spinner is both
+false (a redirect rail never sees a payer's number) and unresolvable until the
+poll budget dies. **It did not work on a real deployment, and PR #200 is the
+fix.** `machine.ts`'s reducer read the rail URL off the intent the session read
+expands, and
+`GET /v1/browser/checkout/sessions/{id}` never renders a `next_action`: that
+route builds its object with `PaymentIntentObject::try_from(&row)`, whose
+`next_action` is `None` unconditionally, and `with_next_action` — the only
+thing that attaches one — is called by the payment-intent routes alone. So the
+reducer fell through to the `waiting` screen #199 existed to remove.
+
+`CheckoutController.start` now re-reads the intent through
+`GET /v1/browser/payment_intents/{id}` (`retrievePaymentIntent`, with the
+intent `client_secret` the session read carries) **only** when the session
+answered a `requires_action` intent with no `next_action` on it, and reduces
+from that. The cost is one extra request on exactly that path and none on any
+other; the reducer stays pure and its contract is unchanged. Every failure of
+the second read leaves the `waiting` fallback standing, so `resume_redirect` is
+still reachable only with a URL the server sent. This is the same two-read
+ladder `/c/{cs_id}/redirect` takes — see
+[browser-checkout.md](browser-checkout.md)'s Status, which found it first, on a
+different page, in the same week.
+
+**The state-machine diagram in
+[hosted-checkout/state-machine-and-outcomes.md](hosted-checkout/state-machine-and-outcomes.md)
+predates `resume_redirect` and does not show it.** That page is the verbatim
+text split out on 2026-09-11 and is not edited in place; this paragraph is the
+correction. The missing edge is `loading ──► resume_redirect` on a session read
+whose intent is `requires_action`, with one arrow out of it, a button press,
+back to the rail's own page — the same `#navigateTopLevel` split (top-level, or
+the parent navigates when framed) the `redirecting` edge already carries.

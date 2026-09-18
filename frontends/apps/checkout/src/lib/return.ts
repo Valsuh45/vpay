@@ -55,6 +55,16 @@ export type ReturnState =
       context: ReturnContext;
       kind: OutcomeKind;
       url: string;
+    }
+  | {
+      /**
+       * A native sheet's redirect leg (issue #195): the sheet is the
+       * outcome reporter, so this page renders a neutral "returning to the
+       * app" screen and its controller is never started. This state is
+       * constructed by the client, never by the reducer — see
+       * `reduceReturn`'s doc comment for why the reducer never makes it.
+       */
+      name: "redirect_leg";
     };
 
 export type ReturnEvent =

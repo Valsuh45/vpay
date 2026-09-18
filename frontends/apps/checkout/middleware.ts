@@ -60,6 +60,20 @@ const HOSTED_PATH = /^\/c\/[^/]+\/?$/;
 /** `/c/{cs_id}/return`. Same lookup, `soleOrigin`'s rule, still `frame-ancestors 'none'`. */
 const RETURN_PATH = /^\/c\/[^/]+\/return\/?$/;
 
+/**
+ * **`/c/{cs_id}/redirect` is deliberately not in that list** (issue #195).
+ *
+ * It is the fourth page on this origin, and the only one that needs no origin
+ * lookup at all: it is never framed and never `postMessage`s — its whole job
+ * is to read the session, read the intent, and `location.assign` the rail. A
+ * lookup would be a request that answers a question nothing asks. It still
+ * gets everything the constant half of this middleware gives every response,
+ * because the matcher below is every path: `no-referrer` (which is what keeps
+ * the session secret in its fragment out of the rail's `Referer`),
+ * `no-store`, `nosniff`, and `frame-ancestors 'none'` — the same fail-closed
+ * value an unknown answer produces anywhere else here.
+ */
+
 export async function middleware(request: NextRequest): Promise<NextResponse> {
   const path = request.nextUrl.pathname;
   const embedded = EMBEDDED_PATH.test(path);

@@ -144,7 +144,13 @@ describe("the state a freshly-read session lands in", () => {
     });
   });
 
-  it("falls back to waiting for a requires_action intent that somehow carries no redirect (defensive — the API is supposed to guarantee one)", () => {
+  it("falls back to waiting for a requires_action intent that carries no redirect — which is exactly the shape a checkout-session read answers", () => {
+    // Not a defensive branch for a broken server: the two checkout-session
+    // routes render `next_action: null` for every intent, so this is the
+    // object `controller.ts` gets before `#withNextAction` re-reads the
+    // intent from the one route that attaches one. This reducer is handed
+    // an intent and reduces it; it never fetches, so `waiting` is the
+    // honest answer to "a redirect exists and I cannot name it".
     expect(
       stateForContext(makeContext({}, { status: "requires_action" })).name,
     ).toBe("waiting");
