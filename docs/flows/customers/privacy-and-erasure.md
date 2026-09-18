@@ -128,16 +128,40 @@ somewhere else, and no code named them:
 | `charges.payer_ref` / `payer_ref_masked`      | the payer's MSISDN as the rail was given it — reachable from a customer only _through_ an intent                          |
 | `charges.failure_raw` / `refunds.failure_raw` | **the rail's own message, verbatim** — a mobile-money rail declining a collection names the subscriber it declined it for |
 | `idempotency_keys.response_body`              | the exact JSON a `POST /v1/customers` answered, kept 24 hours to replay                                                   |
+| `payment_intents.last_payment_error_code` / `last_payment_error_message` | the intent's own decline text — a vpay-authored message today, but redacted as defense-in-depth because the inventory classifies the column `rail_failure_text` and a closed message can stop being closed without a schema change |
+| `webhook_deliveries.response_excerpt`         | the merchant endpoint's response to a delivery, truncated to 512 chars but un-parsed — a receiver that echoes the payload it was sent has put the payer's number in it |
 
 `vpay_db::customers::erase_in_tx` rewrites all of them **in the transaction
 that erases the customer**, because "vpay erased this payer" may not be true of
-one table and false of four. The stored `customer.*` bodies have the payer's
+one table and false of seven. The stored `customer.*` bodies have the payer's
 position in them too, nested inside `data.object.address`: the redaction
 replaces the whole `address` key with the redacted object rather than walking
 into it, so there is no path by which a nested component survives — the nested
 object is never read. `provider_requests` needs no statement and that is a
 property of its schema rather than an oversight: it stores a status code and
-an attempt number and no bodies (migration `0016`).
+an attempt number and no bodies (migration `0016`). One column it owns,
+`error_kind`, is a documented maintainer decision and **not** redacted: it
+holds only vpay's own operator labels (timeout/TLS/not_implemented), never rail
+prose, so reclassifying it — rather than redacting it — is the decision a
+maintainer has yet to take.
+
+**Added 2026-09-18, two more copies and the decisions they did not need.** The
+two rows above — `last_payment_error_*` and `response_excerpt` — were not in
+this table when it was written, because the enumeration that produced it looked
+for "the copies that survived, in full", and both were bounded and looked like
+status rather than content. Both now get a statement in
+`redact_stored_copies`. The intent's `last_payment_error_message` is NULLed
+**together with** its `last_payment_error_code` — the `lpe_paired` CHECK forces
+the pair both-NULL or both-set, and the code column's closed-vocabulary CHECK
+rejects a text marker, so the redaction is an absence exactly as it is for the
+coordinate. `response_excerpt` is marked `[redacted]` when non-null, for every
+delivery of the payer's `customer.*` events, the terminal ones included —
+unlike `payload_sha256` (forensics of what vpay *sent*), the excerpt is a copy
+of what the merchant *said*, so it is redacted wherever it is. Two
+`rail_failure_text` columns are still out of reach and both are named, not
+silently left: `provider_requests.error_kind` above, and `staff_members.email`,
+which is a **staff** subject — the customer erasure structurally cannot reach
+it, and a staff erasure is a separate concern, issue #145.
 
 **The two `failure_raw` columns were added to that list on 2026-09-11, by the
 review, after they survived an erasure in a test.** They are not identifier

@@ -1893,6 +1893,46 @@ async fn an_erasure_leaves_no_payer_identifier_in_any_column_of_any_table() -> a
     .await
     .context("seeding the refund that carries the rail's words about the payer")?;
 
+    // The intent's own decline text. `last_payment_error_message` is the copy
+    // that can name the subscriber; `last_payment_error_code` is paired with it
+    // by the `lpe_paired` CHECK (migration 0014), so the erasure NULLs both
+    // together. Seed the payer's number into the message.
+    sqlx::query(
+        "UPDATE payment_intents SET last_payment_error_code = 'invalid_payer', \
+         last_payment_error_message = $2 WHERE id = $1",
+    )
+    .bind(&intent.id)
+    .bind(format!("PAYER_NOT_FOUND: subscriber {PHONE} is not registered"))
+    .execute(&h.pool)
+    .await
+    .context("seeding the intent's decline text that names the payer")?;
+
+    // A delivery whose `response_excerpt` echoes the payer back — the un-parsed
+    // copy of the merchant endpoint's response that the inventory classifies
+    // `rail_failure_text`/`redact`. A receiver that echoes the payload it was
+    // sent has put the number in a column the erasure must reach through the
+    // delivery's event.
+    let delivery_event_id = format!("evt_{}", uuid::Uuid::new_v4().simple());
+    sqlx::query(
+        "INSERT INTO events (id, merchant_id, livemode, type, object_id, data) \
+         VALUES ($1, $2, false, 'customer.created', $3, '{}'::jsonb)",
+    )
+    .bind(&delivery_event_id)
+    .bind(MERCHANT_A)
+    .bind(&customer.id)
+    .execute(&h.pool)
+    .await
+    .context("seeding the customer event a delivery hangs off")?;
+    sqlx::query(
+        "INSERT INTO webhook_deliveries (event_id, endpoint_id, url, state, response_excerpt) \
+         VALUES ($1, 'whk_scanner', 'https://merchant.example.invalid/hook', 'succeeded', $2)",
+    )
+    .bind(&delivery_event_id)
+    .bind(format!("{{\"error\":\"unknown subscriber {PHONE}\"}}"))
+    .execute(&h.pool)
+    .await
+    .context("seeding the delivery whose response echoes the payer")?;
+
     // The coordinate's digits join the literal list: a JSONB column cast to
     // TEXT renders a number as its digits, so `4061777` IS findable in
     // `events.data` and in `idempotency_keys.response_body` before the
@@ -1925,6 +1965,8 @@ async fn an_erasure_leaves_no_payer_identifier_in_any_column_of_any_table() -> a
         "charges.payer_ref",
         "charges.failure_raw",
         "refunds.failure_raw",
+        "payment_intents.last_payment_error_message",
+        "webhook_deliveries.response_excerpt",
         "idempotency_keys.response_body",
     ] {
         // `customers.address_latitude_microdeg` is deliberately NOT in this

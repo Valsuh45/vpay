@@ -131,34 +131,60 @@ customer erasure and retention sweep do (write the `[redacted]` marker, or
 rule and `RefundTarget`'s redacting `Debug` implement — a value that must never
 reach a log or export.
 
-### `control: redact` names five columns nothing yet redacts
+### `control: redact` names two columns that still need a decision
 
-**Added on review, 2026-09-17.** Read `control` as the control this element
-_should_ carry, not as a promise that one runs today. The customer erasure and
-the retention sweep are the only `redact` implementations in this repository,
-and between them they write exactly eight statements
-(`vpay_db::customers`, `backends/crates/vpay-db/src/customers.rs:1294` and
-`:1458`–`:1618`): `customers`' own identifier columns, `events.data`,
+**Added on review, 2026-09-17; the coverage half was rewritten 2026-09-18.**
+Read `control` as the control this element _should_ carry, not as a promise
+that one runs today. The customer erasure and the retention sweep are the only
+`redact` implementations in this repository, and between them they write
+exactly ten statements (`vpay_db::customers`,
+`backends/crates/vpay-db/src/customers.rs:1294` and `:1445`–`:1648`):
+`customers`' own identifier columns, `events.data`,
 `charges.payer_ref`/`payer_ref_masked`/`failure_raw`, `refunds.failure_raw`,
-`idempotency_keys.response_body` and `webhook_deliveries.payload_sha256`.
+`idempotency_keys.response_body`, `webhook_deliveries.payload_sha256`, and —
+added 2026-09-18 — `payment_intents.last_payment_error_code`/
+`last_payment_error_message` (NULLed together, forced by `lpe_paired`) and
+`webhook_deliveries.response_excerpt` (the `[redacted]` marker when non-null).
 
-Five columns carry `control: redact` and are reached by **none** of them:
+Of the five columns that used to be reached by **none** of those statements,
+the erasure now covers three. Two remain, each a documented maintainer decision
+that is **not taken**:
 
 | Column                                       | Element             | What actually protects it today                                 |
 | -------------------------------------------- | ------------------- | --------------------------------------------------------------- |
-| `payment_intents.last_payment_error_code`    | `rail_failure_text` | nothing                                                         |
-| `payment_intents.last_payment_error_message` | `rail_failure_text` | nothing                                                         |
-| `provider_requests.error_kind`               | `rail_failure_text` | a 128-character `CHECK`, and nothing else                       |
-| `webhook_deliveries.response_excerpt`        | `rail_failure_text` | length truncation only                                          |
-| `staff_members.email`                        | `staff_email`       | the `Debug` impl (`vpay_db::staff`) — there is no staff erasure |
+| `payment_intents.last_payment_error_code`    | `rail_failure_text` | the erasure NULLs it, with `_message`, forced by the `lpe_paired` CHECK — 2026-09-18 |
+| `payment_intents.last_payment_error_message` | `rail_failure_text` | the erasure NULLs it, with `_code`, forced by the `lpe_paired` CHECK — 2026-09-18 |
+| `webhook_deliveries.response_excerpt`        | `rail_failure_text` | the erasure writes the `[redacted]` marker when non-null — 2026-09-18 |
+| `provider_requests.error_kind`               | `rail_failure_text` | a 128-character `CHECK`, and nothing else — a maintainer decision **not** to redact (below) |
+| `staff_members.email`                        | `staff_email`       | the `Debug` impl (`vpay_db::staff`) — no staff erasure; staff erasure is a separate concern (#145) |
+
+The heading that named five columns "nothing yet redacts" is itself the record
+of the change: as of 2026-09-18 only **two** of the five are reached by no
+erasure, and neither is an oversight. `provider_requests.error_kind` holds only
+vpay's own operator labels (timeout/TLS/not_implemented), never rail prose —
+the inventory classifies it `rail_failure_text`, but reclassifying it is a
+maintainer decision and one that has **not been taken**. `staff_members.email`
+is a staff subject, not a payer: the customer erasure structurally cannot reach
+it, and a staff erasure is a separate concern, issue #145. Both stay listed here
+so the decision is named rather than rediscovered.
 
 This is an **unmet criterion, not a gap in the file**: the gate reads `control`
 for its closed vocabulary and cannot know which statements exist, and no gate
-here claims otherwise. It keeps #144 open alongside the six non-enumerable
-surfaces below. The two `rail_failure_text` columns that _are_ redacted —
-`charges.failure_raw` and `refunds.failure_raw` — are redacted because they are
-"unbounded text a rail wrote _about_ this payer and may quote their number
-back" (`customers.rs:1176`).
+here claims otherwise. The criterion is now **met for three of the five**
+columns — the customer erasure covers them — and stays open only for
+`error_kind` and `staff_members.email`, each pending the maintainer decision
+above. It keeps #144 open alongside the six non-enumerable surfaces below, for
+those two columns and for the two decisions. The two `rail_failure_text`
+columns that _were_ the only ones redacted — `charges.failure_raw` and
+`refunds.failure_raw` — are redacted because they are "unbounded text a rail
+wrote _about_ this payer and may quote their number back" (`customers.rs:1176`);
+the same leak argument holds for `response_excerpt`, which is an un-parsed copy
+of what a merchant's webhook endpoint said and can echo the payload back.
+`last_payment_error_message` is the exception and is stated honestly: every
+writer stores the vpay-authored `public_message()` (the rail's prose lives in
+`charges.failure_raw`), so NULLing it is defense-in-depth — redacted because the
+inventory classifies the column `rail_failure_text`, not because it holds rail
+prose today.
 
 _(Two corrections here, 2026-09-18, both found by reading the migrations rather
 than the schema. The `error_kind` row said "and a closed operator-label
@@ -171,6 +197,19 @@ status: a timeout, a TLS failure" — vpay's own connectivity label, written
 precisely when the rail said nothing to quote. That makes `error_kind`'s place
 in `rail_failure_text` itself doubtful; see § "Classifications the review
 could not settle".)_
+
+_(**And, 2026-09-18, the erasure now covers three of the five columns this
+section used to list as reached by nothing.** `redact_stored_copies`
+(`customers.rs:1445`) NULLs `payment_intents.last_payment_error_code` and
+`last_payment_error_message` together — `lpe_paired` forces the pair both-NULL
+or both-set, and the code column's closed-vocabulary CHECK refuses a text
+marker, so the redaction is an absence exactly as it is for the coordinate —
+and replaces a non-null `webhook_deliveries.response_excerpt` with the marker,
+for every delivery of the payer's `customer.*` events, the terminal ones
+included. The two that remain — `error_kind` (vpay's own operator label, never
+rail prose) and `staff_members.email` (a staff subject, structurally out of
+reach of a customer erasure) — are maintainer decisions that are **not taken**,
+named in the table above.)_
 
 ## The personal-data columns
 
@@ -344,8 +383,11 @@ What is **not** done, and each of these keeps #144 open:
 - the six `enumerable: false` surfaces lack independent static scanners
   (recorded above, not faked), and the gate enumerates none of the other four
   either — it counts the flag;
-- five columns carry `control: redact` and no statement in this repository
-  redacts them (§ above);
+- three of the five columns that carried `control: redact` and no redacting
+  statement are now covered by the customer erasure (§ above); the remaining
+  two — `provider_requests.error_kind` and `staff_members.email` — still have
+  no redacting statement and are open maintainer decisions (a reclassification,
+  and a staff-erasure feature, issue #145), not oversights;
 - six classifications are contradicted by the migration that defines the column
   (§ "Classifications the review could not settle", 2026-09-18) and are left for
   a maintainer, not re-decided here;
