@@ -19,12 +19,12 @@ CI runs it.
 `just verify` is the gates the `verify` recipe lists in the `justfile`, and
 one report. **The recipe is the list; this paragraph is a description of it,
 and it has gone stale at nearly every count it has carried** — see below. On
-this commit the gates are twelve (`verify-no-mocks`, `verify-status`,
+this commit the gates are thirteen (`verify-no-mocks`, `verify-status`,
 `verify-errors`, `verify-sdk-parity`, `verify-links`, `verify-npm-scope`,
 `check-schema`, `verify-serde`, `verify-repositories`, `verify-toolchain`,
-`verify-ui`, `verify-migrations`) and they fail the build. If that list and
-the recipe disagree, the recipe is right: read it, and fix this paragraph in
-the same commit. The report
+`verify-ui`, `verify-migrations`, `verify-versions`) and they fail the build.
+If that list and the recipe disagree, the recipe is right: read it, and fix
+this paragraph in the same commit. The report
 (`verify-docs`) never does — it prints doc-comment volume per crate, in-file
 comment volume per crate, the number of `#[doc = include_str!]` modules, the
 production functions of 80 lines or more, every ` ```ignore ` doctest
@@ -47,9 +47,22 @@ fails when a migration file's SHA-256 no longer matches
 migration's whole bytes and a comment reflowed after the file shipped stops
 every database that applied the original from booting — which is what PR #39
 did, with every job in CI green.
-Ten of the twelve are `cargo xtask` commands; `check-schema` and `verify-ui` are
-justfile recipes — the first shells out to the CrateStack CLI, a binary this
-workspace does not build, and the second is a handful of `git grep`s.
+`verify-versions` makes it **thirteen** on 2026-09-17
+([#201](https://github.com/vaam-apps/vpay/pull/201)): every version
+release-please owns must agree, and every line it has to rewrite must still
+carry its `x-release-please-version` comment. _(This paragraph and the list
+above said "twelve" from then until 2026-09-18, wrong from the moment the
+recipe grew its thirteenth entry — which is exactly the staleness the first
+sentence of this section exists to warn about, earned by the change that added
+the warning's newest example.)_ Since 2026-09-18 it also refuses an
+`extra-files` entry written as a bare string, which is what destroyed
+`deploy/helm/vpay/Chart.yaml` on the first release
+([#204](https://github.com/vaam-apps/vpay/pull/204)); § Releasing has the
+mechanism.
+Eleven of the thirteen are `cargo xtask` commands; `check-schema` and
+`verify-ui` are justfile recipes — the first shells out to the CrateStack CLI,
+a binary this workspace does not build, and the second is a handful of
+`git grep`s.
 There is one more check, `cargo xtask verify-citations` (`just
 docs-check-citations`), which is a gate but **not** part of `just verify` or
 `just ci`: it needs the network and a GitHub token. Run it when you add or
@@ -355,7 +368,12 @@ npx skills add https://github.com/vaam-apps/vpay-skills --skill vpay
 
 ## Commits and PRs
 
-- Conventional commits (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`).
+- Conventional commits (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`) — and
+  since release-please landed, the **pull request title** is the one that
+  matters, because this repository squash-merges with `PR_TITLE` and that
+  title becomes the commit subject on `master`. `.github/workflows/pr-title.yml`
+  enforces it. `wip:` stays fine on a commit inside your branch; it is not a
+  PR title.
 - A PR that changes behaviour updates the status pages and the relevant flow doc
   in the same PR. `docs/status.md` § "Where a new row goes" names the page for
   each kind of change; [docs/README.md](docs/README.md) is the index of the
@@ -364,6 +382,83 @@ npx skills add https://github.com/vaam-apps/vpay-skills --skill vpay
   against [vaam-apps/vpay-skills](https://github.com/vaam-apps/vpay-skills) and
   links the two. See § "Docs↔skills parity" above for which skill.
 - `just ci` must pass locally before review.
+
+## Releasing
+
+Nobody hand-edits a version. Every merge to `master` updates a standing
+`chore: release X.Y.Z` pull request; merging it creates the `vX.Y.Z` tag, which
+is what `release.yml`'s `type=semver` path triggers on — a path that, until
+this existed, had never once been taken.
+
+**The trap, if you are ever tempted to bump a version by hand.** `deny.toml`'s
+`[bans] wildcards = "deny"` forces every internal Cargo dependency to carry a
+`version = "X.Y.Z"` beside its `path`. A bare `"0.1.0"` is `^0.1.0`, and a 0.x
+caret range does **not** cross a minor boundary — so moving
+`[workspace.package].version` to `0.2.0` while those stay behind does not look
+untidy, it fails to resolve:
+
+```
+error: failed to select a version for the requirement `vpay-core = "^0.1.0"`
+candidate versions found which didn't match: 0.2.0
+```
+
+There are **fourteen** such pins: eleven in the root manifest, and three more in
+`vpay-api`, `vpay-worker` and `backends/tests/integration` that were found only
+by running `cargo metadata`, not by reading. All eighteen version lines this
+repository owns carry an `x-release-please-version` comment, and
+`just verify-versions` (in `just ci`, via `verify`) fails if any is missing —
+including on a _new_ internal dependency, which is the realistic way this gets
+armed for the next person.
+
+Deliberately not bumped, each for a stated reason: `Chart.yaml`'s own
+`version:` (the chart's separate lifecycle — its comment says "bumped by hand",
+and it is already ahead of the app), every `0.0.0` private package, the Flutter
+plugin's podspec/gradle boilerplate (`0.0.1` / `1.0-SNAPSHOT`, never wired to
+`pubspec.yaml` and already inconsistent with each other), and the Flutter
+example's `pubspec.lock` (nothing enforces it; `flutter pub get` rewrites it).
+
+**The first tag.** `.release-please-manifest.json` seeds `0.1.0` — what every
+manifest already says while unreleased — so the next release is `0.1.1` or
+`0.2.0`, _not_ `0.1.0`. To make the first tag exactly `v0.1.0`, put
+`Release-As: 0.1.0` in a commit footer; release-please honours it. That is a
+maintainer's call.
+
+**Setup this needs once**: a GitHub App with `contents: write` and
+`pull-requests: write` on this repository, its id and private key stored as
+`RELEASE_PLEASE_APP_CLIENT_ID` — the App's **Client ID** (`Iv23li…`), not its
+numeric App ID; `actions/create-github-app-token` deprecated the `app-id` input
+in favour of `client-id`, and the two are different values on the same settings
+page — and `RELEASE_PLEASE_APP_PRIVATE_KEY`. Not optional and
+not a fallback: GitHub raises no workflow events for anything done with the
+default `GITHUB_TOKEN`, so with it the tag would be created and `release.yml`
+would never run — no image built, none signed, and nothing failing to say so.
+
+**A bare-string `extra-files` entry is a trap, and it cost this repo its
+Chart.yaml once.** release-please does not give a bare string the
+annotation-only Generic updater — `base.ts` infers an updater from the file
+extension, and `.yaml`/`.yml` gets
+`CompositeUpdater(GenericYaml('$.version'), Generic)`. `GenericYaml` reparses
+and re-serialises the document. On the **v0.1.1** release that turned
+`deploy/helm/vpay/Chart.yaml` from 48 lines into 13 — every comment gone,
+including the one explaining that `version:` is the chart's own hand-bumped
+lifecycle — then set that `version:` from 0.2.0 to 0.1.1 (a downgrade) because
+`$.version` is the top-level key, and left `appVersion` untouched because the
+`x-release-please-version` annotation had just been serialised away.
+`sdks/flutter/.../pubspec.yaml` lost its comments the same way.
+
+`vsms` escaped only by luck: its two `.yaml` extra-files are compose files,
+which have no top-level `version:` key, so `GenericYaml` found nothing to
+change and left them alone.
+
+Every entry is therefore written as `{"type": "generic", "path": …}`, which
+routes to release-please's `case 'generic'` and runs the Generic updater
+alone. `cargo xtask verify-versions` **refuses** a bare string outright, naming
+this incident, so the next `.yaml` file added here cannot repeat it.
+
+**Known gap**: merge commits are still enabled, and `merge_commit_title` is
+`MERGE_MESSAGE`, so a PR merged that way lands as `Merge pull request #N …`,
+which release-please ignores; its individual commit subjects are what count.
+Squash is the path `pr-title.yml` actually covers.
 
 ## Before you open a PR
 
