@@ -2307,7 +2307,11 @@ verify-ui:
 # `_sqlx_migrations.checksum` and refuses to boot when a file no longer hashes
 # to what the database recorded, so a reflowed comment bricks every database
 # that applied the original — which is exactly what PR #39 did to migration
-# 0028 (issue #76). Eleventh gate in `just verify`, new 2026-09-07.
+# 0028 (issue #76). Twelfth gate in `just verify`, new 2026-09-07 — after
+# `verify-ui`, the eleventh, which landed the same day. _(This said "Eleventh"
+# from 2026-09-07 until 2026-09-18: whoever wrote it counted the xtask commands
+# and skipped `verify-ui`, which is a gate in this recipe like any other.
+# `AGENTS.md` and `docs/status/backend.md` already said twelfth.)_
 #
 # The gate reads `backends/migrations/MANIFEST.sha256` and every `*.sql` beside
 # it — `*.sql` and nothing else, because that is what `sqlx::migrate!` reads;
@@ -2324,7 +2328,7 @@ verify-migrations:
 
 # Issue #144 / ADR-0020 / RFC-0002: every database column the migrations create
 # is classified in schemas/privacy-inventory.yaml, and every classification
-# names a live column, in both directions — plus six-field element and
+# names a live column, in both directions — plus element-field and
 # non-database-surface validation. The authoritative DB surface is derived by
 # parsing the migrations themselves (schemas/vpay.cstack models less than the
 # whole database), so a privacy-relevant column cannot land unclassified and a

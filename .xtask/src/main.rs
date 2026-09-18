@@ -3,12 +3,22 @@
 //! `just verify` runs the gates its recipe lists, because a promise nothing
 //! checks is a promise that decays. **The `justfile` is the list; this
 //! module doc is a description of it, and goes stale when a gate is added.**
-//! All but one are commands here; `check-schema` (2026-09-05) is a justfile
+//! All but **two** are commands here; `check-schema` (2026-09-05) is a justfile
 //! recipe rather than an xtask command because it shells out to the
 //! CrateStack CLI, a binary this workspace does not build — see the
 //! `justfile` for it, and for `verify-ui` (2026-09-07), a `git grep` gate on
-//! daisyUI 4 classes daisyUI 5 removed. On 2026-09-07 the recipe lists
-//! twelve. The xtask commands among them:
+//! daisyUI 4 classes daisyUI 5 removed. The recipe lists **fourteen**, twelve
+//! of them commands here.
+//!
+//! _(This said "All but one" while naming two, and "On 2026-09-07 the recipe
+//! lists twelve", until 2026-09-18. The count was two behind by then —
+//! `verify-versions` (PR #201) and `verify-privacy-inventory` (issue #144)
+//! both landed on 2026-09-17 — and the bullet list below was **three**
+//! behind, because `verify-migrations` never got one when it landed on
+//! 2026-09-07 either. The list is now complete; the `justfile` is still the
+//! authority, and this is still a description of it.)_
+//!
+//! The xtask commands among them:
 //!
 //! * `verify-no-mocks`  — no test double is reachable from a shipping binary.
 //! * `verify-status`    — every `NotImplemented` is declared in `docs/status.md`.
@@ -47,6 +57,17 @@
 //!   behind passed the whole of `just ci`, because nothing here compiles the
 //!   Dockerfile.
 //!
+//! * `verify-migrations` — every migration file's SHA-256 matches its entry in
+//!   `backends/migrations/MANIFEST.sha256`; an applied migration is immutable.
+//!   New 2026-09-07 (issue #76), after PR #39 reflowed a comment in `0028` and
+//!   bricked every database that had applied the original bytes. It had no
+//!   bullet here until 2026-09-18.
+//!
+//! * `verify-versions` — every version release-please owns agrees, and every
+//!   line it must rewrite still carries its `x-release-please-version`
+//!   comment. New 2026-09-17 (PR #201); it had no bullet here until
+//!   2026-09-18.
+//!
 //! * `verify-privacy-inventory` — every database column the migrations create
 //!   is classified in `schemas/privacy-inventory.yaml`, and every classification
 //!   names a live column (two-directional), plus the element-field and
@@ -54,8 +75,12 @@
 //!   a privacy-relevant column could be added to a migration with no record
 //!   of the data it holds, and nothing failed.
 //!
-//! An eleventh gate needs the network, so it is opt-in
-//! (`just docs-check-citations`) and is **not** part of `just ci`:
+//! A **sixteenth** gate needs the network, so it is opt-in
+//! (`just docs-check-citations`) and is **not** part of `just ci`. Sixteenth
+//! and not eleventh: fourteen gates, then the advisory `verify-docs` report,
+//! then this. _(It said "eleventh" — true when the recipe listed ten — until
+//! 2026-09-18. The `justfile`'s own header block already counted it this
+//! way.)_:
 //!
 //! * `verify-citations` — every workflow-run id, pull request and issue a
 //!   document cites as evidence exists. It fails rather than skips when `gh`

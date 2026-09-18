@@ -478,7 +478,10 @@ jobs:
       # still parses and still renders, so nothing else in `just ci` notices.
       - name: verify-ui (colour tokens, daisyUI 4→5 renames, !important, cva)
         run: just verify-ui
-      # The ELEVENTH gate, new 2026-09-07 (issue #76), and — like
+      # The TWELFTH gate, new 2026-09-07 (issue #76) — it says ELEVENTH
+      # until 2026-09-18, counting the xtask commands and skipping `verify-ui`,
+      # which landed the same day and is a gate in `just verify` like any
+      # other. And — like
       # `verify-toolchain` above — one this job is the only place to catch:
       # nothing in `rust` compiles `backends/migrations/*.sql`, and a migration
       # file edited after it shipped passes `cargo nextest run --workspace`

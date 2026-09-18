@@ -784,12 +784,56 @@ credentials — a GDPR artifact naming a table that does not exist. With
 
 **What it proved about this gate generally**, and it is the same lesson
 `verify-status` learned twice: a drift gate whose two directions read the
-_same_ derived set can be wrong in both at once. Neither direction is a
-check on the other; the parser is. Still unmodelled, and named rather than
-left: `ALTER TABLE … RENAME TO`, `CREATE TABLE … (LIKE …)` and `PARTITION OF`.
-No migration uses any of them. A table rename would keep its columns under the
-old name and fail this gate **loudly**; the other two would produce a table
-with no columns and fail it **silently**, which is the shape to watch for.
+_same_ derived set can be wrong in both at once. Neither direction is a check
+on the other; **the parser is**, and that is why the parser is where the next
+review looked.
+
+**A second review pass, 2026-09-18, found the same shape four more times, and
+closed the class rather than the instances.** The paragraph above used to end
+by naming `ALTER TABLE … RENAME TO`, `CREATE TABLE … (LIKE …)` and
+`PARTITION OF` as unmodelled, and observing that the last two "would produce a
+table with no columns and fail it **silently**, which is the shape to watch
+for". That was correct and it was left as an observation; an observation is not
+a gate. What the second pass measured, by driving `migrations_db_columns` over
+temp trees:
+
+1. **The keyword match was one literal space.** `stmt.to_uppercase().find("CREATE TABLE")`.
+   `CREATE  TABLE t (…)` with two spaces, a tab, or a line break after `CREATE`
+   derived **nothing at all** — the whole table, every column of it, invisible
+   to both directions. `ALTER  TABLE t ADD COLUMN email` silently lost `email`.
+   `DROP  TABLE t` silently left `t` standing, which re-opens the `0009` hole
+   above through a second space. `RENAME  COLUMN a TO b` left the old name
+   live. Nothing in this repository reformats SQL, so the only thing keeping
+   the gate honest was that all 48 migrations happen to be typed with exactly
+   one space.
+2. **No word boundary** — `RECREATE TABLE` contains `CREATE TABLE` — and **no
+   string-literal awareness**. These migrations' `COMMENT ON` bodies are essays
+   that discuss migrations (45 of them already embed a `;` inside the quotes),
+   so one containing the words `DROP TABLE customers` would have removed the
+   real `customers` table from the derived set.
+3. **Offsets from an uppercased copy indexed the original.**
+   `str::to_uppercase` is not length-preserving for every input.
+4. **`strip_sql_comments` pushed `byte as char`**, re-encoding every byte of a
+   multi-byte character as its own Latin-1 code point. These migrations are
+   full of `§`, `—` and `±`, so its output was mojibake **and longer than the
+   input** while its doc comment claimed length was preserved. Nothing indexed
+   back into the source, so nothing misparsed: the false claim was the whole of
+   the defect, which in this repository is the part that counts.
+
+`kw_end`/`words_at` replace the matching entirely — in order,
+ASCII-case-insensitive, whitespace-tolerant, boundary-anchored, string-aware,
+on the bytes of the statement itself. **And the forms the parser cannot read
+are now refused rather than skipped:** `create_table_parts` returns a
+three-armed `CreateTable`, so `AS SELECT`, `PARTITION OF`, `INHERITS`, a
+`(LIKE …)` body and `ALTER TABLE … RENAME TO` each fail the gate **by name**,
+telling the author to model the form before landing the migration. None of the
+five appears in `backends/migrations` today, which is now a fact the gate holds
+rather than one a reviewer re-establishes. Two smaller, fail-**closed** defects
+went with them: `ADD`/`DROP` had no leading word boundary
+(`ADD COLUMN c my_add TEXT` derived a phantom column `text`) and
+`alter_drop_columns` lacked the depth guard `alter_add_columns` already had.
+The gate derives the same 295 columns before and after, which is what a
+hardening pass should do.
 
 **Measured on this tree, 2026-09-17:** 295 database columns classified across
 25 elements (16 personal-data, 17 necessary), checked in both directions
@@ -799,7 +843,30 @@ against the 295 the migrations derive; 10 non-database surfaces registered,
 enumerated as an unmet criterion rather than manufacturing a self-check").
 _(It read 303/303 on 2026-09-16, before `DROP TABLE` was modelled.)_
 
-**Three more unmet criteria, found by the same review and fixed in no code**,
+**Six classifications the 2026-09-18 pass could not settle, and did not
+quietly re-decide.** It read ten `subject: payer|staff|merchant` columns and
+ten `subject: none|system` columns against the migration that defines each one,
+and found no fabricated compliance claim, no invented lawful basis and no
+retention period stated as a commitment — but six classifications the
+migrations' own comments contradict, among them `checkout_sessions.publishable_key`
+marked `control: forbid` where `0028` says "**NOT a secret**", and three
+payer-facing session credentials filed under `subject: merchant` where `0028`
+and `0026` call them "payer credentials". Four of the six are one defect
+wearing four hats — an element carries one classification, and
+`oauth_client_secret` holds both merchant secrets and payer credentials — which
+is ADR-0020 §1's missing per-copy control with a line number attached. Each is
+listed with the contradicting line in
+[../reference/personal-data-inventory.md](../reference/personal-data-inventory.md)
+§ "Classifications the review could not settle" and left for a maintainer:
+re-deciding a GDPR artifact in a review pass, on a question RFC-0002 D1 has not
+answered, is the failure this directory exists to prevent. Two outright false
+statements on that page **were** fixed, because they were claims and not
+judgements: its field table listed four `subject` values where the gate
+enforces five, and it credited `provider_requests.error_kind` with "a closed
+operator-label vocabulary" that `0016` says does not exist ("Free text on
+purpose").
+
+**Three more unmet criteria, found by the 2026-09-17 review and fixed in no code**,
 because each would be a claim rather than a check: five columns carry
 `control: redact` and no statement in this repository redacts them;
 `jobs.last_error` holds the rail's own message under a `subject: none`
@@ -810,10 +877,22 @@ and keep #144 open alongside the six surfaces. The `enumerable` flag on the
 other four surfaces is **counted, not derived** — nothing re-checks them.
 
 **Mutations that prove each direction bites** (`privacy_inventory_tests` in
-`.xtask/src/main.rs`, 16 cases): adding a `phone` column to a migration with no
-element fails direction A; adding a `ghost` column to the inventory with no
-migration fails direction B; a dropped table's column named by the inventory
-fails direction B; a duplicate surface id and a surface id colliding with an
-element name each fail; the DDL parser's handling of
-`DROP`/`RENAME`/`DROP TABLE`, its constraint-keyword word boundary and the
-string-aware comment stripper are pinned by their own tests.
+`.xtask/src/main.rs`, **26** cases as of 2026-09-18; 16 before it): adding a
+`phone` column to a migration with no element fails direction A; adding a
+`ghost` column to the inventory with no migration fails direction B; a dropped
+table's column named by the inventory fails direction B; a duplicate surface
+id, a surface id colliding with an element name, an out-of-vocabulary `control`
+or `subject`, an unsupported copy kind and an inventory of another `version`
+each fail; the DDL parser's handling of `DROP`/`RENAME`/`DROP TABLE`, its
+constraint-keyword word boundary and the string-aware comment stripper are
+pinned by their own tests. The ten added on 2026-09-18 pin one hole each:
+`a_keyword_pair_survives_any_whitespace_between_its_words`,
+`a_keyword_inside_an_identifier_is_not_a_keyword`,
+`a_ddl_keyword_inside_a_string_literal_is_data`,
+`a_create_table_the_parser_cannot_read_is_refused_not_skipped`,
+`a_table_rename_is_refused_rather_than_silently_ignored`,
+`an_alter_clause_inside_parentheses_is_not_a_column_operation` and
+`strip_comments_preserves_byte_length_and_multibyte_text`. Every one of them
+drives the real `migrations_db_columns` or `verify_privacy_inventory` over a
+temp tree — no shipped migration is touched, because `verify-migrations`
+checksums them.

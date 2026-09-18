@@ -48,11 +48,51 @@ stored merchant credentials in the `oauth_client_secret` row below. The eight
 rows and that claim are gone; the column count moved 303 → 295.
 `a_dropped_table_leaves_no_columns_behind` and
 `a_stale_row_naming_a_dropped_tables_column_fails_direction_b` in `.xtask` pin
-both halves. What the parser still does **not** model is `ALTER TABLE … RENAME
-TO`, `CREATE TABLE … (LIKE …)` and `PARTITION OF` — none of which any
-migration uses; a table rename would keep the columns under the old name,
-which fails this gate loudly rather than silently, and the other two would
-produce a table with no columns, which does not.)_
+both halves.)_
+
+_(**A second review pass, 2026-09-18, found the same shape three more times,
+and this time closed the class rather than the instances.** The parser matched
+its keywords as one literal space: `CREATE  TABLE` with two spaces, a tab, or a
+line break after `CREATE` derived **nothing at all** — the whole table, every
+column of it, invisible to both directions. `ALTER  TABLE … ADD COLUMN email`
+lost `email`; `DROP  TABLE t` left `t` standing, re-opening the `0009` hole
+through a second space. Nothing here reformats SQL; the only thing keeping the
+gate honest was that all 48 migrations happen to be typed with one space. The
+match also had no word boundary and no string-literal awareness — these
+migrations' `COMMENT ON` bodies are essays that discuss migrations, so one
+containing the words `DROP TABLE customers` would have removed the real
+`customers` table from the derived set. `kw_end`/`words_at` in `.xtask` replace
+the whole approach, and `a_keyword_pair_survives_any_whitespace_between_its_words`,
+`a_keyword_inside_an_identifier_is_not_a_keyword` and
+`a_ddl_keyword_inside_a_string_literal_is_data` pin all three.)_
+
+_(**And the forms the parser does not model are now refused rather than
+skipped.** This paragraph used to end by naming `ALTER TABLE … RENAME TO`,
+`CREATE TABLE … (LIKE …)` and `PARTITION OF` as unmodelled, and said the last
+two "would produce a table with no columns, which does not [fail loudly]".
+That was the honest thing to write and the wrong thing to leave: a table with
+no columns is one **neither direction of the gate can see**, so the gate stays
+green over an unclassified table — the `0009` failure again, in a form nobody
+had written yet. `create_table_parts` now returns a three-armed `CreateTable`,
+and `AS SELECT`, `PARTITION OF`, `INHERITS`, a `(LIKE …)` body and
+`ALTER TABLE … RENAME TO` each **fail the gate by name**, telling the author to
+model the form before landing the migration. None of the five appears in
+`backends/migrations` today, which is now a fact the gate keeps rather than one
+a reviewer has to re-establish.
+`a_create_table_the_parser_cannot_read_is_refused_not_skipped` and
+`a_table_rename_is_refused_rather_than_silently_ignored` pin it.)_
+
+_(**Schema qualification is dropped, not kept**, and this page publishes the
+bare names because of it. `0006` and `0013` create five tables as
+`authkestra.oauth_clients`, `…oauth_codes`, `…oauth_device_codes`,
+`…oauth_dpop_jti` and `…oauth_refresh_tokens`; the derived set — and therefore
+the inventory, and therefore the tables named below — files them as
+`oauth_clients`, `oauth_codes` and so on. Two tables of the same bare name in
+different schemas would merge into one entry, and a column of either would then
+satisfy a classification written for the other. No such pair exists: 31 created
+tables, 31 distinct bare names. Said here rather than left in
+`normalise_sql_name`'s doc comment, because this page is where someone looks to
+find out where a value is stored.)_
 
 ## The element model
 
@@ -65,9 +105,18 @@ _(This said "the six-field classification" and then listed eight until
 `tenant_boundary`, `retention`, `owner`, `control`; `necessary` is a boolean
 and `recipients` a list, so "present" is all either can be.)_
 
+_(The `subject` row below listed **four** values until 2026-09-18, folding
+"system/technical" into `none`. The gate enforces **five** —
+`PRIVACY_SUBJECT_VOCAB` in `.xtask/src/main.rs` — and `system` is not a synonym
+for `none` here: one element uses it, `oauth_signing_key`, and the honesty
+note on that element below already treated `system` as its own value while
+this table denied it existed. A field table that disagrees with the
+closed vocabulary its own gate enforces is the kind of thing this page exists
+not to be.)_
+
 | Field             | Meaning                                                                              |
 | ----------------- | ------------------------------------------------------------------------------------ |
-| `subject`         | data-subject category: `payer`, `staff`, `merchant`, or `none` (system/technical)    |
+| `subject`         | data-subject category: `payer`, `staff`, `merchant`, `none`, or `system`             |
 | `purpose`         | the product purpose for which the value is processed                                 |
 | `necessary`       | whether the value is required for that purpose to function                           |
 | `tenant_boundary` | `merchant` or `system` — which boundary the value is scoped to                       |
@@ -99,7 +148,7 @@ Five columns carry `control: redact` and are reached by **none** of them:
 | -------------------------------------------- | ------------------- | --------------------------------------------------------------- |
 | `payment_intents.last_payment_error_code`    | `rail_failure_text` | nothing                                                         |
 | `payment_intents.last_payment_error_message` | `rail_failure_text` | nothing                                                         |
-| `provider_requests.error_kind`               | `rail_failure_text` | a 128-character `CHECK` and a closed operator-label vocabulary  |
+| `provider_requests.error_kind`               | `rail_failure_text` | a 128-character `CHECK`, and nothing else                       |
 | `webhook_deliveries.response_excerpt`        | `rail_failure_text` | length truncation only                                          |
 | `staff_members.email`                        | `staff_email`       | the `Debug` impl (`vpay_db::staff`) — there is no staff erasure |
 
@@ -109,7 +158,19 @@ here claims otherwise. It keeps #144 open alongside the six non-enumerable
 surfaces below. The two `rail_failure_text` columns that _are_ redacted —
 `charges.failure_raw` and `refunds.failure_raw` — are redacted because they are
 "unbounded text a rail wrote _about_ this payer and may quote their number
-back" (`customers.rs:1176`); the same sentence is true of the four above it.
+back" (`customers.rs:1176`).
+
+_(Two corrections here, 2026-09-18, both found by reading the migrations rather
+than the schema. The `error_kind` row said "and a closed operator-label
+vocabulary"; there is no such vocabulary — `backends/migrations/0016_create-provider-requests.sql:32-36`
+says the column is "Free text on purpose", and the only constraint on it is the
+128-character `CHECK`. And the sentence above said the rail-quotes-your-number
+argument "is true of the four above it"; it is not true of `error_kind`, which
+the same migration says is set "when the attempt failed **without** an HTTP
+status: a timeout, a TLS failure" — vpay's own connectivity label, written
+precisely when the rail said nothing to quote. That makes `error_kind`'s place
+in `rail_failure_text` itself doubtful; see § "Classifications the review
+could not settle".)_
 
 ## The personal-data columns
 
@@ -214,6 +275,34 @@ A surface with `enumerable: false` is an **unmet criterion**: the gate records i
 and keeps #144 open on it rather than manufacturing a self-check (RFC-0002 PR 2).
 This page is the record of which surfaces still lack an independent source set.
 
+## Classifications the review could not settle
+
+_Added 2026-09-18._ A second review read ten `subject: payer|staff|merchant`
+columns and ten `subject: none|system` columns against the migration that
+defines each one. It found no fabricated compliance claim, no invented lawful
+basis and no retention period stated as a commitment. It did find **six
+classifications that the migrations' own comments contradict**. None is
+changed here: each needs an element split or a judgement that RFC-0002 D1
+(legal basis, controller/processor, purpose necessity) has not yet made, and
+quietly re-deciding a GDPR artifact in a review pass is the failure this
+directory exists to prevent. They are **unmet criteria of #144**, listed with
+the line that contradicts them so the decision can be made rather than
+rediscovered.
+
+| Classified as                                                                                                                                                   | The migration says                                                                                                                                                                         | Where                                                                                       |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| `checkout_sessions.publishable_key` — `oauth_client_secret`, `subject: merchant`, `control: forbid`                                                             | "**NOT a secret**: it names a tenant and authorises nothing"                                                                                                                               | `backends/migrations/0028_create-checkout-sessions.sql:284`                                 |
+| `checkout_sessions.client_secret_suffix`, `checkout_sessions.return_token`, `payment_intents.client_secret_suffix` — `oauth_client_secret`, `subject: merchant` | "Two **payer** credentials"; "the second half of this session's **payer-facing** `client_secret`"                                                                                          | `0028_create-checkout-sessions.sql:282`, `:286`; `0026_payment-intent-client-secret.sql:64` |
+| `authkestra.oauth_clients.jwks` and `oauth_signing_keys.public_jwk` — `control: forbid`                                                                         | both exist to be **published**: "must never hold a private component"; "so `/jwks.json` can publish every currently-valid key"                                                             | `0013_add-authkestra-op-0-7-columns.sql:82`, `0010_reshape-oauth-signing-keys.sql:47`       |
+| `payment_intents.last_payment_error_code` — `rail_failure_text`, `subject: payer`                                                                               | a **closed** `failure_code` enum, exactly like `charges.failure_code` and `refunds.failure_code`, which this inventory classifies `sys_status`, `subject: none`                            | `0014_payment-intent-api-fields.sql:86`                                                     |
+| `provider_requests.error_kind` — `rail_failure_text`, `subject: payer`                                                                                          | vpay's **own** operator label, set "when the attempt failed without an HTTP status: a timeout, a TLS failure" — written precisely when the rail said nothing to quote                      | `0016_create-provider-requests.sql:32`                                                      |
+| `charges.provider_ref_extra` — `sys_provider_ref`, `subject: none`, `control: none`                                                                             | an open rail-supplied `BTreeMap<String, String>` "captured from a previous `submit`", reached by no erasure statement — the same untrusted-rail-input class `rail_failure_text` exists for | `0004_create-charges.sql:42`                                                                |
+
+Four of the six are one defect wearing four hats: an element carries **one**
+classification and `oauth_client_secret` holds both genuine merchant secrets
+and payer-facing session credentials. That is § "What ADR-0020 §1 asks for and
+this file does not yet carry", below, with a name and a line number attached.
+
 ## What ADR-0020 §1 asks for and this file does not yet carry
 
 _Added on review, 2026-09-17, because the alternative was for the gap to be
@@ -257,6 +346,9 @@ What is **not** done, and each of these keeps #144 open:
   either — it counts the flag;
 - five columns carry `control: redact` and no statement in this repository
   redacts them (§ above);
+- six classifications are contradicted by the migration that defines the column
+  (§ "Classifications the review could not settle", 2026-09-18) and are left for
+  a maintainer, not re-decided here;
 - ADR-0020 §1's per-copy necessity/control and per-element source reference are
   absent from the schema (§ above);
 - the `@vpay/api-client` and per-event webhook projections RFC-0002 D2 needs are
