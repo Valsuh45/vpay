@@ -19,12 +19,13 @@ CI runs it.
 `just verify` is the gates the `verify` recipe lists in the `justfile`, and
 one report. **The recipe is the list; this paragraph is a description of it,
 and it has gone stale at nearly every count it has carried** — see below. On
-this commit the gates are thirteen (`verify-no-mocks`, `verify-status`,
+this commit the gates are fourteen (`verify-no-mocks`, `verify-status`,
 `verify-errors`, `verify-sdk-parity`, `verify-links`, `verify-npm-scope`,
 `check-schema`, `verify-serde`, `verify-repositories`, `verify-toolchain`,
-`verify-ui`, `verify-migrations`, `verify-versions`) and they fail the build.
-If that list and the recipe disagree, the recipe is right: read it, and fix
-this paragraph in the same commit. The report
+`verify-ui`, `verify-migrations`, `verify-versions`,
+`verify-privacy-inventory`) and they fail the build. If that list and the
+recipe disagree, the recipe is right: read it, and fix this paragraph in the
+same commit. The report
 (`verify-docs`) never does — it prints doc-comment volume per crate, in-file
 comment volume per crate, the number of `#[doc = include_str!]` modules, the
 production functions of 80 lines or more, every ` ```ignore ` doctest
@@ -58,8 +59,22 @@ the warning's newest example.)_ Since 2026-09-18 it also refuses an
 `extra-files` entry written as a bare string, which is what destroyed
 `deploy/helm/vpay/Chart.yaml` on the first release
 ([#204](https://github.com/vaam-apps/vpay/pull/204)); § Releasing has the
-mechanism.
-Eleven of the thirteen are `cargo xtask` commands; `check-schema` and
+mechanism. And `verify-privacy-inventory` makes it **fourteen**, the same day
+([#187](https://github.com/vaam-apps/vpay/pull/187), issue #144): every
+database column the migrations create is classified in
+`schemas/privacy-inventory.yaml`, and every classification names a live
+column, in both directions.
+
+The two thirteenth gates were written on branches that never saw each other,
+exactly as `verify-npm-scope` and `check-schema` were on 2026-09-05, and the
+count is reconciled where they meet — here. _(Both sides were stale in their
+own way, and the note above is #206's account of `master`'s side. This branch's
+side: at `de11c9cf` this paragraph said "thirteen" and the sentence below it
+said "Eleven of the thirteen", which was right for a tree that had not seen
+#201 and wrong for one that had. `master` at `eb078020` said "twelve" and "Ten
+of the twelve". Neither side was right for the merge, which is fourteen and
+twelve.)_
+Twelve of the fourteen are `cargo xtask` commands; `check-schema` and
 `verify-ui` are justfile recipes — the first shells out to the CrateStack CLI,
 a binary this workspace does not build, and the second is a handful of
 `git grep`s.
@@ -331,7 +346,7 @@ process to a reader who will decide what to do. A skill briefs an agent that is
 already doing it, and is therefore judged on a different question: not "is this
 accurate and complete" but "would an agent that read only this do the right
 thing on its first attempt". That is why they are a separate repository — a
-briefing that has to clear twelve gates to be corrected is a briefing nobody
+briefing that has to clear fourteen gates to be corrected is a briefing nobody
 corrects — and why drift between them and this tree is gated rather than
 trusted.
 

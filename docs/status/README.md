@@ -35,6 +35,14 @@ Named by the newest date in each block, not by a single date: entries were
 appended to `docs/status.md` in the order branches landed, which is not always
 the order they were measured.
 
+- [verification/2026-09-16-privacy-inventory-gate.md](verification/2026-09-16-privacy-inventory-gate.md) —
+  the personal-data inventory of issue #144 and `verify-privacy-inventory`, the
+  fourteenth gate; amended 2026-09-17 with the `DROP TABLE` hole that let both
+  directions agree about a table migration `0009` deletes, and 2026-09-18 with
+  the full `just ci` run this branch owed, four more parser holes that all
+  failed open (a keyword match of one literal space among them), and six
+  classifications the migrations' own comments contradict — recorded for a
+  maintainer, not re-decided.
 - [verification/2026-09-17-redirect-leg-review.md](verification/2026-09-17-redirect-leg-review.md)
   — issue #195: the review of the native sheet's redirect leg, and the **three**
   defects it found. The leg URL was built on the **API**'s origin, which serves

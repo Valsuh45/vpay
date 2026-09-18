@@ -41,3 +41,13 @@ base64 = "0.22"
 # `test_only_reachable_from` for the defect that proved it. Workspace pin,
 # already in the lockfile.
 serde_json.workspace = true
+# `verify-privacy-inventory` (issue #144) only: the typed structs the inventory
+# deserialises into need `Deserialize`. Workspace pin, already in the lockfile.
+serde.workspace = true
+# `verify-privacy-inventory` (issue #144) only. The inventory is
+# `schemas/privacy-inventory.yaml`; parsing it needs a YAML loader. The
+# workspace pin `serde_yaml_ng` is already in the lockfile (vpay-config takes
+# it), so this adds no package to the workspace. Deprecated upstream but pinned
+# here to stay on the one YAML engine the workspace already has, rather than
+# introduce a second.
+serde_yaml_ng.workspace = true

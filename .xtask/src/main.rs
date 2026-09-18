@@ -3,12 +3,22 @@
 //! `just verify` runs the gates its recipe lists, because a promise nothing
 //! checks is a promise that decays. **The `justfile` is the list; this
 //! module doc is a description of it, and goes stale when a gate is added.**
-//! All but one are commands here; `check-schema` (2026-09-05) is a justfile
+//! All but **two** are commands here; `check-schema` (2026-09-05) is a justfile
 //! recipe rather than an xtask command because it shells out to the
 //! CrateStack CLI, a binary this workspace does not build — see the
 //! `justfile` for it, and for `verify-ui` (2026-09-07), a `git grep` gate on
-//! daisyUI 4 classes daisyUI 5 removed. On 2026-09-07 the recipe lists
-//! twelve. The xtask commands among them:
+//! daisyUI 4 classes daisyUI 5 removed. The recipe lists **fourteen**, twelve
+//! of them commands here.
+//!
+//! _(This said "All but one" while naming two, and "On 2026-09-07 the recipe
+//! lists twelve", until 2026-09-18. The count was two behind by then —
+//! `verify-versions` (PR #201) and `verify-privacy-inventory` (issue #144)
+//! both landed on 2026-09-17 — and the bullet list below was **three**
+//! behind, because `verify-migrations` never got one when it landed on
+//! 2026-09-07 either. The list is now complete; the `justfile` is still the
+//! authority, and this is still a description of it.)_
+//!
+//! The xtask commands among them:
 //!
 //! * `verify-no-mocks`  — no test double is reachable from a shipping binary.
 //! * `verify-status`    — every `NotImplemented` is declared in `docs/status.md`.
@@ -47,8 +57,30 @@
 //!   behind passed the whole of `just ci`, because nothing here compiles the
 //!   Dockerfile.
 //!
-//! An eleventh gate needs the network, so it is opt-in
-//! (`just docs-check-citations`) and is **not** part of `just ci`:
+//! * `verify-migrations` — every migration file's SHA-256 matches its entry in
+//!   `backends/migrations/MANIFEST.sha256`; an applied migration is immutable.
+//!   New 2026-09-07 (issue #76), after PR #39 reflowed a comment in `0028` and
+//!   bricked every database that had applied the original bytes. It had no
+//!   bullet here until 2026-09-18.
+//!
+//! * `verify-versions` — every version release-please owns agrees, and every
+//!   line it must rewrite still carries its `x-release-please-version`
+//!   comment. New 2026-09-17 (PR #201); it had no bullet here until
+//!   2026-09-18.
+//!
+//! * `verify-privacy-inventory` — every database column the migrations create
+//!   is classified in `schemas/privacy-inventory.yaml`, and every classification
+//!   names a live column (two-directional), plus the element-field and
+//!   non-database-surface validation. New 2026-09-16 (issue #144): before it,
+//!   a privacy-relevant column could be added to a migration with no record
+//!   of the data it holds, and nothing failed.
+//!
+//! A **sixteenth** gate needs the network, so it is opt-in
+//! (`just docs-check-citations`) and is **not** part of `just ci`. Sixteenth
+//! and not eleventh: fourteen gates, then the advisory `verify-docs` report,
+//! then this. _(It said "eleventh" — true when the recipe listed ten — until
+//! 2026-09-18. The `justfile`'s own header block already counted it this
+//! way.)_:
 //!
 //! * `verify-citations` — every workflow-run id, pull request and issue a
 //!   document cites as evidence exists. It fails rather than skips when `gh`
@@ -114,6 +146,7 @@ fn main() -> ExitCode {
         "verify-toolchain" => verify_toolchain(&root),
         "verify-migrations" => verify_migrations(&root),
         "verify-versions" => verify_versions(&root),
+        "verify-privacy-inventory" => verify_privacy_inventory(&root),
         "verify-citations" => verify_citations(&root),
         // `verify-citations` is deliberately absent from `verify-all`: it
         // needs the network, and `verify-all` is what an offline gate list
@@ -128,8 +161,9 @@ fn main() -> ExitCode {
             .and_then(|()| verify_repositories(&root))
             .and_then(|()| verify_toolchain(&root))
             .and_then(|()| verify_migrations(&root))
-            .and_then(|()| verify_versions(&root)),
-        // Not `Result`-shaped like the three gates above, and that is the
+            .and_then(|()| verify_versions(&root))
+            .and_then(|()| verify_privacy_inventory(&root)),
+        // Not `Result`-shaped like the gates above, and that is the
         // point: there is nothing here for a caller to fail on. See
         // `verify_docs`.
         "verify-docs" => {
@@ -142,7 +176,8 @@ fn main() -> ExitCode {
                 "usage: cargo xtask \
                  <verify-no-mocks|verify-status|verify-errors|verify-sdk-parity|verify-links\
                  |verify-npm-scope|verify-serde|verify-repositories\
-                 |verify-toolchain|verify-migrations|verify-versions|verify-all>\n\
+                 |verify-toolchain|verify-migrations|verify-versions\
+                 |verify-privacy-inventory|verify-all>\n\
                  \x20      cargo xtask verify-citations   (a gate; needs `gh` and the network)\n\
                  \x20      cargo xtask verify-docs        (a report; never fails)\n\
                  \x20      cargo xtask gen-signing-key --out <dir>"
@@ -5574,6 +5609,1434 @@ fn check_migrations(
         Ok(on_disk.len())
     } else {
         Err(problems)
+    }
+}
+
+/// The personal-data inventory (issue #144, ADR-0020, RFC-0002).
+const PRIVACY_INVENTORY: &str = "schemas/privacy-inventory.yaml";
+
+/// The closed vocabulary an element's `control` may carry. `verify-privacy-inventory`
+/// refuses a value outside it, so a typo like `redcat` cannot silently classify a
+/// column as protected when it is not.
+const PRIVACY_CONTROL_VOCAB: [&str; 3] = ["redact", "none", "forbid"];
+
+/// The closed vocabulary an element's `subject` may carry.
+const PRIVACY_SUBJECT_VOCAB: [&str; 5] = ["payer", "staff", "merchant", "none", "system"];
+
+/// Fail unless every database column the migrations create is classified in
+/// `schemas/privacy-inventory.yaml` and every inventory element copy names a
+/// live column — issue #144's drift gate, plus element-field and non-database-
+/// surface validation.
+///
+/// The authoritative DB surface is the migrations, not `schemas/vpay.cstack`:
+/// that schema deliberately models less than the whole database (ADR-0020,
+/// RFC-0002 PR 2). So this gate derives the surface from the migrations
+/// itself, so a privacy-relevant column cannot land silently and a stale
+/// inventory row cannot survive the column it named.
+fn verify_privacy_inventory(root: &Path) -> Result<(), String> {
+    let inv_path = root.join(PRIVACY_INVENTORY);
+    let inv_text = fs::read_to_string(&inv_path)
+        .map_err(|e| format!("{PRIVACY_INVENTORY}: {e} (the inventory is mandatory)"))?;
+    let inventory: PrivacyInventory =
+        serde_yaml_ng::from_str(&inv_text).map_err(|e| format!("{PRIVACY_INVENTORY}: {e}"))?;
+    if inventory.version != 1 {
+        return Err(format!(
+            "{PRIVACY_INVENTORY}: unsupported version {} (this gate reads version 1)",
+            inventory.version
+        ));
+    }
+
+    let mut problems = Vec::new();
+
+    // The columns the inventory classifies, by (table, column), and the set of
+    // element names (to catch a non-database surface id colliding with one).
+    let mut classified: BTreeSet<(String, String)> = BTreeSet::new();
+    let mut element_names: BTreeSet<String> = BTreeSet::new();
+    for (name, el) in &inventory.elements {
+        element_names.insert(name.clone());
+        for copy in &el.copies {
+            match copy.kind.as_str() {
+                "column" => {
+                    let (Some(table), Some(column)) =
+                        (copy.table.as_deref(), copy.column.as_deref())
+                    else {
+                        problems.push(format!(
+                            "{PRIVACY_INVENTORY}: element `{name}` has a `column` copy without \
+                             table and/or column"
+                        ));
+                        continue;
+                    };
+                    classified.insert((table.to_string(), column.to_string()));
+                }
+                other => problems.push(format!(
+                    "{PRIVACY_INVENTORY}: element `{name}` has an unsupported copy kind `{other}`"
+                )),
+            }
+        }
+        for (field, value) in [
+            ("subject", el.subject.as_str()),
+            ("purpose", el.purpose.as_str()),
+            ("tenant_boundary", el.tenant_boundary.as_str()),
+            ("retention", el.retention.as_str()),
+            ("owner", el.owner.as_str()),
+            ("control", el.control.as_str()),
+        ] {
+            if value.is_empty() {
+                problems.push(format!(
+                    "{PRIVACY_INVENTORY}: element `{name}` has an empty `{field}`"
+                ));
+            }
+        }
+        if !PRIVACY_CONTROL_VOCAB.contains(&el.control.as_str()) {
+            problems.push(format!(
+                "{PRIVACY_INVENTORY}: element `{name}` has `control: {}`, which is not one of \
+                 {{redact, none, forbid}} — a misspelling here would silently misclassify a \
+                 column's protection",
+                el.control
+            ));
+        }
+        if !PRIVACY_SUBJECT_VOCAB.contains(&el.subject.as_str()) {
+            problems.push(format!(
+                "{PRIVACY_INVENTORY}: element `{name}` has `subject: {}`, which is not one of \
+                 {{payer, staff, merchant, none, system}}",
+                el.subject
+            ));
+        }
+    }
+
+    // The authoritative database surface, derived from the migrations.
+    let db_columns = migrations_db_columns(root)?;
+
+    // Direction A: a migrated column with no element in the inventory.
+    let unclassified: Vec<String> = db_columns
+        .iter()
+        .filter(|(t, c)| !classified.contains(&(t.clone(), c.clone())))
+        .map(|(t, c)| format!("{t}.{c}"))
+        .collect();
+    if !unclassified.is_empty() {
+        problems.push(format!(
+            "these migrated columns have no element in {PRIVACY_INVENTORY}:\n  - {}",
+            unclassified.join("\n  - ")
+        ));
+    }
+
+    // Direction B: an inventory column copy naming no live column.
+    let stale: Vec<String> = classified
+        .iter()
+        .filter(|(t, c)| !db_columns.contains(&(t.clone(), c.clone())))
+        .map(|(t, c)| format!("{t}.{c}"))
+        .collect();
+    if !stale.is_empty() {
+        problems.push(format!(
+            "{PRIVACY_INVENTORY} names these columns that no migration creates (stale or \
+             misspelled):\n  - {}",
+            stale.join("\n  - ")
+        ));
+    }
+
+    // Non-database surfaces: unique ids, distinct from element names, present.
+    let mut surface_ids = BTreeSet::new();
+    for s in &inventory.non_db_surfaces {
+        if !surface_ids.insert(s.id.clone()) {
+            problems.push(format!(
+                "{PRIVACY_INVENTORY}: duplicate non-database surface id `{}`",
+                s.id
+            ));
+        }
+        if element_names.contains(&s.id) {
+            problems.push(format!(
+                "{PRIVACY_INVENTORY}: non-database surface id `{}` collides with an element name",
+                s.id
+            ));
+        }
+        if s.surface.is_empty() || s.description.is_empty() {
+            problems.push(format!(
+                "{PRIVACY_INVENTORY}: non-database surface `{}` is missing `surface` or \
+                 `description`",
+                s.id
+            ));
+        }
+    }
+
+    if !problems.is_empty() {
+        return Err(problems.join("\n"));
+    }
+
+    let unmet = inventory
+        .non_db_surfaces
+        .iter()
+        .filter(|s| !s.enumerable)
+        .count();
+    let unmet_notes = inventory
+        .non_db_surfaces
+        .iter()
+        .filter(|s| !s.unmet.is_empty())
+        .count();
+    let personal_elements = inventory
+        .elements
+        .values()
+        .filter(|e| e.subject == "payer" || e.subject == "staff" || e.subject == "merchant")
+        .count();
+    let elements_with_recipients = inventory
+        .elements
+        .values()
+        .filter(|e| !e.recipients.is_empty())
+        .count();
+    let necessary_count = inventory.elements.values().filter(|e| e.necessary).count();
+    println!(
+        "verify-privacy-inventory: ok — {classified_count} database column(s) classified in \
+         {PRIVACY_INVENTORY} across {element_count} elements ({personal_elements} personal-data, \
+         {necessary_count} necessary), checked in both directions against {db_count} column(s) \
+         derived from {MIGRATIONS_DIR}; {surface_count} non-database surface(s) registered \
+         ({unmet} not yet statically enumerable, {unmet_notes} with an unmet note, \
+         {elements_with_recipients} element(s) name a recipient)",
+        classified_count = classified.len(),
+        element_count = inventory.elements.len(),
+        db_count = db_columns.len(),
+        surface_count = inventory.non_db_surfaces.len(),
+    );
+    Ok(())
+}
+
+/// The parsed shape of `schemas/privacy-inventory.yaml`.
+#[derive(serde::Deserialize)]
+struct PrivacyInventory {
+    version: u32,
+    elements: BTreeMap<String, PrivacyElement>,
+    non_db_surfaces: Vec<PrivacySurface>,
+}
+
+/// One stable data element: the ADR-0020 §1 classification — eight fields, of
+/// which the gate checks the six string ones are non-empty — plus the
+/// copies (DB columns, and non-DB surfaces once registered) that hold it.
+#[derive(serde::Deserialize)]
+struct PrivacyElement {
+    subject: String,
+    purpose: String,
+    necessary: bool,
+    tenant_boundary: String,
+    recipients: Vec<String>,
+    retention: String,
+    owner: String,
+    control: String,
+    copies: Vec<PrivacyCopy>,
+}
+
+/// One copy of a data element.
+#[derive(serde::Deserialize)]
+struct PrivacyCopy {
+    kind: String,
+    table: Option<String>,
+    column: Option<String>,
+}
+
+/// A registered non-database disclosure surface (ADR-0020 §1).
+#[derive(serde::Deserialize)]
+struct PrivacySurface {
+    id: String,
+    surface: String,
+    description: String,
+    enumerable: bool,
+    unmet: String,
+}
+
+/// Every `(table, column)` the migrations create — the **final** schema, so a
+/// column that a later migration `DROP`s or `RENAME`s is reflected rather than
+/// accumulated.
+///
+/// The migrations are the authoritative schema — `schemas/vpay.cstack` models
+/// less than the whole database (ADR-0020, RFC-0002 PR 2) — so the inventory is
+/// checked against a parse of the SQL, not against that projection. Handles
+/// `CREATE TABLE`, `ALTER TABLE ... ADD/DROP/RENAME COLUMN`, `DROP TABLE`, and
+/// strips `--`/`/* */` comments string-aware (0007's `'-----BEGIN%KEY-----%'`).
+///
+/// # Why `DROP TABLE` is here
+///
+/// It was not, until this gate's own review. Migration `0009` drops
+/// `merchant_api_keys` outright (0008 created it; the merchant-auth model moved
+/// to `private_key_jwt` before either shipped), and a parser that models
+/// `DROP COLUMN` but not `DROP TABLE` leaves all eight of that table's columns
+/// in the derived set. Both directions then agree on a table that does not
+/// exist: the gate cannot report them unclassified, and it cannot report the
+/// inventory rows naming them as stale. The first inventory written against
+/// this parser classified all eight, and
+/// `docs/reference/personal-data-inventory.md` published two of them as stored
+/// merchant credentials. A privacy inventory that names a table no database
+/// has is the "looks more finished than it is" failure with a GDPR artifact
+/// attached.
+fn migrations_db_columns(root: &Path) -> Result<BTreeSet<(String, String)>, String> {
+    let dir = root.join(MIGRATIONS_DIR);
+    let mut files: Vec<PathBuf> = Vec::new();
+    for entry in fs::read_dir(&dir).map_err(|e| format!("{MIGRATIONS_DIR}: {e}"))? {
+        let entry = entry.map_err(|e| format!("{MIGRATIONS_DIR}: {e}"))?;
+        let path = entry.path();
+        if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("sql") {
+            files.push(path);
+        }
+    }
+    files.sort();
+
+    // Per-table live column sets, built by replaying the DDL in order.
+    let mut tables: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for path in files {
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let text =
+            fs::read_to_string(&path).map_err(|e| format!("{MIGRATIONS_DIR}/{name}: {e}"))?;
+        let clean = strip_sql_comments(&text);
+        for stmt in split_sql_statements(&clean) {
+            let stmt = stmt.trim();
+            if stmt.is_empty() {
+                continue;
+            }
+            match create_table_parts(stmt) {
+                CreateTable::Columns(table, body) => {
+                    let columns = create_table_columns(body);
+                    if columns.is_empty() {
+                        return Err(format!(
+                            "{MIGRATIONS_DIR}/{name}: `CREATE TABLE {table}` yields no columns. \
+                             A `(LIKE other)` body — or any shape this parser cannot split into \
+                             column definitions — derives an empty table, and a table with no \
+                             columns is one the inventory can never be asked about. Model the \
+                             form in `create_table_columns` rather than letting it through."
+                        ));
+                    }
+                    let cols = tables.entry(table).or_default();
+                    for column in columns {
+                        cols.insert(column);
+                    }
+                }
+                CreateTable::Unmodelled(table) => {
+                    return Err(format!(
+                        "{MIGRATIONS_DIR}/{name}: `CREATE TABLE {table}` is a form this parser \
+                         does not model — `AS SELECT`, `PARTITION OF`, `INHERITS`, or no column \
+                         list where one belongs. Its columns would be derived as none at all, so \
+                         BOTH directions of this gate would agree about a table neither can see. \
+                         Model it before landing the migration."
+                    ));
+                }
+                CreateTable::No => {
+                    if let Some(dropped) = drop_table_targets(stmt) {
+                        for table in dropped {
+                            tables.remove(&table);
+                        }
+                    } else if let Some(table) = alter_table_target(stmt) {
+                        if kw_end(stmt, &["RENAME", "TO"]).is_some() {
+                            return Err(format!(
+                                "{MIGRATIONS_DIR}/{name}: `ALTER TABLE {table} RENAME TO ...` is \
+                                 not modelled. Every column would stay filed under `{table}`, so \
+                                 the inventory would have to keep naming a table that no longer \
+                                 exists in order to pass. Model the rename before landing the \
+                                 migration."
+                            ));
+                        }
+                        let cols = tables.entry(table).or_default();
+                        if let Some((from, to)) = alter_rename_column(stmt)
+                            && cols.remove(&from)
+                        {
+                            cols.insert(to);
+                        }
+                        for column in alter_add_columns(stmt) {
+                            cols.insert(column);
+                        }
+                        for column in alter_drop_columns(stmt) {
+                            cols.remove(&column);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut out = BTreeSet::new();
+    for (table, cols) in tables {
+        for column in cols {
+            out.insert((table.clone(), column));
+        }
+    }
+    Ok(out)
+}
+
+/// Remove `--` to end-of-line and `/* ... */` comments, replacing every removed
+/// byte with a space so the result lines up with `src` byte for byte.
+///
+/// String-aware: a `--` or `/*` inside a single-quoted SQL string literal is
+/// data, not a comment. This matters for real migrations — 0007's
+/// `CHECK (private_key_pem LIKE '-----BEGIN%KEY-----%')` begins with `--`, and
+/// a naive stripper turns that whole expression into a comment and leaves the
+/// `CHECK (` unclosed.
+///
+/// Bytes throughout, which is the correction rather than a style preference.
+/// This pushed `byte as char`, and that maps each byte of a multi-byte
+/// character to its own Latin-1 code point and re-encodes it as two: these
+/// migrations' comments and `COMMENT ON` bodies are full of `§`, `—` and `±`,
+/// so the output was mojibake *and longer than the input* while the doc comment
+/// above it claimed length was preserved. Nothing downstream indexed back into
+/// `src`, so nothing misparsed — the false claim was the whole of the defect,
+/// and in this repository that is the part that matters. The output is valid
+/// UTF-8 by construction (a multi-byte character is either copied whole or
+/// blanked whole), so the lossy decode never has anything to replace.
+fn strip_sql_comments(src: &str) -> String {
+    let b = src.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(src.len());
+    let mut i = 0;
+    let mut in_str = false;
+    while let Some(&c) = b.get(i) {
+        if c == b'\'' {
+            in_str = !in_str;
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        if !in_str {
+            if c == b'-' && b.get(i + 1) == Some(&b'-') {
+                while b.get(i).is_some_and(|&x| x != b'\n') {
+                    out.push(b' ');
+                    i += 1;
+                }
+                continue;
+            }
+            if c == b'/' && b.get(i + 1) == Some(&b'*') {
+                out.push(b' ');
+                out.push(b' ');
+                i += 2;
+                while b.get(i).is_some()
+                    && !(b.get(i) == Some(&b'*') && b.get(i + 1) == Some(&b'/'))
+                {
+                    out.push(b' ');
+                    i += 1;
+                }
+                if b.get(i).is_some() {
+                    out.push(b' ');
+                    out.push(b' ');
+                    i += 2;
+                }
+                continue;
+            }
+        }
+        out.push(c);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// The byte offset just past `words` — matched in order, ASCII-case-
+/// insensitively, separated by one or more whitespace characters, at a word
+/// boundary on both ends, and outside any single-quoted string literal.
+///
+/// This replaces `stmt.to_uppercase().find("CREATE TABLE")`, which was wrong in
+/// three ways that all fail the same direction — **open**, with the gate still
+/// green. Measured, each one, against this parser before the change:
+///
+/// * **One literal space.** `CREATE  TABLE t (...)`, `CREATE\tTABLE`, or a
+///   `CREATE` left at the end of a wrapped line matched nothing at all, so the
+///   whole table — every column of it — was invisible to both directions.
+///   `ALTER  TABLE t ADD COLUMN email` silently lost `email`; `DROP  TABLE t`
+///   silently left `t` standing, which is the exact defect
+///   [`drop_table_targets`] was added to close, reachable again through a
+///   second space. Nothing in this repository reformats SQL, so the only thing
+///   keeping the old spelling correct was that all 48 migrations happen to be
+///   typed with exactly one space.
+/// * **No word boundary.** `RECREATE TABLE` contains `CREATE TABLE`.
+/// * **String literals.** These migrations' `COMMENT ON` bodies are essays that
+///   discuss migrations; one containing the words `DROP TABLE customers` would
+///   have removed the real `customers` table from the derived set, silently.
+///
+/// Matching the bytes of `stmt` itself rather than an uppercased copy also
+/// closes a latent offset bug: `str::to_uppercase` is not length-preserving for
+/// every input (`'ﬁ'` is three bytes, `"FI"` is two), and offsets found in the
+/// copy were being used to index the original.
+fn kw_end(stmt: &str, words: &[&str]) -> Option<usize> {
+    let b = stmt.as_bytes();
+    let mut in_str = false;
+    for i in 0..b.len() {
+        if b.get(i) == Some(&b'\'') {
+            in_str = !in_str;
+            continue;
+        }
+        if in_str {
+            continue;
+        }
+        if i > 0 && b.get(i - 1).is_some_and(|c| is_sql_ident_byte(*c)) {
+            continue;
+        }
+        if let Some(end) = words_at(b, i, words) {
+            return Some(end);
+        }
+    }
+    None
+}
+
+/// `words` in order starting exactly at `at`, whitespace-separated, ending on a
+/// word boundary — the offset just past the last one.
+///
+/// Unlike [`kw_end`] this does not search: it answers "is this the keyword
+/// sequence, right here", which is what an optional clause such as
+/// `IF NOT EXISTS` needs after the caller has skipped to its position.
+fn words_at(b: &[u8], at: usize, words: &[&str]) -> Option<usize> {
+    let mut i = at;
+    for (n, word) in words.iter().enumerate() {
+        if n > 0 {
+            let before = i;
+            i = skip_space(b, i);
+            if i == before {
+                return None;
+            }
+        }
+        let end = i.checked_add(word.len())?;
+        if !b
+            .get(i..end)
+            .is_some_and(|s| s.eq_ignore_ascii_case(word.as_bytes()))
+        {
+            return None;
+        }
+        i = end;
+    }
+    if b.get(i).is_some_and(|c| is_sql_ident_byte(*c)) {
+        return None;
+    }
+    Some(i)
+}
+
+/// The first offset at or after `from` that is not ASCII whitespace.
+fn skip_space(b: &[u8], from: usize) -> usize {
+    let mut i = from;
+    while b.get(i).is_some_and(|c| c.is_ascii_whitespace()) {
+        i += 1;
+    }
+    i
+}
+
+/// Whether `c` can appear inside an unquoted SQL identifier, so that a keyword
+/// match beginning or ending on it is a match in the middle of a name.
+fn is_sql_ident_byte(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || c == b'_' || c == b'$'
+}
+
+/// A table or column name as the derived set spells it: last dot-segment,
+/// unquoted, no trailing semicolon, lowercased.
+///
+/// **Schema qualification is dropped, not kept.** The five
+/// `CREATE TABLE authkestra.oauth_*` tables in `0006`/`0013` are filed under
+/// their bare names, which is the spelling `schemas/privacy-inventory.yaml`
+/// uses and the one `docs/reference/personal-data-inventory.md` publishes. Two
+/// tables of the same bare name in different schemas would merge into one entry
+/// here, and a column of either would then satisfy a classification written for
+/// the other. No such pair exists today — 31 created tables, 31 distinct bare
+/// names — and the reference page says so in its own words rather than leaving
+/// the reader to rediscover it.
+fn normalise_sql_name(raw: &str) -> String {
+    raw.rsplit('.')
+        .next()
+        .unwrap_or(raw)
+        .trim_matches('"')
+        .trim_end_matches(';')
+        .to_lowercase()
+}
+
+/// What a statement is, as far as deriving a column set goes.
+///
+/// # Why an `Unmodelled` arm exists
+///
+/// The alternative is silence, and silence here is the one failure this
+/// repository will not accept from a check. A `CREATE TABLE` this parser could
+/// not decompose used to return `None`, fall through to the `DROP`/`ALTER`
+/// branches, match neither, and be skipped — so the table entered the derived
+/// set as *nothing*. Both directions of the gate then agree, for the same
+/// reason: direction A cannot report columns it never derived, and direction B
+/// has no stale row to find because an honest author classified none. A green
+/// gate over an unclassified table is precisely what
+/// `verify-privacy-inventory` exists to make impossible.
+///
+/// Measured against this parser before the change, each deriving an empty set
+/// and passing: `CREATE TABLE t AS SELECT ...`,
+/// `CREATE TABLE t (LIKE u INCLUDING ALL)`, and
+/// `CREATE TABLE t PARTITION OF u FOR VALUES ...`. None of the three appears in
+/// `backends/migrations` today. The refusal is what keeps that a fact the gate
+/// holds rather than one a reviewer has to re-establish.
+#[derive(Debug, PartialEq, Eq)]
+enum CreateTable<'a> {
+    /// Not a `CREATE TABLE` statement.
+    No,
+    /// `CREATE TABLE <name> (<body>)`: the normalised name, and the body
+    /// between the outer parentheses.
+    Columns(String, &'a str),
+    /// A `CREATE TABLE` whose column list this parser cannot read. Carries the
+    /// table name, for the refusal message.
+    Unmodelled(String),
+}
+
+/// Classify `stmt`, and if it is a `CREATE TABLE` read its name and body.
+fn create_table_parts(stmt: &str) -> CreateTable<'_> {
+    let Some(after_kw) = kw_end(stmt, &["CREATE", "TABLE"]) else {
+        return CreateTable::No;
+    };
+    let b = stmt.as_bytes();
+    let mut i = skip_space(b, after_kw);
+    if let Some(end) = words_at(b, i, &["IF", "NOT", "EXISTS"]) {
+        i = skip_space(b, end);
+    }
+    let name_start = i;
+    while b
+        .get(i)
+        .is_some_and(|&c| !(c.is_ascii_whitespace() || c == b'('))
+    {
+        i += 1;
+    }
+    let Some(raw) = stmt.get(name_start..i) else {
+        return CreateTable::No;
+    };
+    let table = normalise_sql_name(raw);
+    if table.is_empty() {
+        return CreateTable::Unmodelled(raw.to_string());
+    }
+    i = skip_space(b, i);
+    if b.get(i) != Some(&b'(') {
+        // `AS SELECT`, `PARTITION OF`, or anything else where a column list
+        // should be.
+        return CreateTable::Unmodelled(table);
+    }
+    let body_start = i + 1;
+    let mut depth = 1i32;
+    let mut in_str = false;
+    let mut j = body_start;
+    while j < b.len() {
+        match b.get(j) {
+            Some(&b'\'') => in_str = !in_str,
+            Some(&b'(') if !in_str => depth += 1,
+            Some(&b')') if !in_str => {
+                depth -= 1;
+                if depth == 0 {
+                    let (Some(body), Some(tail)) = (stmt.get(body_start..j), stmt.get(j..)) else {
+                        return CreateTable::Unmodelled(table);
+                    };
+                    // `INHERITS (parent)` adds every column of the parent, and
+                    // this parse sees none of them.
+                    if kw_end(tail, &["INHERITS"]).is_some() {
+                        return CreateTable::Unmodelled(table);
+                    }
+                    return CreateTable::Columns(table, body);
+                }
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    CreateTable::Unmodelled(table)
+}
+
+/// The column names defined in a `CREATE TABLE` body (skips constraint lines).
+fn create_table_columns(body: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for part in split_top_level(body, ',') {
+        let part = part.trim();
+        if part.is_empty() || is_constraint_line(part) {
+            continue;
+        }
+        if let Some((name, _)) = part.split_once(char::is_whitespace) {
+            let name = name.trim_matches('"').to_lowercase();
+            if name != "constraint" {
+                out.push(name);
+            }
+        }
+    }
+    out
+}
+
+/// Split `s` on `;` at statement boundaries, outside single-quoted string
+/// literals. A `;` inside a string is data, not a statement terminator — a
+/// `CHECK (a = 'x; y')` or `DEFAULT 'a;b'` must not truncate the statement and
+/// silently drop the columns after it.
+fn split_sql_statements(s: &str) -> Vec<&str> {
+    let b = s.as_bytes();
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut in_str = false;
+    let mut i = 0;
+    while let Some(&c) = b.get(i) {
+        if c == b'\'' {
+            in_str = !in_str;
+        } else if c == b';' && !in_str {
+            out.push(s.get(start..i).unwrap_or(""));
+            start = i + 1;
+        }
+        i += 1;
+    }
+    out.push(s.get(start..).unwrap_or(""));
+    out
+}
+
+/// Split `s` on `sep` at parenthesis depth zero, outside single-quoted string
+/// literals.
+fn split_top_level(s: &str, sep: char) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut in_str = false;
+    let mut cur = String::new();
+    for ch in s.chars() {
+        if ch == '\'' {
+            in_str = !in_str;
+        }
+        match ch {
+            '(' if !in_str => depth += 1,
+            ')' if !in_str => depth -= 1,
+            _ => {}
+        }
+        if ch == sep && depth == 0 && !in_str {
+            out.push(std::mem::take(&mut cur));
+        } else {
+            cur.push(ch);
+        }
+    }
+    out.push(cur);
+    out
+}
+
+/// Whether a `CREATE TABLE` body part opens a constraint rather than a column.
+///
+/// The keyword must be a whole word. `up.starts_with(k)` alone would read a
+/// column named `unique_reference`, `check_digit` or `like_count` as a table
+/// constraint and drop it from the derived set — and a column the parser never
+/// derives is a column the gate cannot report as unclassified, which is the one
+/// way this check can be wrong without saying so. No such column exists today;
+/// the boundary is here so that adding one is an ordinary gate failure rather
+/// than a silent hole (`a_column_named_after_a_constraint_keyword_is_a_column`).
+fn is_constraint_line(part: &str) -> bool {
+    const KW: [&str; 8] = [
+        "CONSTRAINT",
+        "PRIMARY KEY",
+        "UNIQUE",
+        "FOREIGN KEY",
+        "CHECK",
+        "EXCLUDE",
+        "REFERENCES",
+        "LIKE",
+    ];
+    let up = part.to_uppercase();
+    KW.iter().any(|k| {
+        up.starts_with(k)
+            && up
+                .get(k.len()..)
+                .and_then(|rest| rest.chars().next())
+                .is_none_or(|c| !(c.is_alphanumeric() || c == '_'))
+    })
+}
+
+/// The tables a `DROP TABLE [IF EXISTS] a, b [CASCADE|RESTRICT]` removes.
+///
+/// `None` when `stmt` is not a `DROP TABLE` at all, so the caller can tell
+/// "not this statement" from "this statement drops nothing". Schema
+/// qualification and quoting are normalised exactly as
+/// [`create_table_parts`] and [`alter_table_target`] normalise them, or the
+/// name removed would not be the name inserted.
+fn drop_table_targets(stmt: &str) -> Option<Vec<String>> {
+    let after_kw = kw_end(stmt, &["DROP", "TABLE"])?;
+    let b = stmt.as_bytes();
+    let mut start = skip_space(b, after_kw);
+    if let Some(end) = words_at(b, start, &["IF", "EXISTS"]) {
+        start = skip_space(b, end);
+    }
+    let mut out = Vec::new();
+    for raw in stmt.get(start..)?.split(',') {
+        let name = normalise_sql_name(raw.split_whitespace().next().unwrap_or_default());
+        if name.is_empty() || name == "cascade" || name == "restrict" {
+            continue;
+        }
+        out.push(name);
+    }
+    Some(out)
+}
+
+/// If `stmt` is an `ALTER TABLE`, the normalised target table name.
+///
+/// `ALTER TABLE ONLY t ...` would read `only` as the table — a form no
+/// migration uses, and one that fails *closed*: the columns land under a table
+/// nothing classifies, so direction A reports them. Named here rather than
+/// handled, because a fail-closed gap costs a reviewer one run and a
+/// fail-open one costs nothing until it matters.
+fn alter_table_target(stmt: &str) -> Option<String> {
+    let after_kw = kw_end(stmt, &["ALTER", "TABLE"])?;
+    let b = stmt.as_bytes();
+    let mut i = skip_space(b, after_kw);
+    if let Some(end) = words_at(b, i, &["IF", "EXISTS"]) {
+        i = skip_space(b, end);
+    }
+    let start = i;
+    while b.get(i).is_some_and(|&c| !c.is_ascii_whitespace()) {
+        i += 1;
+    }
+    let name = normalise_sql_name(stmt.get(start..i)?);
+    if name.is_empty() { None } else { Some(name) }
+}
+
+/// Whether the character before `at` would put a keyword match in the middle of
+/// an identifier.
+///
+/// [`is_constraint_line`] grew a word boundary on the *trailing* side for the
+/// same reason; this is the leading one, and it was missing from both
+/// [`alter_add_columns`] and [`alter_drop_columns`]. Measured:
+/// `ALTER TABLE t ADD COLUMN c my_add TEXT` derived a phantom column `text`,
+/// because the `add` ending `my_add` matched. That direction fails *closed* —
+/// a column nothing classifies is reported — so it cost a confusing gate
+/// failure rather than a silent pass, but a parser that invents columns is one
+/// nobody can read the output of.
+fn preceded_by_ident_char(chars: &[char], at: usize) -> bool {
+    at.checked_sub(1)
+        .and_then(|p| chars.get(p))
+        .is_some_and(|c| is_ident_char(*c))
+}
+
+/// Whether `chars[j..]` begins with `kw` (case-insensitive), when that many
+/// characters are in bounds.
+fn is_kw_at(chars: &[char], j: usize, kw: &str) -> bool {
+    chars.get(j..j + kw.len()).is_some_and(|s| {
+        kw.chars()
+            .zip(s.iter())
+            .all(|(a, b)| a.eq_ignore_ascii_case(b))
+    })
+}
+
+/// Every column an `ALTER TABLE ... ADD [COLUMN]` adds, skipping `ADD
+/// CONSTRAINT`, anything inside a constraint's parentheses, and anything inside
+/// a single-quoted string literal.
+fn alter_add_columns(stmt: &str) -> Vec<String> {
+    let chars: Vec<char> = stmt.chars().collect();
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut in_str = false;
+    let mut i = 0;
+    while i < chars.len() {
+        let ch = chars.get(i).copied().unwrap_or_default();
+        if ch == '\'' {
+            in_str = !in_str;
+        }
+        match ch {
+            '(' if !in_str => depth += 1,
+            ')' if !in_str => depth -= 1,
+            _ => {}
+        }
+        let is_add = !in_str
+            && depth == 0
+            && !preceded_by_ident_char(&chars, i)
+            && is_kw_at(&chars, i, "ADD")
+            && chars
+                .get(i + 3)
+                .is_none_or(|c| c.is_whitespace() || *c == '(');
+        if !is_add {
+            i += 1;
+            continue;
+        }
+        let mut j = i + 3;
+        while chars.get(j).is_some_and(|c| c.is_whitespace()) {
+            j += 1;
+        }
+        // Skip `ADD CONSTRAINT ...` wholesale; its body is at depth > 0 so its
+        // own `ADD`s are ignored anyway, but skipping the keyword keeps the
+        // parse honest about the shape.
+        if is_kw_at(&chars, j, "CONSTRAINT") {
+            i = j + "CONSTRAINT".len();
+            continue;
+        }
+        if is_kw_at(&chars, j, "COLUMN") {
+            j += "COLUMN".len();
+            while chars.get(j).is_some_and(|c| c.is_whitespace()) {
+                j += 1;
+            }
+        }
+        if is_kw_at(&chars, j, "IF NOT EXISTS") {
+            j += "IF NOT EXISTS".len();
+            while chars.get(j).is_some_and(|c| c.is_whitespace()) {
+                j += 1;
+            }
+        }
+        let mut k = j;
+        while chars
+            .get(k)
+            .is_some_and(|c| c.is_alphanumeric() || *c == '_' || *c == '"')
+        {
+            k += 1;
+        }
+        let name: String = chars
+            .get(j..k)
+            .map(|s| s.iter().collect::<String>())
+            .unwrap_or_default()
+            .trim_matches('"')
+            .to_lowercase();
+        if !name.is_empty() && name != "constraint" {
+            out.push(name);
+        }
+        i = k;
+    }
+    out
+}
+
+/// The columns an `ALTER TABLE ... DROP COLUMN` (or `DROP col`) removes,
+/// skipping `DROP CONSTRAINT` and anything inside a single-quoted string.
+fn alter_drop_columns(stmt: &str) -> Vec<String> {
+    let chars: Vec<char> = stmt.chars().collect();
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut in_str = false;
+    let mut i = 0;
+    while i < chars.len() {
+        let ch = chars.get(i).copied().unwrap_or_default();
+        if ch == '\'' {
+            in_str = !in_str;
+        }
+        match ch {
+            '(' if !in_str => depth += 1,
+            ')' if !in_str => depth -= 1,
+            _ => {}
+        }
+        let is_drop = !in_str
+            && depth == 0
+            && !preceded_by_ident_char(&chars, i)
+            && is_kw_at(&chars, i, "DROP")
+            && chars
+                .get(i + 4)
+                .is_none_or(|c| c.is_whitespace() || *c == '(');
+        if !is_drop {
+            i += 1;
+            continue;
+        }
+        let mut j = i + 4;
+        while chars.get(j).is_some_and(|c| c.is_whitespace()) {
+            j += 1;
+        }
+        // Skip `DROP CONSTRAINT` (a constraint, not a column).
+        if is_kw_at(&chars, j, "CONSTRAINT") {
+            i = j + "CONSTRAINT".len();
+            continue;
+        }
+        if is_kw_at(&chars, j, "COLUMN") {
+            j += "COLUMN".len();
+            while chars.get(j).is_some_and(|c| c.is_whitespace()) {
+                j += 1;
+            }
+        }
+        if is_kw_at(&chars, j, "IF EXISTS") {
+            j += "IF EXISTS".len();
+            while chars.get(j).is_some_and(|c| c.is_whitespace()) {
+                j += 1;
+            }
+        }
+        let mut k = j;
+        while chars
+            .get(k)
+            .is_some_and(|c| c.is_alphanumeric() || *c == '_' || *c == '"')
+        {
+            k += 1;
+        }
+        let name: String = chars
+            .get(j..k)
+            .map(|s| s.iter().collect::<String>())
+            .unwrap_or_default()
+            .trim_matches('"')
+            .to_lowercase();
+        if !name.is_empty() && name != "constraint" {
+            out.push(name);
+        }
+        i = k;
+    }
+    out
+}
+
+/// The `(from, to)` of an `ALTER TABLE ... RENAME COLUMN a TO b`, if any.
+///
+/// `RENAME CONSTRAINT a TO b` (migration `0010`) and `RENAME TO b` are *not*
+/// this: [`kw_end`] requires `RENAME` and `COLUMN` to be adjacent words, so
+/// neither matches. The table rename is refused outright in
+/// [`migrations_db_columns`] rather than silently treated as no-op.
+fn alter_rename_column(stmt: &str) -> Option<(String, String)> {
+    let after_kw = kw_end(stmt, &["RENAME", "COLUMN"])?;
+    let b = stmt.as_bytes();
+    let mut i = skip_space(b, after_kw);
+    let from_start = i;
+    while b.get(i).is_some_and(|&c| !c.is_ascii_whitespace()) {
+        i += 1;
+    }
+    let from = normalise_sql_name(stmt.get(from_start..i)?);
+    i = skip_space(b, i);
+    if let Some(end) = words_at(b, i, &["TO"]) {
+        i = skip_space(b, end);
+    }
+    let to_start = i;
+    while b.get(i).is_some_and(|&c| !c.is_ascii_whitespace()) {
+        i += 1;
+    }
+    let to = normalise_sql_name(stmt.get(to_start..i)?);
+    if from.is_empty() || to.is_empty() {
+        None
+    } else {
+        Some((from, to))
+    }
+}
+
+#[cfg(test)]
+mod privacy_inventory_tests {
+    use super::*;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn tmp_root() -> PathBuf {
+        static N: AtomicUsize = AtomicUsize::new(0);
+        let n = N.fetch_add(1, Ordering::SeqCst);
+        let d = std::env::temp_dir().join(format!("vpay-priv-inv-{}-{n}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        let _ = fs::create_dir_all(d.join("backends/migrations"));
+        let _ = fs::create_dir_all(d.join("schemas"));
+        d
+    }
+
+    fn write(root: &Path, migration: &str, inventory: &str) {
+        fs::write(root.join("backends/migrations/0001_test.sql"), migration).unwrap();
+        fs::write(root.join("schemas/privacy-inventory.yaml"), inventory).unwrap();
+    }
+
+    const OK_INV: &str = r#"
+version: 1
+elements:
+  customer_email:
+    subject: payer
+    purpose: merchant-identity
+    necessary: false
+    tenant_boundary: merchant
+    recipients: []
+    retention: customer
+    owner: maintainer
+    control: redact
+    copies:
+    - kind: column
+      table: customers
+      column: email
+  sys_status:
+    subject: none
+    purpose: system
+    necessary: true
+    tenant_boundary: merchant
+    recipients: []
+    retention: operational
+    owner: maintainer
+    control: none
+    copies:
+    - kind: column
+      table: customers
+      column: status
+non_db_surfaces:
+- id: logs
+  surface: telemetry
+  description: x
+  enumerable: false
+  unmet: n
+"#;
+
+    const OK_MIG: &str = "CREATE TABLE customers ( email TEXT, status TEXT );";
+
+    #[test]
+    fn a_classified_tree_passes() {
+        let root = tmp_root();
+        write(&root, OK_MIG, OK_INV);
+        assert!(verify_privacy_inventory(&root).is_ok(), "expected ok");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_migrated_column_without_an_element_fails_direction_a() {
+        let root = tmp_root();
+        write(
+            &root,
+            "CREATE TABLE customers ( email TEXT, status TEXT, phone TEXT );",
+            OK_INV,
+        );
+        let err = verify_privacy_inventory(&root).unwrap_err();
+        assert!(err.contains("customers.phone"), "err: {err}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_stale_inventory_column_fails_direction_b() {
+        let root = tmp_root();
+        let inv = OK_INV.replace(
+            "column: email",
+            "column: email\n    - kind: column\n      table: customers\n      column: ghost",
+        );
+        write(&root, OK_MIG, &inv);
+        let err = verify_privacy_inventory(&root).unwrap_err();
+        assert!(err.contains("customers.ghost"), "err: {err}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_duplicate_surface_id_fails() {
+        let root = tmp_root();
+        let dup =
+            "- id: logs\n  surface: telemetry\n  description: x\n  enumerable: false\n  unmet: n";
+        let inv = OK_INV.replace(dup, &format!("{dup}\n{dup}"));
+        write(&root, OK_MIG, &inv);
+        let err = verify_privacy_inventory(&root).unwrap_err();
+        assert!(
+            err.contains("duplicate non-database surface id `logs`"),
+            "err: {err}"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_surface_id_colliding_with_an_element_fails() {
+        let root = tmp_root();
+        let inv = OK_INV.replace("- id: logs", "- id: customer_email");
+        write(&root, OK_MIG, &inv);
+        let err = verify_privacy_inventory(&root).unwrap_err();
+        assert!(err.contains("collides with an element name"), "err: {err}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn strip_comments_is_string_aware() {
+        let src = "-- lead\nCHECK (a LIKE '-----BEGIN%KEY-----%'),\n/* block */ b TEXT";
+        let out = strip_sql_comments(src);
+        assert!(out.contains("'-----BEGIN%KEY-----%'"), "out: {out}");
+        assert!(out.contains("b TEXT"), "out: {out}");
+        assert!(!out.contains("lead"), "out: {out}");
+        assert!(!out.contains("block"), "out: {out}");
+    }
+
+    #[test]
+    fn rename_and_drop_model_the_final_schema() {
+        let root = tmp_root();
+        fs::write(
+            root.join("backends/migrations/0001_test.sql"),
+            "CREATE TABLE t (id TEXT, secret TEXT);\
+             \nALTER TABLE t RENAME COLUMN id TO kid;\
+             \nALTER TABLE t DROP COLUMN secret;",
+        )
+        .unwrap();
+        let cols = migrations_db_columns(&root).unwrap();
+        assert!(cols.contains(&("t".into(), "kid".into())));
+        assert!(!cols.contains(&("t".into(), "secret".into())));
+        assert!(!cols.contains(&("t".into(), "id".into())));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn alter_drop_columns_skips_constraints() {
+        let cols = alter_drop_columns(
+            "ALTER TABLE t DROP CONSTRAINT c1; ALTER TABLE t DROP COLUMN secret;",
+        );
+        assert_eq!(cols, vec!["secret".to_string()]);
+    }
+
+    #[test]
+    fn create_table_columns_skips_constraints() {
+        let cols = create_table_columns(
+            "id TEXT, name TEXT NOT NULL, CONSTRAINT c CHECK (length(name) > 0)",
+        );
+        assert_eq!(cols, vec!["id".to_string(), "name".to_string()]);
+    }
+
+    #[test]
+    fn a_semicolon_inside_a_string_does_not_split_statements() {
+        let stmts = split_sql_statements(
+            "CREATE TABLE t (a TEXT);\nCOMMENT ON COLUMN t.a IS 'semi; colon';\nCREATE TABLE u (b TEXT);",
+        );
+        // A trailing `;` yields a final empty element; the `;` inside the
+        // string literal must not add a boundary.
+        let non_empty: Vec<&str> = stmts
+            .iter()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+        assert_eq!(non_empty.len(), 3, "stmts: {stmts:?}");
+        assert!(
+            non_empty
+                .get(1)
+                .is_some_and(|s| s.contains("'semi; colon'")),
+            "stmts: {stmts:?}"
+        );
+    }
+
+    #[test]
+    fn a_comma_inside_a_string_does_not_split_create_body() {
+        let parts = split_top_level("a TEXT DEFAULT 'x, y', b TEXT", ',');
+        assert_eq!(parts.len(), 2, "parts: {parts:?}");
+        assert!(parts.first().is_some_and(|p| p.contains("'x, y'")));
+    }
+
+    #[test]
+    fn an_add_or_drop_inside_a_string_is_not_a_column_operation() {
+        // `note` is a real added column; `word` inside the DEFAULT string is
+        // not. The ADD inside the string must not be read as a second column.
+        assert_eq!(
+            alter_add_columns("ALTER TABLE t ADD COLUMN note TEXT DEFAULT 'ADD word';"),
+            vec!["note".to_string()]
+        );
+        // There is no DROP COLUMN here; `DROP` inside the string must not be
+        // read as one.
+        assert!(
+            alter_drop_columns("ALTER TABLE t ADD COLUMN note TEXT DEFAULT 'DROP word';")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_dropped_table_leaves_no_columns_behind() {
+        // Migration 0009's shape: 0008 creates `merchant_api_keys`, 0009 drops
+        // it. Before `DROP TABLE` was modelled, all eight columns stayed in the
+        // derived set, so neither direction of the gate could see that the
+        // inventory was classifying a table no database has.
+        let root = tmp_root();
+        fs::write(
+            root.join("backends/migrations/0001_create.sql"),
+            "CREATE TABLE merchant_api_keys (id TEXT, key_digest TEXT);",
+        )
+        .unwrap();
+        fs::write(
+            root.join("backends/migrations/0002_drop.sql"),
+            "DROP TABLE merchant_api_keys;",
+        )
+        .unwrap();
+        let cols = migrations_db_columns(&root).unwrap();
+        assert!(
+            !cols.iter().any(|(table, _)| table == "merchant_api_keys"),
+            "a dropped table must leave nothing behind: {cols:?}"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_stale_row_naming_a_dropped_tables_column_fails_direction_b() {
+        // The other half of the same defect, through the real gate: an element
+        // copy naming a column of a dropped table must fail, exactly as one
+        // naming a column that never existed does.
+        let root = tmp_root();
+        fs::write(
+            root.join("backends/migrations/0001_create.sql"),
+            "CREATE TABLE customers ( email TEXT, status TEXT );\
+             \nCREATE TABLE merchant_api_keys ( key_digest TEXT );",
+        )
+        .unwrap();
+        fs::write(
+            root.join("backends/migrations/0002_drop.sql"),
+            "DROP TABLE merchant_api_keys;",
+        )
+        .unwrap();
+        let inv = OK_INV.replace(
+            "column: email",
+            "column: email\n    - kind: column\n      table: merchant_api_keys\n      column: key_digest",
+        );
+        fs::write(root.join("schemas/privacy-inventory.yaml"), inv).unwrap();
+        let err = verify_privacy_inventory(&root).unwrap_err();
+        assert!(err.contains("merchant_api_keys.key_digest"), "err: {err}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_column_named_after_a_constraint_keyword_is_a_column() {
+        // `up.starts_with("UNIQUE")` alone swallows `unique_reference`, and a
+        // column the parser never derives is one the gate cannot report as
+        // unclassified — the only way this check fails silently.
+        let cols = create_table_columns(
+            "unique_reference TEXT, check_digit INT, like_count INT, \
+             UNIQUE (unique_reference), CHECK (check_digit > 0)",
+        );
+        assert_eq!(
+            cols,
+            vec![
+                "unique_reference".to_string(),
+                "check_digit".to_string(),
+                "like_count".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn an_out_of_vocabulary_control_fails() {
+        let root = tmp_root();
+        let inv = OK_INV.replace("control: redact", "control: redcat");
+        write(&root, OK_MIG, &inv);
+        let err = verify_privacy_inventory(&root).unwrap_err();
+        assert!(
+            err.contains("not one of {redact, none, forbid}"),
+            "err: {err}"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_out_of_vocabulary_subject_fails() {
+        let root = tmp_root();
+        let inv = OK_INV.replace("subject: payer", "subject: payor");
+        write(&root, OK_MIG, &inv);
+        let err = verify_privacy_inventory(&root).unwrap_err();
+        assert!(
+            err.contains("not one of {payer, staff, merchant, none, system}"),
+            "err: {err}"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_unsupported_copy_kind_fails() {
+        let root = tmp_root();
+        let inv = OK_INV.replace(
+            "- kind: column\n      table: customers",
+            "- kind: logline\n      table: customers",
+        );
+        write(&root, OK_MIG, &inv);
+        let err = verify_privacy_inventory(&root).unwrap_err();
+        assert!(
+            err.contains("unsupported copy kind `logline`"),
+            "err: {err}"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_inventory_of_another_version_is_refused_rather_than_read() {
+        let root = tmp_root();
+        write(&root, OK_MIG, &OK_INV.replace("version: 1", "version: 2"));
+        let err = verify_privacy_inventory(&root).unwrap_err();
+        assert!(err.contains("unsupported version 2"), "err: {err}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// The derived column set for one migration file, or the gate's refusal.
+    fn derive(sql: &str) -> Result<BTreeSet<(String, String)>, String> {
+        let root = tmp_root();
+        fs::write(root.join("backends/migrations/0001_test.sql"), sql).unwrap();
+        let out = migrations_db_columns(&root);
+        let _ = fs::remove_dir_all(&root);
+        out
+    }
+
+    fn has(cols: &BTreeSet<(String, String)>, table: &str, column: &str) -> bool {
+        cols.contains(&(table.to_string(), column.to_string()))
+    }
+
+    #[test]
+    fn a_keyword_pair_survives_any_whitespace_between_its_words() {
+        // THE defect this parser could have shipped with. `up.find("CREATE
+        // TABLE")` matched one literal space, so a second space, a tab, or a
+        // line break after `CREATE` made the whole table — every column of it —
+        // invisible to BOTH directions of the gate, silently. Nothing in this
+        // repository reformats SQL; the only thing keeping it correct was that
+        // all 48 migrations happen to be typed with one space.
+        for sql in [
+            "CREATE  TABLE t (id TEXT, email TEXT);",
+            "CREATE\tTABLE t (id TEXT, email TEXT);",
+            "CREATE\n  TABLE t (id TEXT, email TEXT);",
+        ] {
+            let cols = derive(sql).unwrap();
+            assert!(has(&cols, "t", "email"), "sql: {sql:?} -> {cols:?}");
+        }
+
+        // The same for the other two statement kinds: an added column must not
+        // go missing, and a dropped table must not survive.
+        let cols =
+            derive("CREATE TABLE t (id TEXT);\nALTER  TABLE t ADD COLUMN email TEXT;").unwrap();
+        assert!(has(&cols, "t", "email"), "{cols:?}");
+        let cols = derive("CREATE TABLE t (id TEXT);\nDROP\nTABLE t;").unwrap();
+        assert!(
+            cols.is_empty(),
+            "a dropped table must not survive: {cols:?}"
+        );
+        let cols =
+            derive("CREATE TABLE t (id TEXT);\nALTER TABLE t RENAME  COLUMN id TO kid;").unwrap();
+        assert!(has(&cols, "t", "kid") && !has(&cols, "t", "id"), "{cols:?}");
+    }
+
+    #[test]
+    fn a_keyword_inside_an_identifier_is_not_a_keyword() {
+        // Leading word boundary. `RECREATE TABLE` is not `CREATE TABLE`, and
+        // the `add` that ends `my_add` is not an `ADD` clause — the latter used
+        // to invent a column called `text`.
+        let cols =
+            derive("CREATE TABLE t (id TEXT);\nALTER TABLE t ADD COLUMN c my_add TEXT;").unwrap();
+        assert!(has(&cols, "t", "c"), "{cols:?}");
+        assert!(!has(&cols, "t", "text"), "no phantom column: {cols:?}");
+        assert_eq!(kw_end("RECREATE TABLE t", &["CREATE", "TABLE"]), None);
+    }
+
+    #[test]
+    fn a_ddl_keyword_inside_a_string_literal_is_data() {
+        // These migrations' `COMMENT ON` bodies are essays that discuss
+        // migrations. One containing the words `DROP TABLE customers` must not
+        // remove the real `customers` table from the derived set — that is a
+        // silent, fail-open erasure of every column the gate would have asked
+        // about.
+        let cols = derive(
+            "CREATE TABLE customers (email TEXT);\n             COMMENT ON TABLE customers IS 'migration 0009 ran DROP TABLE customers here';",
+        )
+        .unwrap();
+        assert!(has(&cols, "customers", "email"), "{cols:?}");
+    }
+
+    #[test]
+    fn a_create_table_the_parser_cannot_read_is_refused_not_skipped() {
+        // Each of these derived an EMPTY column set and passed, before the
+        // refusal: no columns to report unclassified, and no inventory row to
+        // call stale, so both directions agreed about a table neither could
+        // see. None appears in backends/migrations today — the refusal is what
+        // keeps that true rather than re-checked.
+        for sql in [
+            "CREATE TABLE t AS SELECT a, b FROM u;",
+            "CREATE TABLE t PARTITION OF u FOR VALUES FROM (1) TO (2);",
+            "CREATE TABLE t (id TEXT) INHERITS (u);",
+        ] {
+            let err = derive(sql).unwrap_err();
+            assert!(
+                err.contains("does not model") && err.contains("`CREATE TABLE t`"),
+                "sql: {sql:?} err: {err}"
+            );
+        }
+        // A `(LIKE other)` body parses, but every part of it reads as a
+        // constraint, so the table derives no columns at all.
+        let err = derive("CREATE TABLE t (LIKE u INCLUDING ALL);").unwrap_err();
+        assert!(err.contains("yields no columns"), "err: {err}");
+    }
+
+    #[test]
+    fn a_table_rename_is_refused_rather_than_silently_ignored() {
+        // `ALTER TABLE t RENAME TO u` left every column filed under `t`, so the
+        // inventory could only pass by naming a table that no longer exists.
+        let err = derive("CREATE TABLE t (id TEXT);\nALTER TABLE t RENAME TO u;").unwrap_err();
+        assert!(err.contains("RENAME TO"), "err: {err}");
+        // A column rename and a CONSTRAINT rename are not that, and must still
+        // work — migration 0010 does both.
+        let cols = derive(
+            "CREATE TABLE t (id TEXT);\n             ALTER TABLE t RENAME CONSTRAINT c1 TO c2;\n             ALTER TABLE t RENAME COLUMN id TO kid;",
+        )
+        .unwrap();
+        assert!(has(&cols, "t", "kid"), "{cols:?}");
+    }
+
+    #[test]
+    fn strip_comments_preserves_byte_length_and_multibyte_text() {
+        // It pushed `byte as char`, which re-encoded every byte of a multi-byte
+        // character as its own Latin-1 code point: the output was mojibake and
+        // LONGER than the input, while the doc comment claimed length was
+        // preserved. These migrations are full of `§`, `—` and `±`.
+        let src = "-- a § comment —
+COMMENT ON TABLE t IS 'RFC 7523 §3 — ±1 step';";
+        let out = strip_sql_comments(src);
+        assert_eq!(out.len(), src.len(), "byte length must be preserved");
+        assert!(out.contains("'RFC 7523 §3 — ±1 step'"), "out: {out}");
+        assert!(!out.contains("comment"), "out: {out}");
+    }
+
+    #[test]
+    fn an_alter_clause_inside_parentheses_is_not_a_column_operation() {
+        // `alter_add_columns` guarded on depth; `alter_drop_columns` did not, so
+        // a `DROP` inside a constraint body was read as a dropped column.
+        let cols = derive(
+            "CREATE TABLE t (id TEXT, email TEXT);\n             ALTER TABLE t ADD CONSTRAINT c CHECK (id <> 'x' AND (DROP email) IS NULL);",
+        )
+        .unwrap();
+        assert!(has(&cols, "t", "email"), "{cols:?}");
     }
 }
 

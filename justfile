@@ -1,6 +1,6 @@
 # vpay task runner. `just` with no argument lists everything.
 #
-# Twelve invariants this repo enforces on itself, all wired into `just verify`:
+# Fourteen invariants this repo enforces on itself, all wired into `just verify`:
 #   * no test double is reachable from a shipping binary
 #   * every unimplemented item is declared in docs/status.md
 #   * every error type is classified (ADR-0011) and anyhow stays in the binaries
@@ -34,17 +34,34 @@
 #     comment block for the reasoning)
 #   * every migration file's SHA256 matches its entry in the manifest; applied
 #     migrations are immutable (`verify-migrations`, 2026-09-07, issue #76)
+#   * every version release-please owns agrees, and every line it must rewrite
+#     still carries its `x-release-please-version` comment
+#     (`verify-versions`, 2026-09-17, PR #201)
+#   * every database column the migrations create is classified in
+#     schemas/privacy-inventory.yaml, and every classification names a live
+#     column, in both directions (`verify-privacy-inventory`, 2026-09-16,
+#     issue #144 — ADR-0020, RFC-0002)
 #
 # This block said "Eleven" and listed eleven until 2026-09-11: the
 # `verify-migrations` bullet had been pasted into the MIDDLE of the sentence
 # below, which both hid it from the count and left that sentence unreadable.
 #
-# `just verify` prints a thirteenth thing that is NOT an invariant and never
+# It then said "Twelve" and listed twelve until 2026-09-17, and had been wrong
+# since PR #201 landed `verify-versions` earlier the same day: that change
+# moved the recipe, the echo, `verify-all` and the CI step, and left this block
+# and every prose count in the tree behind it. Hours later the same day,
+# `verify-privacy-inventory` (#187, issue #144) made it **fourteen**, from a
+# branch that had not seen #201 — the same collision `verify-npm-scope` and
+# `check-schema` had on 2026-09-05, and resolved the same way: both, in the
+# order they landed. Both bullets are above; the recipe below is the list, and
+# it echoes its own count.
+#
+# `just verify` prints a fifteenth thing that is NOT an invariant and never
 # fails the build: `verify-docs`, a report on doc-comment volume, in-file
 # comment volume, externalised module docs, long functions, ```ignore fences
 # and #[allow]s (Step 7 decision 4; ADR-0016 standard 6 keeps it a report).
 #
-# A fourteenth check is a gate that is NOT in `just ci`, because it needs the
+# A sixteenth check is a gate that is NOT in `just ci`, because it needs the
 # network: `just docs-check-citations` resolves every run id, PR and issue a
 # document cites against GitHub. See its recipe at the bottom of this file.
 
@@ -1429,8 +1446,14 @@ audit-web:
 # `self-checks` job runs exactly this list, in this order:
 # verify-no-mocks, verify-status, verify-errors, verify-sdk-parity,
 # verify-links, verify-npm-scope, check-schema, verify-serde,
-# verify-repositories, verify-toolchain, verify-ui, and then verify-docs
-# last.
+# verify-repositories, verify-toolchain, verify-ui, verify-migrations,
+# verify-versions, verify-privacy-inventory, and then verify-docs last.
+#
+# _(That list named eleven and stopped at `verify-ui` until 2026-09-17. It had
+# been three gates short since `verify-versions` (PR #201) and one short since
+# `verify-migrations` (2026-09-07) — each of which added its own CI step and
+# its own recipe line without re-reading the sentence that claims to enumerate
+# them. The workflow beside it is the list; this is a description of it.)_
 #
 # That sentence was false until 2026-09-04: `verify-sdk-parity` ran here but
 # had no step in `.github/workflows/ci.yml`, so ADR-0015's decision 3 ("CI
@@ -1505,9 +1528,9 @@ audit-web:
 # `verify-npm-scope` (its nearest relative in subject, not in date) for the
 # same reason every gate above it is where it is: the list is chronological.
 #
-# The thirteen self-checks, then the advisory verify-docs report.
-verify: verify-no-mocks verify-status verify-errors verify-sdk-parity verify-links verify-npm-scope check-schema verify-serde verify-repositories verify-toolchain verify-ui verify-migrations verify-versions verify-docs
-    @echo "verify: ok — the thirteen gates above passed; the verify-docs report is advisory"
+# The fourteen self-checks, then the advisory verify-docs report.
+verify: verify-no-mocks verify-status verify-errors verify-sdk-parity verify-links verify-npm-scope check-schema verify-serde verify-repositories verify-toolchain verify-ui verify-migrations verify-versions verify-privacy-inventory verify-docs
+    @echo "verify: ok — the fourteen gates above passed; the verify-docs report is advisory"
 
 verify-no-mocks:
     cargo xtask verify-no-mocks
@@ -2284,7 +2307,11 @@ verify-ui:
 # `_sqlx_migrations.checksum` and refuses to boot when a file no longer hashes
 # to what the database recorded, so a reflowed comment bricks every database
 # that applied the original — which is exactly what PR #39 did to migration
-# 0028 (issue #76). Eleventh gate in `just verify`, new 2026-09-07.
+# 0028 (issue #76). Twelfth gate in `just verify`, new 2026-09-07 — after
+# `verify-ui`, the eleventh, which landed the same day. _(This said "Eleventh"
+# from 2026-09-07 until 2026-09-18: whoever wrote it counted the xtask commands
+# and skipped `verify-ui`, which is a gate in this recipe like any other.
+# `AGENTS.md` and `docs/status/backend.md` already said twelfth.)_
 #
 # The gate reads `backends/migrations/MANIFEST.sha256` and every `*.sql` beside
 # it — `*.sql` and nothing else, because that is what `sqlx::migrate!` reads;
@@ -2298,6 +2325,16 @@ verify-ui:
 # diff, so the honest path never makes one by accident.
 verify-migrations:
     cargo xtask verify-migrations
+
+# Issue #144 / ADR-0020 / RFC-0002: every database column the migrations create
+# is classified in schemas/privacy-inventory.yaml, and every classification
+# names a live column, in both directions — plus element-field and
+# non-database-surface validation. The authoritative DB surface is derived by
+# parsing the migrations themselves (schemas/vpay.cstack models less than the
+# whole database), so a privacy-relevant column cannot land unclassified and a
+# stale inventory row cannot survive the column it named.
+verify-privacy-inventory:
+    cargo xtask verify-privacy-inventory
 
 # Append the current migration files' SHA-256 lines to the manifest.
 #
