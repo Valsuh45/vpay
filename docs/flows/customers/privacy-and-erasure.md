@@ -120,16 +120,16 @@ schema, an intent has never carried a payer identifier: it carries an amount,
 a status and a `cus_…`. The copies that actually survived a deletion were
 somewhere else, and no code named them:
 
-| Where                                         | What was in it                                                                                                            |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `customers.{name,email,phone}`                | the row could not be deleted at all                                                                                       |
-| `customers.address_*_microdeg`                | the payer's position — the most sensitive of the eleven, and the one no literal scan can look for                         |
-| `events.data`                                 | **every** `customer.*` body ever written stores the whole rendered object, and nothing prunes `events`                    |
-| `charges.payer_ref` / `payer_ref_masked`      | the payer's MSISDN as the rail was given it — reachable from a customer only _through_ an intent                          |
-| `charges.failure_raw` / `refunds.failure_raw` | **the rail's own message, verbatim** — a mobile-money rail declining a collection names the subscriber it declined it for |
-| `idempotency_keys.response_body`              | the exact JSON a `POST /v1/customers` answered, kept 24 hours to replay                                                   |
+| Where                                                                    | What was in it                                                                                                                                                                                                                     |
+| ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `customers.{name,email,phone}`                                           | the row could not be deleted at all                                                                                                                                                                                                |
+| `customers.address_*_microdeg`                                           | the payer's position — the most sensitive of the eleven, and the one no literal scan can look for                                                                                                                                  |
+| `events.data`                                                            | **every** `customer.*` body ever written stores the whole rendered object, and nothing prunes `events`                                                                                                                             |
+| `charges.payer_ref` / `payer_ref_masked`                                 | the payer's MSISDN as the rail was given it — reachable from a customer only _through_ an intent                                                                                                                                   |
+| `charges.failure_raw` / `refunds.failure_raw`                            | **the rail's own message, verbatim** — a mobile-money rail declining a collection names the subscriber it declined it for                                                                                                          |
+| `idempotency_keys.response_body`                                         | the exact JSON a `POST /v1/customers` answered, kept 24 hours to replay                                                                                                                                                            |
 | `payment_intents.last_payment_error_code` / `last_payment_error_message` | the intent's own decline text — a vpay-authored message today, but redacted as defense-in-depth because the inventory classifies the column `rail_failure_text` and a closed message can stop being closed without a schema change |
-| `webhook_deliveries.response_excerpt`         | the merchant endpoint's response to a delivery, truncated to 512 chars but un-parsed — a receiver that echoes the payload it was sent has put the payer's number in it |
+| `webhook_deliveries.response_excerpt`                                    | the merchant endpoint's response to a delivery, truncated to 512 chars but un-parsed — a receiver that echoes the payload it was sent has put the payer's number in it                                                             |
 
 `vpay_db::customers::erase_in_tx` rewrites all of them **in the transaction
 that erases the customer**, because "vpay erased this payer" may not be true of
@@ -156,8 +156,8 @@ the pair both-NULL or both-set, and the code column's closed-vocabulary CHECK
 rejects a text marker, so the redaction is an absence exactly as it is for the
 coordinate. `response_excerpt` is marked `[redacted]` when non-null, for every
 delivery of the payer's `customer.*` events, the terminal ones included —
-unlike `payload_sha256` (forensics of what vpay *sent*), the excerpt is a copy
-of what the merchant *said*, so it is redacted wherever it is. Two
+unlike `payload_sha256` (forensics of what vpay _sent_), the excerpt is a copy
+of what the merchant _said_, so it is redacted wherever it is. Two
 `rail_failure_text` columns are still out of reach and both are named, not
 silently left: `provider_requests.error_kind` above, and `staff_members.email`,
 which is a **staff** subject — the customer erasure structurally cannot reach

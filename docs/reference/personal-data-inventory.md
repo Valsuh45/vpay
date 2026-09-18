@@ -150,12 +150,12 @@ Of the five columns that used to be reached by **none** of those statements,
 the erasure now covers three. Two remain, each a documented maintainer decision
 that is **not taken**:
 
-| Column                                       | Element             | What actually protects it today                                 |
-| -------------------------------------------- | ------------------- | --------------------------------------------------------------- |
-| `payment_intents.last_payment_error_code`    | `rail_failure_text` | the erasure NULLs it, with `_message`, forced by the `lpe_paired` CHECK — 2026-09-18 |
-| `payment_intents.last_payment_error_message` | `rail_failure_text` | the erasure NULLs it, with `_code`, forced by the `lpe_paired` CHECK — 2026-09-18 |
-| `webhook_deliveries.response_excerpt`        | `rail_failure_text` | the erasure writes the `[redacted]` marker when non-null — 2026-09-18 |
-| `provider_requests.error_kind`               | `rail_failure_text` | a 128-character `CHECK`, and nothing else — a maintainer decision **not** to redact (below) |
+| Column                                       | Element             | What actually protects it today                                                                    |
+| -------------------------------------------- | ------------------- | -------------------------------------------------------------------------------------------------- |
+| `payment_intents.last_payment_error_code`    | `rail_failure_text` | the erasure NULLs it, with `_message`, forced by the `lpe_paired` CHECK — 2026-09-18               |
+| `payment_intents.last_payment_error_message` | `rail_failure_text` | the erasure NULLs it, with `_code`, forced by the `lpe_paired` CHECK — 2026-09-18                  |
+| `webhook_deliveries.response_excerpt`        | `rail_failure_text` | the erasure writes the `[redacted]` marker when non-null — 2026-09-18                              |
+| `provider_requests.error_kind`               | `rail_failure_text` | a 128-character `CHECK`, and nothing else — a maintainer decision **not** to redact (below)        |
 | `staff_members.email`                        | `staff_email`       | the `Debug` impl (`vpay_db::staff`) — no staff erasure; staff erasure is a separate concern (#145) |
 
 The heading that named five columns "nothing yet redacts" is itself the record
