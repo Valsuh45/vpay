@@ -107,50 +107,59 @@ token written in a comment of any kind, in a `#[doc = "…"]` attribute or insid
 any string, raw-string or character literal is prose, and prose declares
 nothing.
 
-`just verify` is **fourteen gates and one advisory report**. What each one refuses,
-and what each printed when all fourteen were re-run, one invocation each, on
-**2026-09-17** on this branch's merge of `master` at `eb078020`, on macOS with
-`cratestack` 0.12.0 on `PATH`. _(The column before it was 2026-09-16 on
-`888b00c3`, with `DOCKER_HOST=unix:///run/user/1000/docker.sock`; it was
-re-run because merging `master` moved nine of the numbers and added a gate.)_
+`just verify` is **fourteen gates and one advisory report**. What each one
+refuses, and what each printed when all fourteen were re-run, one invocation
+each, on **2026-09-18** on this branch's merge of `master` at `5af959b2`, on
+macOS with `cratestack` 0.12.0 on `PATH`. _(The column before it was 2026-09-17
+on the merge of `eb078020`, and before that 2026-09-16 on `888b00c3` with
+`DOCKER_HOST=unix:///run/user/1000/docker.sock`. It is re-run rather than
+annotated every time a merge moves the numbers, which is the third time in
+three days.)_
 
-**One row below is a failure, and it is `master`'s — and it is the gate
-working.** `verify-versions`
-(PR [#201](https://github.com/vaam-apps/vpay/pull/201), 2026-09-17) is red on
-`master` itself at `eb078020`, one commit after it landed. The release PR
-[#203](https://github.com/vaam-apps/vpay/pull/203) bumped 0.1.0 → 0.1.1, and
-release-please's YAML updater **re-serialised**
-`deploy/helm/vpay/Chart.yaml` and
-`sdks/flutter/vpay_checkout_flutter/pubspec.yaml` rather than rewriting one
-line of each — which dropped every comment in them, including the
-`x-release-please-version` annotations that are the only thing making those
-two files bumpable. At `a475a2d8` the pubspec read
-`version: 0.1.0 # x-release-please-version`; at `eb078020` it reads
-`version: 0.1.1` and the Chart has lost its whole header comment. **The tool
-destroyed its own instructions on its first run, and the gate written the same
-day caught it on the next commit.** `master`'s CI run
+**The `verify-versions` row was a failure until this merge, and that was the
+gate working.** It is green here for the first time since it landed.
+[#201](https://github.com/vaam-apps/vpay/pull/201) added it on 2026-09-17 and
+it went red on `master` the same night, on the first release release-please
+ever cut ([#203](https://github.com/vaam-apps/vpay/pull/203)): two of the files
+it was told to bump were re-serialised, losing every comment in them including
+the `x-release-please-version` annotations that made them bumpable at all.
+`master`'s CI run
 [35275177452](https://github.com/vaam-apps/vpay/actions/runs/35275177452) is
-red on that step; a separate pull request owns the repair. It is recorded here
-rather than left out, because a gate table with a green row for a red gate is
-worse than no table:
+red on that step. [#204](https://github.com/vaam-apps/vpay/pull/204) found the
+cause — a **bare-string** `extra-files` entry routes to a document updater
+rather than the annotation-only one — restored both files and taught the gate
+to refuse a bare string;
+[#206](https://github.com/vaam-apps/vpay/pull/206) gave it its first tests.
+[status/gates.md](status/gates.md) § 2026-09-18 is the diagnosis. _(This block
+read "One row below is a failure, and it is `master`'s" from 2026-09-17 until
+this merge, and the row read "**red at `eb078020`** — 2 unannotated
+`extra-files`". It is replaced rather than struck because the row it described
+no longer exists; the history is the paragraph you are reading.)_
 
-| Gate                       | What it refuses                                                                                                                                                  | Last printed                                          |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| `verify-no-mocks`          | a test double reachable from a shipping binary                                                                                                                   | no test double reachable                              |
-| `verify-status`            | an undeclared — or a stale — `NotImplemented` token                                                                                                              | 1 unimplemented item                                  |
-| `verify-errors`            | an unclassified error type, or `anyhow` in a library crate                                                                                                       | 20 error types, 17 `#[from]` variants                 |
-| `verify-sdk-parity`        | an SDK capability with no row, or a row naming no capability                                                                                                     | 661 proving tests, 37 dated gaps, 35 methods, 39 rows |
-| `verify-links`             | a repository link that resolves to no tracked path                                                                                                               | 1 723 links in 399 files                              |
-| `verify-npm-scope`         | an unpublishable manifest, or a retired package name outside the record                                                                                          | 2 publishable packages, 1 private                     |
-| `check-schema`             | a `schemas/vpay.cstack` that does not type-check                                                                                                                 | 27 declarations, under 0.12.0; see the note below     |
-| `verify-serde`             | a serialisable type that does not spell the wire convention                                                                                                      | 102 types, 17 exemptions                              |
-| `verify-repositories`      | a repository implementation named outside `vpay-db`, or an exported schema                                                                                       | 4 implementations, 84 source files outside            |
-| `verify-toolchain`         | a `backends/Dockerfile` that drifts from `rust-toolchain.toml`                                                                                                   | 1.98.0                                                |
-| `verify-ui`                | a computed class string, a raw status-colour token, a >60-char class, a daisyUI-4 or unrouted daisyUI class, or an import of the deleted `@vpay/ui` (2026-09-12) | nothing: silent on success, exit 0 only               |
-| `verify-migrations`        | an applied migration whose bytes changed                                                                                                                         | 48 files                                              |
-| `verify-versions`          | a release-please-owned version that disagrees, or an `extra-files` entry with no `x-release-please-version` comment (PR #201, 2026-09-17)                        | **red at `eb078020`** — 2 unannotated `extra-files`   |
-| `verify-privacy-inventory` | a migrated column with no inventory classification, or an inventory row naming no live column (issue #144, 2026-09-16)                                           | 295 columns / 25 elements / 10 surfaces               |
-| `verify-docs`              | **nothing — it exits 0 whatever it finds**                                                                                                                       | advisory report                                       |
+| Gate                       | What it refuses                                                                                                                                                                 | Last printed                                          |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `verify-no-mocks`          | a test double reachable from a shipping binary                                                                                                                                  | no test double reachable                              |
+| `verify-status`            | an undeclared — or a stale — `NotImplemented` token                                                                                                                             | 1 unimplemented item                                  |
+| `verify-errors`            | an unclassified error type, or `anyhow` in a library crate                                                                                                                      | 20 error types, 17 `#[from]` variants                 |
+| `verify-sdk-parity`        | an SDK capability with no row, or a row naming no capability                                                                                                                    | 661 proving tests, 37 dated gaps, 35 methods, 39 rows |
+| `verify-links`             | a repository link that resolves to no tracked path                                                                                                                              | 1 731 links in 400 files                              |
+| `verify-npm-scope`         | an unpublishable manifest, or a retired package name outside the record                                                                                                         | 2 publishable packages, 1 private                     |
+| `check-schema`             | a `schemas/vpay.cstack` that does not type-check                                                                                                                                | 27 declarations, under 0.12.0; see the note below     |
+| `verify-serde`             | a serialisable type that does not spell the wire convention                                                                                                                     | 102 types, 17 exemptions                              |
+| `verify-repositories`      | a repository implementation named outside `vpay-db`, or an exported schema                                                                                                      | 4 implementations, 84 source files outside            |
+| `verify-toolchain`         | a `backends/Dockerfile` that drifts from `rust-toolchain.toml`                                                                                                                  | 1.98.0                                                |
+| `verify-ui`                | a computed class string, a raw status-colour token, a >60-char class, a daisyUI-4 or unrouted daisyUI class, or an import of the deleted `@vpay/ui` (2026-09-12)                | nothing: silent on success, exit 0 only               |
+| `verify-migrations`        | an applied migration whose bytes changed                                                                                                                                        | 48 files                                              |
+| `verify-versions`          | a release version reference that disagrees, a line release-please must rewrite with no `x-release-please-version` comment, or a bare-string `extra-files` entry (PR #201, #204) | 21 version references, all 0.1.1                      |
+| `verify-privacy-inventory` | a migrated column with no inventory classification, or an inventory row naming no live column (issue #144, 2026-09-16)                                                          | 295 columns / 25 elements / 10 surfaces               |
+| `verify-docs`              | **nothing — it exits 0 whatever it finds**                                                                                                                                      | advisory report                                       |
+
+_(`verify-versions` had no row here at all from 2026-09-17, when
+[#201](https://github.com/vaam-apps/vpay/pull/201) added it as the recipe's
+thirteenth gate, until 2026-09-18 — so this table said twelve while `just
+verify` printed thirteen, and it survived the release that gate caught
+(#203) and the pull request that repaired it (#204).
+[status/gates.md](status/gates.md) § 2026-09-18 is the record.)_
 
 **One of those numbers moved twice on the same day and came back.**
 `verify-status` printed **2** unimplemented items partway through 2026-09-15,
@@ -180,7 +189,13 @@ privacy verification page, which [status/README.md](status/README.md) had never
 listed.
 `verify-privacy-inventory` did **not** move — the same 295 columns across 25
 elements before and after a parser hardening pass, which is what a hardening
-pass should do.)_
+pass should do. And a fourth time the same day, merging `master` at `5af959b2`
+(#204 and #206): `verify-links` 1 723/399→**1 731/400**, and `verify-versions`
+from red to its first green run, **21 version references, all 0.1.1**. The
+first reading taken for that row said 2 011/408; it was taken with the merge
+still conflicted, and `git ls-files` — which is how that gate learns what the
+repository tracks — lists a conflicted path once per stage. Measure a gate on a
+committed tree or do not quote it.)_
 
 **And `verify-status` gained a third direction the same day, on review.** It
 compared _sets of token strings_ and knew nothing about where a token was
@@ -216,14 +231,14 @@ is behind.
 Those numbers are a measurement of one tree on one day — `888b00c3`, 2026-09-16
 — not a promise. **They are `just verify`'s gates invoked one at a time, not
 `just verify` itself and not `just ci`**, which this branch's agents were
-instructed not to run; that distinction is the whole of what the fourteen-in-a-row
-recipe adds. What each
+instructed not to run; that distinction is the whole of what the
+fourteen-in-a-row recipe adds. What each
 gate used to miss, the mutation that proved each hole shut, and the dates every
 one of these counts moved on, are in [status/gates.md](status/gates.md) — 509
-lines of it, unedited. Read the numbers in it as date-stamps rather than totals:
-it calls `verify-sdk-parity` the reader of "the fourth machine-checked
-document", which was true on 2026-09-03, when four of these fourteen gates
-existed.
+lines of it, unedited, plus three dated sections appended below that text. Read
+the numbers in it as date-stamps rather than totals: it calls
+`verify-sdk-parity` the reader of "the fourth machine-checked document", which
+was true on 2026-09-03, when four of these fourteen gates existed.
 
 ### Unimplemented items tracked by `verify-status`
 
@@ -536,11 +551,18 @@ reviews, two merges and this seam pass. Every one of the refunds
 pages records the **individual** gates and the **narrow** `cargo nextest`
 invocations for the crates its change touched, because every agent on this
 branch was instructed not to run `just ci` locally (five concurrent local
-builds once OOM-killed the host). **Read that as what it is:** the thirteen
+builds once OOM-killed the host). ~~**Read that as what it is:** the thirteen
 gates have been run on this head, and the full workspace test run, the web
 job and the doctest sweep that `just ci` adds on top of them have been run on
-**no** commit of this branch by anything but GitHub Actions. The gate table
-above says which commit its numbers are from.
+**no** commit of this branch by anything but GitHub Actions.~~ **Struck
+2026-09-18**, on two counts: the gates are **fourteen**, and the whole of
+`just ci` — the workspace test run, the doctest sweep, the web job, `deny` and
+`audit-web` — has now been run on this head, step by step because the recipe
+stops at its first failure. The evidence, including the four `staff_sign_in`
+tests that fail on macOS because they bind loopback aliases only Linux
+provides, is in
+[status/verification/2026-09-16-privacy-inventory-gate.md](status/verification/2026-09-16-privacy-inventory-gate.md)
+§ 2026-09-18. The gate table above says which commit its numbers are from.
 
 _(This paragraph said "The most recent entry is 2026-09-11" until 2026-09-16.
 It had been wrong since 2026-09-13 and was wrong on `master` as well as here

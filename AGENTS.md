@@ -23,10 +23,9 @@ this commit the gates are fourteen (`verify-no-mocks`, `verify-status`,
 `verify-errors`, `verify-sdk-parity`, `verify-links`, `verify-npm-scope`,
 `check-schema`, `verify-serde`, `verify-repositories`, `verify-toolchain`,
 `verify-ui`, `verify-migrations`, `verify-versions`,
-`verify-privacy-inventory`) and they fail
-the build. If that list and
-the recipe disagree, the recipe is right: read it, and fix this paragraph in
-the same commit. The report
+`verify-privacy-inventory`) and they fail the build. If that list and the
+recipe disagree, the recipe is right: read it, and fix this paragraph in the
+same commit. The report
 (`verify-docs`) never does — it prints doc-comment volume per crate, in-file
 comment volume per crate, the number of `#[doc = include_str!]` modules, the
 production functions of 80 lines or more, every ` ```ignore ` doctest
@@ -50,25 +49,35 @@ migration's whole bytes and a comment reflowed after the file shipped stops
 every database that applied the original from booting — which is what PR #39
 did, with every job in CI green.
 `verify-versions` makes it **thirteen** on 2026-09-17
-([#201](https://github.com/vaam-apps/vpay/pull/201)) — every version
-release-please owns agrees, and every annotated line it must rewrite still
-carries its comment — and `verify-privacy-inventory` **fourteen** the same
-day ([#187](https://github.com/vaam-apps/vpay/pull/187), issue #144): every
+([#201](https://github.com/vaam-apps/vpay/pull/201)): every version
+release-please owns must agree, and every line it has to rewrite must still
+carry its `x-release-please-version` comment. _(This paragraph and the list
+above said "twelve" from then until 2026-09-18, wrong from the moment the
+recipe grew its thirteenth entry — which is exactly the staleness the first
+sentence of this section exists to warn about, earned by the change that added
+the warning's newest example.)_ Since 2026-09-18 it also refuses an
+`extra-files` entry written as a bare string, which is what destroyed
+`deploy/helm/vpay/Chart.yaml` on the first release
+([#204](https://github.com/vaam-apps/vpay/pull/204)); § Releasing has the
+mechanism. And `verify-privacy-inventory` makes it **fourteen**, the same day
+([#187](https://github.com/vaam-apps/vpay/pull/187), issue #144): every
 database column the migrations create is classified in
-`schemas/privacy-inventory.yaml`, in both directions. The two were written on
-branches that never saw each other, exactly as `verify-npm-scope` and
-`check-schema` were on 2026-09-05, and the count was reconciled where they
-met. _(Both sides of that merge were stale in their own way, and this note
-said so imprecisely until 2026-09-18. On `master` at `eb078020` this paragraph
-said "twelve" and stopped at `verify-migrations`, and the sentence below it
-said "Ten of the twelve" — both wrong since #201 merged earlier that day and
-made them thirteen and eleven. On this branch at `de11c9cf` they said
-"thirteen" and "Eleven of the thirteen", which was right for a tree that had
-not seen #201. Neither was right for the merge, which is fourteen and
+`schemas/privacy-inventory.yaml`, and every classification names a live
+column, in both directions.
+
+The two thirteenth gates were written on branches that never saw each other,
+exactly as `verify-npm-scope` and `check-schema` were on 2026-09-05, and the
+count is reconciled where they meet — here. _(Both sides were stale in their
+own way, and the note above is #206's account of `master`'s side. This branch's
+side: at `de11c9cf` this paragraph said "thirteen" and the sentence below it
+said "Eleven of the thirteen", which was right for a tree that had not seen
+#201 and wrong for one that had. `master` at `eb078020` said "twelve" and "Ten
+of the twelve". Neither side was right for the merge, which is fourteen and
 twelve.)_
-Twelve of the fourteen are `cargo xtask` commands; `check-schema` and `verify-ui` are
-justfile recipes — the first shells out to the CrateStack CLI, a binary this
-workspace does not build, and the second is a handful of `git grep`s.
+Twelve of the fourteen are `cargo xtask` commands; `check-schema` and
+`verify-ui` are justfile recipes — the first shells out to the CrateStack CLI,
+a binary this workspace does not build, and the second is a handful of
+`git grep`s.
 There is one more check, `cargo xtask verify-citations` (`just
 docs-check-citations`), which is a gate but **not** part of `just verify` or
 `just ci`: it needs the network and a GitHub token. Run it when you add or
@@ -413,7 +422,7 @@ There are **fourteen** such pins: eleven in the root manifest, and three more in
 by running `cargo metadata`, not by reading. All eighteen version lines this
 repository owns carry an `x-release-please-version` comment, and
 `just verify-versions` (in `just ci`, via `verify`) fails if any is missing —
-including on a *new* internal dependency, which is the realistic way this gets
+including on a _new_ internal dependency, which is the realistic way this gets
 armed for the next person.
 
 Deliberately not bumped, each for a stated reason: `Chart.yaml`'s own
@@ -425,7 +434,7 @@ example's `pubspec.lock` (nothing enforces it; `flutter pub get` rewrites it).
 
 **The first tag.** `.release-please-manifest.json` seeds `0.1.0` — what every
 manifest already says while unreleased — so the next release is `0.1.1` or
-`0.2.0`, *not* `0.1.0`. To make the first tag exactly `v0.1.0`, put
+`0.2.0`, _not_ `0.1.0`. To make the first tag exactly `v0.1.0`, put
 `Release-As: 0.1.0` in a commit footer; release-please honours it. That is a
 maintainer's call.
 
@@ -438,6 +447,28 @@ page — and `RELEASE_PLEASE_APP_PRIVATE_KEY`. Not optional and
 not a fallback: GitHub raises no workflow events for anything done with the
 default `GITHUB_TOKEN`, so with it the tag would be created and `release.yml`
 would never run — no image built, none signed, and nothing failing to say so.
+
+**A bare-string `extra-files` entry is a trap, and it cost this repo its
+Chart.yaml once.** release-please does not give a bare string the
+annotation-only Generic updater — `base.ts` infers an updater from the file
+extension, and `.yaml`/`.yml` gets
+`CompositeUpdater(GenericYaml('$.version'), Generic)`. `GenericYaml` reparses
+and re-serialises the document. On the **v0.1.1** release that turned
+`deploy/helm/vpay/Chart.yaml` from 48 lines into 13 — every comment gone,
+including the one explaining that `version:` is the chart's own hand-bumped
+lifecycle — then set that `version:` from 0.2.0 to 0.1.1 (a downgrade) because
+`$.version` is the top-level key, and left `appVersion` untouched because the
+`x-release-please-version` annotation had just been serialised away.
+`sdks/flutter/.../pubspec.yaml` lost its comments the same way.
+
+`vsms` escaped only by luck: its two `.yaml` extra-files are compose files,
+which have no top-level `version:` key, so `GenericYaml` found nothing to
+change and left them alone.
+
+Every entry is therefore written as `{"type": "generic", "path": …}`, which
+routes to release-please's `case 'generic'` and runs the Generic updater
+alone. `cargo xtask verify-versions` **refuses** a bare string outright, naming
+this incident, so the next `.yaml` file added here cannot repeat it.
 
 **Known gap**: merge commits are still enabled, and `merge_commit_title` is
 `MERGE_MESSAGE`, so a PR merged that way lands as `Merge pull request #N …`,

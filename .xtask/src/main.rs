@@ -9253,15 +9253,41 @@ fn verify_versions(root: &Path) -> Result<(), String> {
     ))
 }
 
-/// The `extra-files` entries: bare-string paths, and every object-form `path`.
+/// The `extra-files` entries, split by updater type — and a hard refusal of
+/// the bare-string form.
 ///
-/// Parsed line by line rather than with a JSON library, matching the rest of
-/// this file. A reformat that collapses the array finds nothing and is
-/// reported as an error rather than passing vacuously.
+/// # Why a bare string is refused rather than accepted
+///
+/// It looks like the obvious spelling and it is a trap. release-please's
+/// `base.ts` does NOT give a bare string the Generic (annotation-only)
+/// updater; it infers an updater from the file extension:
+///
+/// ```text
+/// .json        -> CompositeUpdater(GenericJson('$.version'),  Generic)
+/// .yaml/.yml   -> CompositeUpdater(GenericYaml('$.version'),  Generic)
+/// .toml        -> CompositeUpdater(GenericToml('$.version'),  Generic)
+/// .xml         -> CompositeUpdater(GenericXml('/*/version'),  Generic)
+/// anything else-> Generic
+/// ```
+///
+/// `GenericYaml` reparses the document and re-serialises it. On the v0.1.1
+/// release that turned `deploy/helm/vpay/Chart.yaml` from 48 lines into 13 —
+/// every comment destroyed, including the one explaining that `version:` is
+/// the chart's own hand-bumped lifecycle. It then set that `version:` (0.2.0
+/// -> 0.1.1, a downgrade) because `$.version` is the top-level key, and left
+/// `appVersion` — the field actually annotated — untouched, because the
+/// annotation had just been serialised away. `pubspec.yaml` lost its comments
+/// the same way.
+///
+/// `{"type": "generic", "path": …}` routes to `case 'generic'` and runs the
+/// Generic updater alone. That is the only form this repository allows, so
+/// the next `.yaml` file added here cannot repeat it.
 fn release_please_extra_files(config: &str) -> Result<(Vec<String>, Vec<String>), String> {
     let mut generic = Vec::new();
     let mut json_paths = Vec::new();
+    let mut pending_type: Option<String> = None;
     let mut inside = false;
+
     for line in config.lines() {
         if line.contains("\"extra-files\"") {
             inside = true;
@@ -9274,31 +9300,78 @@ fn release_please_extra_files(config: &str) -> Result<(Vec<String>, Vec<String>)
             break;
         }
         let trimmed = line.trim().trim_end_matches(',');
-        if let Some(rest) = trimmed.strip_prefix("\"path\":") {
-            if let Some(v) = unquote(rest.trim()) {
-                json_paths.push(v);
+
+        // A whole object on one line: `{ "type": "generic", "path": "..." }`.
+        // A parser that only understood the multi-line spelling would silently
+        // skip the compact one and then report "no generic entries" instead of
+        // checking them.
+        if trimmed.contains("\"type\":") && trimmed.contains("\"path\":") {
+            if let (Some(ty), Some(path)) = (
+                value_after(trimmed, "\"type\":"),
+                value_after(trimmed, "\"path\":"),
+            ) {
+                classify_extra_file(ty.as_str(), path, &mut generic, &mut json_paths)?;
             }
+            continue;
+        }
+
+        if let Some(rest) = trimmed.strip_prefix("\"type\":") {
+            pending_type = unquote(rest.trim());
+        } else if let Some(rest) = trimmed.strip_prefix("\"path\":") {
+            let Some(path) = unquote(rest.trim()) else {
+                continue;
+            };
+            let Some(ty) = pending_type.take() else {
+                return Err(format!(
+                    "{RELEASE_PLEASE_CONFIG}: extra-files entry {path} has no \"type\". It must be declared explicitly — see this function's own doc comment"
+                ));
+            };
+            classify_extra_file(ty.as_str(), path, &mut generic, &mut json_paths)?;
         } else if !trimmed.contains(':') && trimmed.matches('"').count() == 2 {
-            // A bare-string entry is a whole line that is nothing but one
-            // quoted path. Without the `:` test this also matched the object
-            // form's own `"type": "json"` key and tried to open a file called
-            // `type` — caught by running it, not by reading it.
-            if let Some(v) = unquote(trimmed) {
-                generic.push(v);
-            }
+            let path = unquote(trimmed).unwrap_or_else(|| trimmed.to_owned());
+            return Err(format!(
+                "{RELEASE_PLEASE_CONFIG}: extra-files entry {path} is a BARE STRING. release-please picks an updater from the file extension for those, and a .yaml/.yml one gets GenericYaml('$.version'), which reparses and re-serialises the document — it destroyed this repo's Chart.yaml (48 lines -> 13, every comment gone) on the v0.1.1 release. Write it as {{\"type\": \"generic\", \"path\": \"{path}\"}} instead"
+            ));
         }
     }
+
     if generic.is_empty() {
         return Err(format!(
-            "{RELEASE_PLEASE_CONFIG}: found no bare-string extra-files entries. This parser is line-based; if the config was reformatted, reformat it back or teach the parser the new shape — do not leave the check passing vacuously"
+            "{RELEASE_PLEASE_CONFIG}: found no `type: generic` extra-files entries. This parser is line-based; if the config was reformatted, reformat it back or teach the parser the new shape — do not leave the check passing vacuously"
         ));
     }
     if json_paths.is_empty() {
         return Err(format!(
-            "{RELEASE_PLEASE_CONFIG}: found no object-form extra-files entry with a \"path\""
+            "{RELEASE_PLEASE_CONFIG}: found no `type: json` extra-files entry"
         ));
     }
     Ok((generic, json_paths))
+}
+
+/// Route one `extra-files` entry to its bucket, refusing a type this check has
+/// not been taught — a skipped entry is an unchecked file.
+fn classify_extra_file(
+    ty: &str,
+    path: String,
+    generic: &mut Vec<String>,
+    json_paths: &mut Vec<String>,
+) -> Result<(), String> {
+    match ty {
+        "generic" => generic.push(path),
+        "json" => json_paths.push(path),
+        other => {
+            return Err(format!(
+                "{RELEASE_PLEASE_CONFIG}: extra-files entry {path} has type {other:?}. Only \"generic\" and \"json\" are used here; anything else either reparses the file or needs this check taught about it"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The first quoted value following `key` on a line.
+fn value_after(line: &str, key: &str) -> Option<String> {
+    let idx = line.find(key)?;
+    unquote(line.get(idx + key.len()..)?.trim_start())
 }
 
 /// `"text"` -> `text`, and anything else -> `None`.
@@ -9378,6 +9451,200 @@ fn cargo_manifests(root: &Path) -> Vec<String> {
         .lines()
         .map(str::to_owned)
         .collect()
+}
+
+/// `verify-versions`' parser, pinned.
+///
+/// [#201](https://github.com/vaam-apps/vpay/pull/201) added the gate and
+/// [#204](https://github.com/vaam-apps/vpay/pull/204) gave it the bare-string
+/// refusal after `v0.1.1` destroyed two files; neither landed a test, and #204
+/// proved its rule by editing the real config by hand and putting it back. That
+/// works once. This module is what makes the rules survive the next edit —
+/// including the one rule whose whole value is that it refuses the shape the
+/// repository itself was in two commits ago.
+#[cfg(test)]
+mod version_tests {
+    use super::*;
+
+    /// A config in the shape `json.dump(indent=2)` and prettier both produce,
+    /// so these tests fail the way the real file would.
+    fn config(entries: &str) -> String {
+        format!("{{\n  \"extra-files\": [\n{entries}\n  ]\n}}\n")
+    }
+
+    const GENERIC_CHART: &str = "    {\n      \"type\": \"generic\",\n      \"path\": \"deploy/helm/vpay/Chart.yaml\"\n    }";
+    const JSON_PKG: &str = "    {\n      \"type\": \"json\",\n      \"path\": \"sdks/nodejs/package.json\",\n      \"jsonpath\": \"$.version\"\n    }";
+
+    /// The split the rest of `verify_versions` depends on: a `generic` entry is
+    /// checked for an annotation, a `json` one is read for `$.version`. Putting
+    /// a YAML file in the second list is what the parser did before #204, and
+    /// it made the gate open `Chart.yaml` looking for a `"version"` field.
+    #[test]
+    fn a_generic_entry_and_a_json_entry_land_in_different_lists() {
+        let (generic, json_paths) =
+            release_please_extra_files(&config(&format!("{GENERIC_CHART},\n{JSON_PKG}")))
+                .expect("one entry of each kind parses");
+        assert_eq!(generic, ["deploy/helm/vpay/Chart.yaml"]);
+        assert_eq!(json_paths, ["sdks/nodejs/package.json"]);
+        // The `"jsonpath"` line must not be mistaken for a second `"path"`.
+        assert_eq!(json_paths.len(), 1);
+    }
+
+    /// #204's second commit taught the parser the compact spelling. Nothing
+    /// pinned it, and the failure it fixes is quiet: a skipped entry is a file
+    /// release-please rewrites and this gate never looks at.
+    #[test]
+    fn the_single_line_object_spelling_is_parsed_too() {
+        let (generic, json_paths) = release_please_extra_files(&config(
+            "    { \"type\": \"generic\", \"path\": \"Cargo.toml\" },\n    { \"type\": \"json\", \"path\": \"sdks/nodejs/package.json\", \"jsonpath\": \"$.version\" }",
+        ))
+        .expect("the compact spelling parses");
+        assert_eq!(generic, ["Cargo.toml"]);
+        assert_eq!(json_paths, ["sdks/nodejs/package.json"]);
+    }
+
+    /// **The regression itself, as a test.** This is the config this repository
+    /// carried until #204, and every gate here was green on it while the next
+    /// release stood ready to destroy `Chart.yaml` again.
+    #[test]
+    fn a_bare_string_entry_is_refused_and_the_message_names_the_repair() {
+        for path in [
+            "deploy/helm/vpay/Chart.yaml",
+            "sdks/flutter/vpay_checkout_flutter/pubspec.yaml",
+            "Cargo.toml",
+            "sdks/nodejs/src/version.ts",
+        ] {
+            let err = release_please_extra_files(&config(&format!(
+                "    \"{path}\",\n{GENERIC_CHART},\n{JSON_PKG}"
+            )))
+            .expect_err("a bare string is not a pass");
+            assert!(err.contains(path), "names the file: {err}");
+            assert!(
+                err.contains("\"type\": \"generic\""),
+                "names the repair: {err}"
+            );
+        }
+    }
+
+    /// An updater this check has not been taught is an error naming the type,
+    /// never a skip. `yaml`, `toml`, `xml` and `pom` are all real
+    /// release-please types, and each of them reparses the file it names.
+    #[test]
+    fn an_unmodelled_type_is_refused_by_name() {
+        for ty in ["yaml", "toml", "xml", "pom"] {
+            let err = release_please_extra_files(&config(&format!(
+                "    {{\n      \"type\": \"{ty}\",\n      \"path\": \"some/file\"\n    }},\n{GENERIC_CHART},\n{JSON_PKG}"
+            )))
+            .expect_err("an unmodelled type is not a pass");
+            assert!(err.contains("some/file"), "names the file: {err}");
+            assert!(err.contains(ty), "names the type: {err}");
+        }
+    }
+
+    /// The multi-line branch consumes the `"type"` it saw last, so an object
+    /// with a `"path"` and no `"type"` before it is refused rather than guessed
+    /// at. release-please's own config schema requires the key.
+    #[test]
+    fn a_multi_line_object_with_no_type_is_refused() {
+        let err = release_please_extra_files(&config(&format!(
+            "    {{\n      \"path\": \"deploy/helm/vpay/Chart.yaml\"\n    }},\n{JSON_PKG}"
+        )))
+        .expect_err("an object with no type is not a pass");
+        assert!(err.contains("no \"type\""), "says what is missing: {err}");
+    }
+
+    /// **A known hole, pinned rather than hidden.** The compact branch is
+    /// entered only when the line carries BOTH keys, so a single-line object
+    /// with a `"path"` and no `"type"` matches no branch at all and is skipped
+    /// in silence — where the multi-line spelling of the same mistake is an
+    /// error. It is caught today only by the emptiness tripwires below.
+    ///
+    /// It is left as it is on purpose: this parser is kept byte-identical to
+    /// `vsms`' copy so the two cannot drift, and closing this needs the change
+    /// made in both. `docs/status/gates.md` § 2026-09-18 names it.
+    #[test]
+    fn a_single_line_object_with_no_type_is_skipped_silently_and_that_is_a_known_hole() {
+        let (generic, json_paths) = release_please_extra_files(&config(&format!(
+            "    {{ \"path\": \"deploy/helm/vpay/Chart.yaml\" }},\n{GENERIC_CHART},\n{JSON_PKG}"
+        )))
+        .expect("today it parses — this assertion is the record of a gap, not an endorsement");
+        assert_eq!(
+            generic,
+            ["deploy/helm/vpay/Chart.yaml"],
+            "the typed entry, once — the untyped one contributed nothing"
+        );
+        assert_eq!(json_paths, ["sdks/nodejs/package.json"]);
+    }
+
+    /// Both emptiness tripwires. The parser reads one JSON key per line, so a
+    /// reformat it cannot follow must fail loudly rather than find nothing and
+    /// call the repository clean.
+    #[test]
+    fn a_config_this_parser_cannot_follow_is_an_error_in_both_directions() {
+        let no_generic = release_please_extra_files(&config(JSON_PKG))
+            .expect_err("no generic entry is a reformat, not a clean config");
+        assert!(no_generic.contains("generic"), "{no_generic}");
+
+        let no_json = release_please_extra_files(&config(GENERIC_CHART))
+            .expect_err("no json entry is a reformat, not a clean config");
+        assert!(no_json.contains("json"), "{no_json}");
+    }
+
+    /// `verify_versions` compares the first version-shaped substring of every
+    /// annotated line, because `Generic`'s own `String.replace` is not global.
+    /// What counts as "the first" is therefore the whole comparison.
+    #[test]
+    fn the_first_semver_on_a_line_is_what_release_please_would_replace() {
+        assert_eq!(
+            first_semver("appVersion: \"0.1.1\" # x-release-please-version"),
+            Some("0.1.1".to_owned())
+        );
+        assert_eq!(
+            first_semver("version: 0.1.1 # x-release-please-version"),
+            Some("0.1.1".to_owned())
+        );
+        assert_eq!(
+            first_semver(
+                "vpay-core = { path = \"backends/crates/vpay-core\", version = \"0.1.1\" } # x-release-please-version"
+            ),
+            Some("0.1.1".to_owned())
+        );
+        assert_eq!(
+            first_semver("version = \"0.1.1\" # x-release-please-version, was 0.2.0"),
+            Some("0.1.1".to_owned()),
+            "only the first"
+        );
+        assert_eq!(first_semver("publish_to: none"), None, "no digits at all");
+        assert_eq!(
+            first_semver("version: \"0.1\""),
+            None,
+            "two segments is not"
+        );
+        // A range is not a version, but it is three segments, so it reads as
+        // one. Harmless today — `kubeVersion:` carries no annotation, so this
+        // function is never handed it — but a line that grew both a range and
+        // an annotation would compare the wrong number.
+        assert_eq!(
+            first_semver("kubeVersion: \">=1.27.0-0\""),
+            Some("1.27.0".to_owned())
+        );
+    }
+
+    /// `value_after` is what the compact branch reads both keys with. An
+    /// unterminated or empty value must be `None` rather than a path made of
+    /// whatever followed.
+    #[test]
+    fn value_after_reads_the_quoted_value_and_nothing_else() {
+        let line = "{ \"type\": \"generic\", \"path\": \"a/b.yaml\" }";
+        assert_eq!(value_after(line, "\"type\":"), Some("generic".to_owned()));
+        assert_eq!(value_after(line, "\"path\":"), Some("a/b.yaml".to_owned()));
+        assert_eq!(value_after(line, "\"jsonpath\":"), None, "absent key");
+        assert_eq!(
+            value_after("{ \"path\": \"\" }", "\"path\":"),
+            None,
+            "empty"
+        );
+    }
 }
 
 #[cfg(test)]
