@@ -18,6 +18,7 @@ http.Response _json(Object body, {int status = 200}) =>
 Map<String, Object?> _intentJson({
   String status = 'requires_payment_method',
   Object? lastPaymentError,
+  Object? nextAction,
 }) => {
   'id': 'pi_123',
   'object': 'payment_intent',
@@ -25,7 +26,7 @@ Map<String, Object?> _intentJson({
   'currency': 'xaf',
   'status': status,
   'payment_method_types': ['mtn_momo', 'orange_money'],
-  'next_action': null,
+  'next_action': nextAction,
   'last_payment_error': lastPaymentError,
   'metadata': <String, Object?>{},
   'description': null,
@@ -347,6 +348,91 @@ void main() {
         find.textContaining('MTN-4001: solde insuffisant'),
         findsOneWidget,
       );
+    },
+  );
+
+  testWidgets(
+    'prefills the remembered number into the field and ticks the box on a '
+    'relaunch (single-rail path, issue #194)',
+    (WidgetTester tester) async {
+      // The device already holds a record written by a previous, successful
+      // submit — issue #194's cold-relaunch starting point.
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'vpay_checkout_flutter.remembered_msisdn.v1': jsonEncode(
+          <String, Object>{
+            'msisdn': '237671234567',
+            'rail_code': 'mtn_momo',
+            'remembered_at': DateTime.now().toUtc().toIso8601String(),
+          },
+        ),
+      });
+      final client = MockClient(
+        (http.Request request) async =>
+            _json(_sessionJson(rails: [_mtnRailJson()])),
+      );
+
+      await _pump(
+        tester,
+        VpayCheckoutSheet(
+          sessionUrl: _sessionUrl,
+          baseUrl: 'https://api.example',
+          publishableKey: 'pk_test_1',
+          httpClient: client,
+          locale: VpayLocale.en,
+        ),
+      );
+
+      final TextField field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.controller!.text, '237671234567');
+      final CheckboxListTile checkbox = tester.widget<CheckboxListTile>(
+        find.byType(CheckboxListTile),
+      );
+      expect(checkbox.value, isTrue);
+    },
+  );
+
+  testWidgets(
+    'after choosing the remembered rail from the picker, the number returns '
+    'and the box is ticked (issue #194 repro)',
+    (WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'vpay_checkout_flutter.remembered_msisdn.v1': jsonEncode(
+          <String, Object>{
+            'msisdn': '237671234567',
+            'rail_code': 'mtn_momo',
+            'remembered_at': DateTime.now().toUtc().toIso8601String(),
+          },
+        ),
+      });
+      final client = MockClient(
+        (http.Request request) async =>
+            _json(_sessionJson(rails: [_mtnRailJson(), _orangeRailJson()])),
+      );
+
+      await _pump(
+        tester,
+        VpayCheckoutSheet(
+          sessionUrl: _sessionUrl,
+          baseUrl: 'https://api.example',
+          publishableKey: 'pk_test_1',
+          httpClient: client,
+          locale: VpayLocale.en,
+        ),
+      );
+
+      // Two supported rails -> the rail picker is shown, not the form.
+      expect(find.text('MTN Mobile Money'), findsOneWidget);
+      expect(find.byType(TextField), findsNothing);
+
+      await tester.tap(find.text('MTN Mobile Money'));
+      await tester.pumpAndSettle();
+
+      final TextField field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.controller!.text, '237671234567');
+      final CheckboxListTile checkbox = tester.widget<CheckboxListTile>(
+        find.byType(CheckboxListTile),
+      );
+      expect(checkbox.value, isTrue);
     },
   );
 
@@ -735,6 +821,55 @@ void main() {
 
         final BuildContext inside = tester.element(find.byType(TextField));
         expect(Theme.of(inside).colorScheme, ThemeData().colorScheme);
+      },
+    );
+
+    /// The native half of the `requires_action` fix (the web landed in
+    /// #199). A payer who opened Orange's page and came back without
+    /// finishing must not be shown the push rail's "check your phone".
+    testWidgets(
+      'a requires_action intent renders the resume screen — no spinner, and '
+      'a way back to the rail',
+      (WidgetTester tester) async {
+        final http.Client sessionClient = MockClient(
+          (http.Request request) async => _json(
+            _sessionJson(
+              rails: [_mtnRailJson(), _orangeRailJson()],
+              intent: _intentJson(
+                status: 'requires_action',
+                nextAction: <String, Object?>{
+                  'type': 'redirect_to_url',
+                  'redirect_to_url': <String, Object?>{
+                    'url': 'https://rail.example/hosted/tok_abc',
+                    'return_url': null,
+                  },
+                },
+              ),
+            ),
+          ),
+        );
+
+        await _pump(
+          tester,
+          VpayCheckoutSheet(
+            sessionUrl: _sessionUrl,
+            baseUrl: 'https://api.example',
+            publishableKey: 'pk_test_1',
+            httpClient: sessionClient,
+            locale: VpayLocale.en,
+          ),
+        );
+
+        expect(find.text('Payment not completed'), findsOneWidget);
+        expect(find.text('Return to the payment page'), findsOneWidget);
+        // The thing that was wrong: the push rail's copy, on a redirect
+        // rail the payer abandoned.
+        expect(find.text('Check your phone'), findsNothing);
+        // And no spinner — the status behind this screen only the payer can
+        // move, so anything suggesting progress would be a lie.
+        expect(find.byType(CircularProgressIndicator), findsNothing);
+        // Two rails are on offer, so the secondary way out is there too.
+        expect(find.text('Choose another payment method'), findsOneWidget);
       },
     );
 

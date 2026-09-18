@@ -358,12 +358,6 @@ class _VpayCheckoutSheetState extends State<VpayCheckoutSheet> {
     if (screen != _lastAnnouncedScreen) {
       _lastAnnouncedScreen = screen;
       _msisdnManuallyEdited = false;
-      final String? prefill = _controller.defaultMsisdn;
-      if (prefill != null &&
-          !_msisdnManuallyEdited &&
-          _msisdnController.text.isEmpty) {
-        _msisdnController.text = prefill;
-      }
       final String heading = _titleFor(_controller.state, widget.locale);
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) {
@@ -384,6 +378,22 @@ class _VpayCheckoutSheetState extends State<VpayCheckoutSheet> {
           TextDirection.ltr,
         );
       });
+    }
+    // The remembered number is applied on every change, not only on a screen
+    // transition: `defaultMsisdn` is populated *after* the transition that
+    // shows the form (the store read is async and is unawaited in the
+    // controller), so gating the prefill on the transition alone let the
+    // value arrive after its one chance to be used — issue #194's read bug:
+    // write and "forget" worked, the number never came back. The guard stays
+    // `_msisdnManuallyEdited` + empty text, so a payer who is already typing
+    // into a field is never overridden (`screens.tsx`'s own "uncontrolled on
+    // purpose" rule, restated).
+    final String? prefill = _controller.defaultMsisdn;
+    if (_controller.state is CheckoutCollectMsisdn &&
+        prefill != null &&
+        !_msisdnManuallyEdited &&
+        _msisdnController.text.isEmpty) {
+      _msisdnController.text = prefill;
     }
     if (!_popRequested && _controller.state is CheckoutForwarding) {
       _popRequested = true;
@@ -686,6 +696,12 @@ class _VpayCheckoutSheetState extends State<VpayCheckoutSheet> {
                 checkout.intent.currency,
                 _frenchLocale,
               ),
+            ),
+          CheckoutResumeRedirect(:final rails, :final rail) =>
+            _resumeRedirectPanel(
+              context,
+              rail: rail,
+              canGoBack: rails.supported.length > 1,
             ),
           CheckoutConfirming() => _statusPanel(
             context,
@@ -1108,6 +1124,71 @@ class _VpayCheckoutSheetState extends State<VpayCheckoutSheet> {
     );
   }
 
+  /// The payer came back from the rail's page without finishing.
+  ///
+  /// No spinner, deliberately: the status behind this screen is
+  /// `requires_action`, which only the payer can move, so anything that
+  /// looked like progress would be a lie. One primary action that takes
+  /// them back, and — when there is more than one rail — a way to pick a
+  /// different method instead.
+  Widget _resumeRedirectPanel(
+    BuildContext context, {
+    required SupportedRail? rail,
+    required bool canGoBack,
+  }) {
+    final ThemeData theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        _heading(context, _t.t('state.resume_redirect_title')),
+        const SizedBox(height: 16),
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            // `secondaryContainer`, not `errorContainer`: nothing failed.
+            // The payer simply has not finished, and "Rien n'a été prélevé"
+            // is reassurance, not an error.
+            color: theme.colorScheme.secondaryContainer,
+            borderRadius: BorderRadius.circular(
+              widget.theme.surfaceCornerRadius,
+            ),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Icon(
+                Icons.info_outline,
+                size: 22,
+                color: theme.colorScheme.onSecondaryContainer,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  _t.t('state.resume_redirect_body'),
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSecondaryContainer,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+        FilledButton(
+          onPressed: _controller.resumeRedirect,
+          child: Text(_t.t('state.resume_redirect_continue')),
+        ),
+        if (canGoBack) ...<Widget>[
+          const SizedBox(height: 8),
+          TextButton(
+            onPressed: _controller.back,
+            child: Text(_t.t('msisdn.back')),
+          ),
+        ],
+      ],
+    );
+  }
+
   Widget _outcomePanel(BuildContext context, CheckoutOutcome outcome) {
     final ThemeData theme = Theme.of(context);
     final String title = switch (outcome.kind) {
@@ -1243,6 +1324,7 @@ String _screenTag(CheckoutScreenState s) => switch (s) {
   CheckoutReadyRedirect() => 'ready_redirect',
   CheckoutConfirming() => 'confirming',
   CheckoutWaiting() => 'waiting',
+  CheckoutResumeRedirect() => 'resume_redirect',
   CheckoutRedirecting() => 'redirecting',
   CheckoutOutcome() => 'outcome',
   CheckoutForwarding() => 'forwarding',
@@ -1268,6 +1350,7 @@ String _titleFor(CheckoutScreenState s, VpayLocale locale) {
     CheckoutReadyRedirect() => t.t('state.redirecting_title'),
     CheckoutConfirming() => t.t('state.confirming'),
     CheckoutWaiting() => t.t('state.waiting_title'),
+    CheckoutResumeRedirect() => t.t('state.resume_redirect_title'),
     CheckoutRedirecting() => t.t('state.redirecting_title'),
     CheckoutOutcome(:final kind) => switch (kind) {
       OutcomeKind.succeeded => t.t('outcome.succeeded_title'),

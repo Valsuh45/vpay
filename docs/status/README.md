@@ -43,7 +43,17 @@ the order they were measured.
   failed open (a keyword match of one literal space among them), and six
   classifications the migrations' own comments contradict — recorded for a
   maintainer, not re-decided.
-
+- [verification/2026-09-17-flutter-remember-msisdn-read.md](verification/2026-09-17-flutter-remember-msisdn-read.md) —
+  issue #194: the Flutter sheet's "remember this number" **read** — prefilling
+  the MSISDN field and reflecting the saved state in the checkbox on relaunch
+  — was broken (write, existence and "forget" all worked). Two wiring defects
+  in the widget/controller, not the store: the prefill was gated on a screen
+  transition while `defaultMsisdn` is populated asynchronously, and
+  `rememberChecked` was never seeded from the stored record. Fixed and pinned
+  by two widget + controller tests; `flutter test` 305 passed / 0
+  skipped, `dart analyze --fatal-infos` clean. A review pass then found the
+  new unticked-submit clear could destroy a record the payer never unticked,
+  fixed it, and re-measured at 306 passed / 0 skipped.
 - [verification/2026-09-17-release-please-yaml-rewrite.md](verification/2026-09-17-release-please-yaml-rewrite.md) —
   the first release release-please ever cut (#203) destroyed two of the files
   it was told to bump. A **bare-string** `extra-files` entry does not get the
