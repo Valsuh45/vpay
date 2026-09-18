@@ -404,6 +404,30 @@ final class SheetController extends ChangeNotifier {
     await _handOffToBrowser(url);
   }
 
+  /// Sends a payer who came back without finishing back to the rail's own
+  /// page — `controller.ts`'s `resumeRedirect`, and the action
+  /// [CheckoutResumeRedirect] exists to offer.
+  ///
+  /// No confirm: the intent is already `requires_action` and the charge
+  /// already exists, so confirming again would ask the rail for a second
+  /// one. This only re-opens the URL that intent is still carrying, through
+  /// the same [_handOffToBrowser] the first redirect used — so the dismissal
+  /// handling, the stop-URL matching and the poll-on-return are all the
+  /// ones that were already there, not a second copy.
+  Future<void> resumeRedirect() async {
+    final CheckoutScreenState s = _state;
+    if (s is! CheckoutResumeRedirect) {
+      return;
+    }
+    // `_handOffToBrowser` reads the URL off `CheckoutRedirecting`, so the
+    // sheet moves there first — which is also the honest screen while the
+    // browser is opening, exactly as it is on the first attempt.
+    _setState(
+      CheckoutRedirecting(context: s.context, rail: s.rail, url: s.url),
+    );
+    await _handOffToBrowser(s.url);
+  }
+
   /// Hands the redirecting state's URL to [VpayCheckoutPlatform] — the
   /// "existing browser host" issue #189 names — and waits for it to report
   /// either a matched stop URL or a dismissal, exactly the two signals
@@ -468,7 +492,33 @@ final class SheetController extends ChangeNotifier {
     // for — see this file's own module doc comment for why the two-machine
     // web design never needed one.
     _resumePollingAfterRedirectReturn(redirecting);
-    await _pollLoop();
+
+    // Ask once, then let the reducer decide, instead of assuming "waiting"
+    // and looping. `_pollUntilTerminal` does not treat `requires_action` as
+    // terminal — correctly, since it is not an outcome — so a payer who
+    // came back WITHOUT finishing would otherwise sit on the waiting
+    // spinner for the whole poll budget while the one status that mattered
+    // was already known. One read answers "did they actually pay?", and
+    // `_afterIntentResult` turns it into the honest screen: an outcome if
+    // the rail settled, [CheckoutResumeRedirect] if the payer still has the
+    // redirect to finish, [CheckoutWaiting] only when the rail really is
+    // still moving.
+    //
+    // D1 is preserved: the answer still comes from a status read, never
+    // from the navigation or the dismissal.
+    final PaymentIntentResult onReturn = await client.retrievePaymentIntent(
+      redirecting.context.intent.clientSecret,
+    );
+    if (onReturn.isError) {
+      // Learnt nothing — fall through to the poll loop, which is the same
+      // "keep asking" answer this file gives any unanswered read.
+      await _pollLoop();
+      return;
+    }
+    await _afterIntentResult(onReturn.paymentIntent!);
+    if (_state is CheckoutWaiting) {
+      await _pollLoop();
+    }
   }
 
   /// Constructs a [CheckoutWaiting] directly from [redirecting] rather than
