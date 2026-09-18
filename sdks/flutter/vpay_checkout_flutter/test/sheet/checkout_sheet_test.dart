@@ -291,7 +291,21 @@ void main() {
 
       expect(find.text('Payment received'), findsOneWidget);
       // Exactly one button on this screen — no countdown, no timer widget.
-      expect(find.byType(ElevatedButton), findsOneWidget);
+      //
+      // Any Material button family, via `ButtonStyleButton`, their shared
+      // base. This assertion is about the *count* — "one control, and
+      // nothing counting down beside it" — and pinning `ElevatedButton`
+      // made it fail for the unrelated reason that the M3 pass moved this
+      // CTA to `FilledButton`. Written this way it also catches a stray
+      // `TextButton` or `OutlinedButton`, which the old form missed.
+      //
+      // `byWidgetPredicate`, not `byType`: `find.byType` compares
+      // `runtimeType` exactly and so matches no subclass at all — a
+      // `byType(ButtonStyleButton)` here finds zero widgets, not one.
+      expect(
+        find.byWidgetPredicate((Widget w) => w is ButtonStyleButton),
+        findsOneWidget,
+      );
     },
   );
 
@@ -334,6 +348,91 @@ void main() {
         find.textContaining('MTN-4001: solde insuffisant'),
         findsOneWidget,
       );
+    },
+  );
+
+  testWidgets(
+    'prefills the remembered number into the field and ticks the box on a '
+    'relaunch (single-rail path, issue #194)',
+    (WidgetTester tester) async {
+      // The device already holds a record written by a previous, successful
+      // submit — issue #194's cold-relaunch starting point.
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'vpay_checkout_flutter.remembered_msisdn.v1': jsonEncode(
+          <String, Object>{
+            'msisdn': '237671234567',
+            'rail_code': 'mtn_momo',
+            'remembered_at': DateTime.now().toUtc().toIso8601String(),
+          },
+        ),
+      });
+      final client = MockClient(
+        (http.Request request) async =>
+            _json(_sessionJson(rails: [_mtnRailJson()])),
+      );
+
+      await _pump(
+        tester,
+        VpayCheckoutSheet(
+          sessionUrl: _sessionUrl,
+          baseUrl: 'https://api.example',
+          publishableKey: 'pk_test_1',
+          httpClient: client,
+          locale: VpayLocale.en,
+        ),
+      );
+
+      final TextField field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.controller!.text, '237671234567');
+      final CheckboxListTile checkbox = tester.widget<CheckboxListTile>(
+        find.byType(CheckboxListTile),
+      );
+      expect(checkbox.value, isTrue);
+    },
+  );
+
+  testWidgets(
+    'after choosing the remembered rail from the picker, the number returns '
+    'and the box is ticked (issue #194 repro)',
+    (WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'vpay_checkout_flutter.remembered_msisdn.v1': jsonEncode(
+          <String, Object>{
+            'msisdn': '237671234567',
+            'rail_code': 'mtn_momo',
+            'remembered_at': DateTime.now().toUtc().toIso8601String(),
+          },
+        ),
+      });
+      final client = MockClient(
+        (http.Request request) async =>
+            _json(_sessionJson(rails: [_mtnRailJson(), _orangeRailJson()])),
+      );
+
+      await _pump(
+        tester,
+        VpayCheckoutSheet(
+          sessionUrl: _sessionUrl,
+          baseUrl: 'https://api.example',
+          publishableKey: 'pk_test_1',
+          httpClient: client,
+          locale: VpayLocale.en,
+        ),
+      );
+
+      // Two supported rails -> the rail picker is shown, not the form.
+      expect(find.text('MTN Mobile Money'), findsOneWidget);
+      expect(find.byType(TextField), findsNothing);
+
+      await tester.tap(find.text('MTN Mobile Money'));
+      await tester.pumpAndSettle();
+
+      final TextField field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.controller!.text, '237671234567');
+      final CheckboxListTile checkbox = tester.widget<CheckboxListTile>(
+        find.byType(CheckboxListTile),
+      );
+      expect(checkbox.value, isTrue);
     },
   );
 
@@ -628,6 +727,103 @@ void main() {
       expect(find.text('Support: support@vaam.example'), findsOneWidget);
     });
 
+    /// The end of the wire issue #193 left disconnected: a deployment
+    /// publishes `primary_color`, and the sheet is actually painted with
+    /// it. Asserting on the *rendered* theme rather than on the parsed
+    /// config, because the parse already had a test and the rendering is
+    /// the part that was missing.
+    testWidgets(
+      'primary_color from the cached document seeds the rendered M3 scheme',
+      (WidgetTester tester) async {
+        final InMemoryVpayCheckoutConfigStore store =
+            InMemoryVpayCheckoutConfigStore();
+        final http.Client configClient = MockClient(
+          (http.Request request) async => configJson(documentJson()),
+        );
+        expect(
+          await prepareCheckout(
+            checkoutBaseUrl: 'https://checkout.example',
+            store: store,
+            httpClient: configClient,
+          ),
+          true,
+        );
+
+        final http.Client sessionClient = MockClient(
+          (http.Request request) async =>
+              _json(_sessionJson(rails: [_mtnRailJson()])),
+        );
+
+        await _pump(
+          tester,
+          VpayCheckoutSheet(
+            sessionUrl: _sessionUrl,
+            baseUrl: 'https://api.example',
+            publishableKey: 'pk_test_1',
+            httpClient: sessionClient,
+            configStore: store,
+            locale: VpayLocale.en,
+          ),
+        );
+
+        // Read the theme from INSIDE the sheet — the sheet installs its
+        // own `Theme` below the host's, so an element above it would
+        // report the host scheme and pass no matter what this does.
+        final ColorScheme rendered = Theme.of(
+          tester.element(find.byType(TextField)),
+        ).colorScheme;
+        final ColorScheme expected = ColorScheme.fromSeed(
+          // `#f3c623`, the colour `documentJson` publishes.
+          seedColor: const Color(0xFFF3C623),
+          brightness: Brightness.light,
+        );
+        expect(rendered, expected);
+        // And it is genuinely different from what the host app alone
+        // would have given, so the assertion above cannot pass vacuously.
+        expect(rendered.primary, isNot(const ColorScheme.light().primary));
+      },
+    );
+
+    testWidgets(
+      'useDeploymentBrandColor: false keeps the host app scheme even when a colour is published',
+      (WidgetTester tester) async {
+        final InMemoryVpayCheckoutConfigStore store =
+            InMemoryVpayCheckoutConfigStore();
+        final http.Client configClient = MockClient(
+          (http.Request request) async => configJson(documentJson()),
+        );
+        expect(
+          await prepareCheckout(
+            checkoutBaseUrl: 'https://checkout.example',
+            store: store,
+            httpClient: configClient,
+          ),
+          true,
+        );
+
+        final http.Client sessionClient = MockClient(
+          (http.Request request) async =>
+              _json(_sessionJson(rails: [_mtnRailJson()])),
+        );
+
+        await _pump(
+          tester,
+          VpayCheckoutSheet(
+            sessionUrl: _sessionUrl,
+            baseUrl: 'https://api.example',
+            publishableKey: 'pk_test_1',
+            httpClient: sessionClient,
+            configStore: store,
+            locale: VpayLocale.en,
+            theme: const VpayCheckoutTheme(useDeploymentBrandColor: false),
+          ),
+        );
+
+        final BuildContext inside = tester.element(find.byType(TextField));
+        expect(Theme.of(inside).colorScheme, ThemeData().colorScheme);
+      },
+    );
+
     testWidgets(
       'no configStore given, prepareCheckout not called — no support line, unrestricted rails',
       (WidgetTester tester) async {
@@ -710,7 +906,7 @@ void main() {
           ),
         );
 
-        await tester.tap(find.byType(ElevatedButton));
+        await tester.tap(find.byType(FilledButton));
         // Not `pumpAndSettle`: the hand-off deliberately never resolves here
         // (the fake host reports nothing), so this page never settles —
         // which is the point. Pump until the host has been asked to show
