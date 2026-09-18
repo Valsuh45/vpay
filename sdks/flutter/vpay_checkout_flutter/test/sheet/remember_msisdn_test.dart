@@ -99,6 +99,22 @@ void main() {
       expect(await feature.hasRecord(), isFalse);
     });
 
+    test(
+      'hasActiveRecord is false for a record past the TTL even though '
+      'hasRecord is still true (the forget affordance vs. the tick)',
+      () async {
+        final store = _InMemoryStore();
+        DateTime now = DateTime(2026, 1, 1);
+        final feature = VpayRememberedMsisdn(store: store, now: () => now);
+        await feature.remember(msisdn: '237671234567', railCode: 'mtn_momo');
+
+        now = DateTime(2026, 4, 2); // 91 days later, past the 90-day TTL
+
+        expect(await feature.hasRecord(), isTrue);
+        expect(await feature.hasActiveRecord(), isFalse);
+      },
+    );
+
     test('no PIN field exists anywhere on the record — RememberedMsisdnRecord carries only msisdn, railCode and rememberedAt', () {
       final record = RememberedMsisdnRecord(
         msisdn: '237671234567',

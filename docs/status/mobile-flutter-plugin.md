@@ -354,6 +354,31 @@ unverified-everywhere signal the browser cutover left), is in the dated
 verification page. Evidence:
 [verification/2026-09-17-flutter-native-sheet.md](verification/2026-09-17-flutter-native-sheet.md).
 
+## Issue #194 — the "remember this number" read-back (2026-09-17)
+
+The lane-2 claim above did not survive a hand walk (iPhone 17 Pro / iOS 26.5,
+real `just demo-up`): write, the existence check and "forget" all worked, but
+reading the number back into the field was broken — the field came back empty
+and the box unticked after a cold relaunch, even though the "forget" control
+proved a record existed. Root cause was two wiring defects, not the store: the
+widget's prefill was gated on a screen transition while `defaultMsisdn` is
+populated asynchronously (so it always arrived after its one chance to run),
+and `rememberChecked` was never seeded from the stored record. Fixed in
+`checkout_sheet.dart` (prefill applied on every change, still guarded by
+"manually edited" + empty text) and `sheet_controller.dart`
+(`rememberChecked` now seeds from `hasActiveRecord`, and memory state loads on the
+redirect entry screen too). The 90-day TTL was already enforced on read — this
+did not touch it. A review pass found the `_rememberSeeded` guard on the new
+"an unticked submit clears the record" path set **before** the value it
+announces, so a submit inside the seed's own store read destroyed a record the
+payer never unticked; fixed, and pinned by a test that fails on the previous
+ordering. The web's `memory.last_used` badge on the rail picker is **not**
+ported — the string exists in both locales and nothing reads it.
+`flutter test` 305 passed / 0 skipped on Flutter 3.47.2, and 306 passed /
+0 skipped after the review pass on Flutter 3.48.0-1.0.pre-696 / Dart 3.14.0;
+`dart analyze --fatal-infos` clean on both. Evidence:
+[verification/2026-09-17-flutter-remember-msisdn-read.md](verification/2026-09-17-flutter-remember-msisdn-read.md).
+
 ## What is still not real
 
 - **No `just ci` gate** (D-M3). `install-flutter`/`analyze-flutter`/

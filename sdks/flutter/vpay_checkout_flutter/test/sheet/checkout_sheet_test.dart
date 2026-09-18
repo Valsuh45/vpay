@@ -350,6 +350,91 @@ void main() {
     },
   );
 
+  testWidgets(
+    'prefills the remembered number into the field and ticks the box on a '
+    'relaunch (single-rail path, issue #194)',
+    (WidgetTester tester) async {
+      // The device already holds a record written by a previous, successful
+      // submit — issue #194's cold-relaunch starting point.
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'vpay_checkout_flutter.remembered_msisdn.v1': jsonEncode(
+          <String, Object>{
+            'msisdn': '237671234567',
+            'rail_code': 'mtn_momo',
+            'remembered_at': DateTime.now().toUtc().toIso8601String(),
+          },
+        ),
+      });
+      final client = MockClient(
+        (http.Request request) async =>
+            _json(_sessionJson(rails: [_mtnRailJson()])),
+      );
+
+      await _pump(
+        tester,
+        VpayCheckoutSheet(
+          sessionUrl: _sessionUrl,
+          baseUrl: 'https://api.example',
+          publishableKey: 'pk_test_1',
+          httpClient: client,
+          locale: VpayLocale.en,
+        ),
+      );
+
+      final TextField field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.controller!.text, '237671234567');
+      final CheckboxListTile checkbox = tester.widget<CheckboxListTile>(
+        find.byType(CheckboxListTile),
+      );
+      expect(checkbox.value, isTrue);
+    },
+  );
+
+  testWidgets(
+    'after choosing the remembered rail from the picker, the number returns '
+    'and the box is ticked (issue #194 repro)',
+    (WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'vpay_checkout_flutter.remembered_msisdn.v1': jsonEncode(
+          <String, Object>{
+            'msisdn': '237671234567',
+            'rail_code': 'mtn_momo',
+            'remembered_at': DateTime.now().toUtc().toIso8601String(),
+          },
+        ),
+      });
+      final client = MockClient(
+        (http.Request request) async =>
+            _json(_sessionJson(rails: [_mtnRailJson(), _orangeRailJson()])),
+      );
+
+      await _pump(
+        tester,
+        VpayCheckoutSheet(
+          sessionUrl: _sessionUrl,
+          baseUrl: 'https://api.example',
+          publishableKey: 'pk_test_1',
+          httpClient: client,
+          locale: VpayLocale.en,
+        ),
+      );
+
+      // Two supported rails -> the rail picker is shown, not the form.
+      expect(find.text('MTN Mobile Money'), findsOneWidget);
+      expect(find.byType(TextField), findsNothing);
+
+      await tester.tap(find.text('MTN Mobile Money'));
+      await tester.pumpAndSettle();
+
+      final TextField field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.controller!.text, '237671234567');
+      final CheckboxListTile checkbox = tester.widget<CheckboxListTile>(
+        find.byType(CheckboxListTile),
+      );
+      expect(checkbox.value, isTrue);
+    },
+  );
+
   testWidgets('the live region is present on the very first frame', (
     WidgetTester tester,
   ) async {
