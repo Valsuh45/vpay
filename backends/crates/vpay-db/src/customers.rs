@@ -1368,11 +1368,11 @@ async fn hard_delete(
 /// Rewrites every copy of this payer's identifiers vpay keeps outside
 /// `customers`.
 ///
-/// Five statements, and the set is closed by measurement rather than by
+/// Seven statements, and the set is closed by measurement rather than by
 /// intuition: `an_erasure_leaves_no_payer_identifier_in_any_column_of_any_table`
 /// scans every `text`, `varchar` and `jsonb` column `information_schema`
-/// knows about, so a sixth store added later fails that test rather than
-/// waiting to be noticed here.
+/// knows about, so a store added later fails that test rather than waiting
+/// to be noticed here.
 ///
 /// # The rail's own words are a copy too, and they were missed on 2026-09-10
 ///
@@ -1536,6 +1536,53 @@ async fn redact_stored_copies(
                (SELECT id FROM events WHERE object_id = $1 AND type LIKE 'customer.%')";
     sqlx::query(deliveries)
         .bind(customer_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(classify_write)?;
+
+    // `payment_intents.last_payment_error_message` is the intent's own decline
+    // text, reached directly through `customer_id`, the same path the charges
+    // above use. It does not hold the rail's raw words today — every writer
+    // stores the vpay-authored `public_message()` (the rail's prose lives in
+    // `charges.failure_raw`, already redacted above), so NULLing this is
+    // defense-in-depth rather than the closing of a live leak. It is redacted
+    // because the inventory *classifies* it `rail_failure_text`,
+    // `control: redact`, `retention: customer`, and a closed-vocabulary
+    // message can stop being closed without a schema change.
+    //
+    // It has to be NULLed **together with** `last_payment_error_code`: the
+    // `lpe_paired` CHECK (migration `0014`) forces the pair both-NULL or
+    // both-set, and the code column's closed-vocabulary CHECK (migration
+    // `0037`) rejects a text marker like `[redacted]`. NULL is legal for both,
+    // so the redaction is an absence, exactly as it is for the coordinate.
+    let intents = "UPDATE payment_intents SET \
+             last_payment_error_code = NULL, last_payment_error_message = NULL \
+         WHERE customer_id = $1";
+    sqlx::query(intents)
+        .bind(customer_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(classify_write)?;
+
+    // `webhook_deliveries.response_excerpt` is the merchant endpoint's
+    // response to a delivery, truncated to 512 chars but otherwise un-parsed
+    // (`vpay_worker::webhooks::ack_excerpt`) — a receiver that echoes the
+    // payload it was sent has put the payer's number in it, so the inventory
+    // classifies it `rail_failure_text`, `control: redact`. Unlike
+    // `payload_sha256` above — forensics of the bytes vpay *sent*, which is
+    // why the terminal rows keep it — this is a copy of what the merchant
+    // *said*, so it is redacted for **every** delivery of this payer's
+    // `customer.*` events, the terminal ones included, mirroring how
+    // `events.data` itself is redacted for every stored body. The marker
+    // replaces a value and a `NULL` stays `NULL`, the same shape the
+    // `charges.failure_raw` redaction above uses.
+    let response_excerpts = "UPDATE webhook_deliveries SET \
+             response_excerpt = CASE WHEN response_excerpt IS NULL THEN NULL ELSE $2 END \
+         WHERE event_id IN \
+               (SELECT id FROM events WHERE object_id = $1 AND type LIKE 'customer.%')";
+    sqlx::query(response_excerpts)
+        .bind(customer_id)
+        .bind(REDACTED)
         .execute(&mut **tx)
         .await
         .map_err(classify_write)?;
