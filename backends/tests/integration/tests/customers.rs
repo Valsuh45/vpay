@@ -1902,7 +1902,9 @@ async fn an_erasure_leaves_no_payer_identifier_in_any_column_of_any_table() -> a
          last_payment_error_message = $2 WHERE id = $1",
     )
     .bind(&intent.id)
-    .bind(format!("PAYER_NOT_FOUND: subscriber {PHONE} is not registered"))
+    .bind(format!(
+        "PAYER_NOT_FOUND: subscriber {PHONE} is not registered"
+    ))
     .execute(&h.pool)
     .await
     .context("seeding the intent's decline text that names the payer")?;
