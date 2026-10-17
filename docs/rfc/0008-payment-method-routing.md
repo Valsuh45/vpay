@@ -1,6 +1,10 @@
 # RFC-0008: Payment-method routing — the cheapest capable rail first
 
-- **Status:** Draft
+- **Status:** Accepted 2026-10-17 →
+  [ADR-0029](../adr/0029-card-and-bank-adapters-and-payment-method-routing.md),
+  except § 7 (health), which this RFC defers itself. The ADR answers open
+  questions 1–5; its answers are proposed and need the maintainer's
+  confirmation. Nothing is built.
 - **Author:** vpay maintainers
 - **Date:** 2026-09-23
 - **Related:** [RFC-0004](0004-billing-on-top-of-invoices.md) § 7 (one adapter
@@ -191,7 +195,9 @@ The invariant is not up for negotiation here.
 4. **Merchant `requires`:** is refund capability something a merchant should
    require per method, or a deployment policy? (Maintainer.)
 5. **Where fee schedules live** once rail credentials become per merchant, if
-   they do. (Maintainer.)
+   they do. (Maintainer.) _(2026-10-16: [RFC-0009](0009-provider-accounts-per-merchant.md)
+   proposes that they do, and that a fee schedule lives on the provider
+   account it prices.)_
 
 ## Impact on existing invariants
 
