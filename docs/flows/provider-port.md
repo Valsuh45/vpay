@@ -203,6 +203,25 @@ whether this is a port or just a folder.
 
 ## Status
 
+**Updated 2026-10-20: `http::path_segment` refuses a dot segment.** The port's
+one helper for putting a caller's value into a rail's URL path now returns
+`Result<String, ProviderError>`, and refuses an empty or all-dots input as
+`Malformed` before anything is sent, with a fixed message that never quotes
+the input. `.`, `..` and the empty segment move a request to another endpoint
+under our own credentials, and escaping could not stop them, because URL
+parsing reads `%2E%2E` as `..`. `...` is refused as well, by decision. No
+unchecked variant was kept, so a caller that ignores the refusal does not
+compile. It has two shipping callers. `mtn_momo`'s account-holder lookup
+refuses before its token fetch. `vpay-notchpay`'s client, through which the
+`notchpay` rail reads and processes payments, lost its private copy of the
+guard and calls this one. No route reaches the refusal today: `/v1` admits
+digits only for MTN's number, and the `notchpay` rail addresses a payment by
+vpay's own UUID reference. Not changed: the merchant SDKs' own escaping, which passes dot
+segments too
+([../reference/rails.md § "A path segment the caller chose"](../reference/rails.md#a-path-segment-the-caller-chose)).
+Evidence:
+[verification/2026-10-20-path-segment-dot-segments.md](../status/verification/2026-10-20-path-segment-dot-segments.md).
+
 **Updated 2026-10-20 (RFC-0012, ADR-0031): a third rail, the first shipping
 `Origin` rail, and one new port method.**
 
