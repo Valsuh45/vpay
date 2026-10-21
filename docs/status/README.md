@@ -60,6 +60,11 @@ hand-maintained list is exactly how this gap happened; browse
 [verification/](verification/) directly for the complete, current file set
 rather than trusting this list to be exhaustive.
 
+- [verification/2026-10-21-dashboard-md3e.md](verification/2026-10-21-dashboard-md3e.md) —
+  the dashboard on `@vaam-apps/ui` 0.5.0 and Material 3 Expressive, an
+  Overview of exact procedure counts, and navigation without reloads (6 → 1
+  document loads over one click-through); the gate exit codes, the guards
+  seen failing, and what was not run (Cypress, a real vpay).
 - [verification/2026-10-21-cli-tests-observability-port.md](verification/2026-10-21-cli-tests-observability-port.md) —
   `vpay-server`'s `tests/cli.rs` lost a race for the observability default
   `0.0.0.0:9090` under plain `cargo test` (`master` failed 1 whole-file run of
