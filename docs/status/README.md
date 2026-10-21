@@ -60,6 +60,13 @@ hand-maintained list is exactly how this gap happened; browse
 [verification/](verification/) directly for the complete, current file set
 rather than trusting this list to be exhaustive.
 
+- [verification/2026-10-21-cli-tests-observability-port.md](verification/2026-10-21-cli-tests-observability-port.md) —
+  `vpay-server`'s `tests/cli.rs` lost a race for the observability default
+  `0.0.0.0:9090` under plain `cargo test` (`master` failed 1 whole-file run of
+  3; nextest serialises the file and hid it); the mechanism proven against the
+  real binary, the one-line fix in `bin()`, 10 consecutive green runs and nextest
+  after it, and one unexplained red run, named as such, with what was run to
+  catch it.
 - [verification/2026-10-21-flutter-example-lockfile.md](verification/2026-10-21-flutter-example-lockfile.md) —
   the Flutter example's `pubspec.lock` recorded the plugin at `0.1.1` while it
   was `0.9.1`; now synced, and `release-please.yml` rewrites that line on
