@@ -226,6 +226,42 @@ fn every_adapter_declares_coherent_capabilities() {
     }
 }
 
+/// Every rail declares the payment-method types it serves (ADR-0029 D6,
+/// RFC-0008 as revised on 2026-10-23), and the declarations are exactly the
+/// vocabulary table in `docs/plans/2026-10-23-method-type-routing.md`.
+///
+/// Coherent means at least one: boot refuses an enabled rail serving none
+/// (`ConfigError::RailServesNoMethodType`). Exact, because the router reads
+/// nothing else to decide which rail may take an `mtn_wallet` payment: a rail
+/// that stopped declaring a type would silently drop out of every routed
+/// confirm for it, and one that started would join them unreviewed.
+#[test]
+fn every_adapter_declares_the_method_types_it_serves() {
+    let served: BTreeMap<&str, Vec<&str>> = adapters()
+        .iter()
+        .map(|a| {
+            let c = a.capabilities();
+            assert!(
+                c.method_types_are_coherent(),
+                "{}: declares no payment-method type",
+                a.code()
+            );
+            (
+                a.code(),
+                c.method_types.iter().map(|t| t.as_wire_str()).collect(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        served,
+        BTreeMap::from([
+            ("mtn_momo", vec!["mtn_wallet"]),
+            ("notchpay", vec!["mtn_wallet", "orange_wallet"]),
+            ("orange_money", vec!["orange_wallet"]),
+        ])
+    );
+}
+
 /// **Every shipping rail's `refund_destination` agrees with what its
 /// `parse_destination` does** — a `Required` rail has overridden it, an
 /// `Origin` rail has left the port's `Unsupported` alone.
@@ -506,6 +542,7 @@ impl Rail {
         let flow = self.adapter.capabilities().flow;
         ChargeRef {
             reference_id,
+            method_type: None,
             amount: Money::new(5_000, self.config.currency).expect("non-negative"),
             payer_ref: match flow {
                 // A push rail prompts a payer's own instrument, so it needs
@@ -3176,6 +3213,7 @@ async fn a_digits_only_msisdn_reaches_the_same_walk_as_its_hex_twin(
     // field the three mappings above document).
     let charge = ChargeRef {
         reference_id: Uuid::new_v4(),
+        method_type: None,
         amount: Money::new(5_000, rail.config.currency).expect("non-negative"),
         payer_ref: Some(msisdn.to_owned()),
         ref_extra: BTreeMap::new(),
@@ -3306,6 +3344,7 @@ async fn a_payer_lands_on_the_rails_page(rail: &Rail) -> (ChargeRef, String, Str
     let http = vpay_provider::http::client().expect("the vendored-roots client builds");
     let mut charge = ChargeRef {
         reference_id: Uuid::new_v4(),
+        method_type: None,
         amount: Money::new(5_000, rail.config.currency).expect("non-negative"),
         payer_ref: None,
         ref_extra: BTreeMap::new(),
@@ -3390,6 +3429,7 @@ async fn a_charge_no_payer_has_looked_at_is_pending_once_and_then_settles() {
 
     let mut charge = ChargeRef {
         reference_id: Uuid::new_v4(),
+        method_type: None,
         amount: Money::new(5_000, rail.config.currency).expect("non-negative"),
         payer_ref: None,
         ref_extra: BTreeMap::new(),
