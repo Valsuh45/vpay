@@ -208,6 +208,7 @@ mod tests {
             display_name: None,
             callbacks: register.map(|register| ProviderCallbacks {
                 register: Some(register),
+                ..ProviderCallbacks::default()
             }),
         }
     }
@@ -276,7 +277,7 @@ mod tests {
         // `callbacks: {}` is the absent block, and an explicit `ensure`
         // overrides Notch Pay's `off`.
         let mut empty_block = host("notchpay", true, None);
-        empty_block.callbacks = Some(ProviderCallbacks { register: None });
+        empty_block.callbacks = Some(ProviderCallbacks::default());
         assert_eq!(
             callback_plan(&config(vec![empty_block]), &adapters)
                 .rails

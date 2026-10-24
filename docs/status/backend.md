@@ -1223,3 +1223,68 @@ Off}`, `Ensure` unless overridden, forwarded by `Measured`), and
 
 No route was mounted or unmounted and no `NotImplemented` token moved.
 [verification/2026-10-23-notchpay-defaults-and-wrong-network.md](verification/2026-10-23-notchpay-defaults-and-wrong-network.md).
+
+## Rail callbacks are checked where the rail signs (2026-10-23, RFC-0014)
+
+The maintainer was asked "Webhook signature verification (RFC-0014) needs
+Notch Pay's hash key held by vpay as a secret. Lift the earlier 'hash key is
+evidence only, never vpay configuration' rule for this?" and answered "Yes,
+build RFC-0014". **Stub-proven; never verified against a real Notch Pay delivery.**
+
+- **The port:** `ProviderAdapter::verify_callback(request, charge, config)`,
+  defaulting to `CallbackVerdict::NotChecked`; `CallbackRequest` (headers,
+  raw body, time received; a hand-written `Debug` that prints header names
+  only); `Capabilities::callback_check` (`None`, `BodyToken`, `Signature`)
+  with its coherence rule; `Measured` forwards it uncounted; one HMAC
+  comparison for the workspace, `vpay_provider::callback`.
+- **The route:** `POST /provider/{code}/callback` gains a step between
+  finding the charge and moving its poll: the rail's configuration and the
+  charge's reference go to `verify_callback`, and `Invalid` or `Unavailable`
+  moves nothing and logs `warn`. Every answer stays the same `202`. Counted
+  on `vpay_provider_callbacks_total{provider,verdict}`, the fifteenth
+  metric.
+- **`notchpay`** declares `Signature` and checks `x-notch-signature` over the
+  raw body against `credentials.callback_signing_secret` (and `_previous`
+  during a rotation). MTN and Orange answer `NotChecked`, as before.
+- **Boot:** `IncoherentCallbackCheck`, `CallbackSigningSecretMissing`
+  (livemode, a signing rail, no secret, no `callbacks.verify: off`),
+  `CallbackSigningSettingUnread` and `CallbackVerifyOffWithSecret`, each
+  exit 78; `vpay-server serve` warns about a signing rail with no secret.
+- **Security review, the same day** (an independent read of the branch; no
+  security defect found in the comparison, the raw body, the 202 or the
+  redaction). Built from its should-fix findings: a declared check that is
+  not performed fails closed at the route (`Unavailable` and an `error`);
+  `CallbackVerdict::VerifiedPrevious` and the `verified_previous` label, so
+  a rotation has an end signal, and a `WARN` at every `serve` boot while
+  `callback_signing_secret_previous` is set; two more exit-78 refusals,
+  `CallbackSigningPreviousWithoutCurrent` and
+  `CallbackSigningSecretWhitespace`; the route borrows the rail's
+  configuration rather than cloning its credentials; tests for both of
+  `verdict_for`'s `Unavailable` branches; and the integration case's genuine
+  webhook is now spaced and out of key order, with its re-serialisation a
+  fourth forgery. Six more guards mutation-checked. Recorded, not changed:
+  a forged callback still logs a `warn` and counts `invalid`, which a caller
+  can inflate; the constant-time test is a source-text tripwire.
+- **Proven:** unit tests in `vpay-provider`, the Notch Pay adapter,
+  `vpay-config` and `vpay-api`'s boot; the conformance suite's
+  `a_forged_callback_is_refused_by_a_rail_that_checks` over all three rails;
+  and `provider_callback.rs`'s
+  `a_webhook_the_rail_did_not_sign_moves_nothing_and_a_signed_one_settles`
+  against WireMock's Notch Pay and a real Postgres, which asserts the poll
+  stays parked, nothing is claimable and the stub records no read for four
+  forgeries, and that the genuine webhook settles the charge with every
+  answer byte-identical. Eighteen guards mutation-checked. _(Three
+  forgeries and twelve guards until the security review.)_
+- **Not done:** no webhook Notch Pay sent has ever been delivered (RFC-0012
+  § 10 item 7), so the signature's format, header, encoding and retries are
+  unmeasured; the 2026-10-23 sandbox run found an API-created endpoint stored
+  with `"url": null`, so a real check needs the Hash Key and a
+  dashboard-registered endpoint, and until a delivery is seen there are no
+  Notch Pay callbacks to check; Orange's
+  `BodyToken` check (RFC-0014 open question 2); Stripe's and PayPal's (no
+  adapter); per-account secrets (RFC-0009) and RFC-0013's sealed store; an
+  alert rule on `verdict="invalid"`; the `notchpay-sandbox` profile does not
+  configure a secret.
+
+No route was mounted or unmounted and no `NotImplemented` token moved.
+[verification/2026-10-23-webhook-signatures.md](verification/2026-10-23-webhook-signatures.md).
