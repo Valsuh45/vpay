@@ -1,6 +1,6 @@
 # Security: Trust Boundaries
 
-_Issue [#150](https://github.com/vaam-apps/vpay/issues/150), [EPIC #155](https://github.com/vaam-apps/vpay/issues/155). The machine-readable inventory is [`schemas/security-inventory.yaml`](../../schemas/security-inventory.yaml); the architecture decision is [ADR-0033](../adr/0033-security-asset-and-control-evidence-inventory.md)._
+_Issue [#150](https://github.com/vaam-apps/vpay/issues/150), [EPIC #155](https://github.com/vaam-apps/vpay/issues/155). The machine-readable inventory is [`schemas/security-inventory.yaml`](../../schemas/security-inventory.yaml); the architecture decision is [ADR-0034](../adr/0034-security-asset-and-control-evidence-inventory.md)._
 
 ## Overview
 
@@ -91,12 +91,15 @@ where the surface provides them; where it does not, the document says so.
 
 ### 4. External payment rails -> `/provider/{code}/callback`
 
-- **No authentication by design today.** RFC-0014 is Draft and no rail
-  callback is verified. MTN and Orange do not sign callbacks; Notch Pay's
-  signature check is built by PR #357.
-- **Defensive ingestion:** The route parses identifiers only. It never moves
-  money; it pulls a poll job's `run_at` forward. The worker's authenticated
-  status read is the only thing that settles a charge
+- **Notch Pay is verified.** `x-notch-signature` is checked as the hex
+  HMAC-SHA256 of the raw body under the endpoint's Hash Key
+  ([RFC-0014](../rfc/0014-verifying-rail-callbacks.md), PR #357), and boot
+  refuses a configured Notch Pay rail without the key.
+- **MTN and Orange are not.** MTN does not sign callbacks; Orange's
+  `BodyToken` check is not built. Their routes are unauthenticated hints.
+- **Every callback is still a hint.** The route parses identifiers only and
+  pulls a poll job's `run_at` forward. The worker's authenticated status read
+  is the only thing that settles a charge
   ([docs/security/threat-models/notchpay.md](threat-models/notchpay.md),
   [docs/flows/crash-safety.md](../flows/crash-safety.md)).
 

@@ -1174,9 +1174,12 @@ impl UpdateInvoiceItemParams {
 ///
 /// # The rail's code is the outer key, and that is the whole point
 ///
-/// On the wire this is `destination[<payment_method_type>][…]` — a
-/// rail-agnostic container with a rail-specific interior, exactly as
+/// On the wire this is `destination[<rail code>][…]` — a rail-agnostic
+/// container with a rail-specific interior, much as
 /// `payment_method_data[<payment_method_type>][…]` is on the confirm path.
+/// The outer key is the code of the **rail** the charge was made on or, since
+/// the server's 2026-10-24 change, the payment-method type the charge records
+/// (`destination[mtn_wallet]` for a charge routed by `mtn_wallet`).
 /// The server strips the outer key and hands the interior to that rail's own
 /// adapter, which is the only thing that knows what a payee looks like there.
 /// An SDK that flattened this, or that wrote one rail's code into the body
@@ -1224,9 +1227,18 @@ pub enum RefundDestination {
     /// than a silent change of meaning to this one.
     MobileMoney {
         /// The rail the charge was made on — its code is the outer key.
+        ///
+        /// A **rail code** (`MtnMomo`, `OrangeMoney`, `Notchpay`), or the
+        /// payment-method type the charge records (`MtnWallet`,
+        /// `OrangeWallet`): a server since 2026-10-24 accepts the type for a
+        /// charge routed by it, which is how to refund one without knowing the
+        /// rail it went to. (Since v0.14.0 the intent names that rail too, as
+        /// `payment_method_details.rail`, so the rail code is also at hand.)
+        /// Another type, or a type on an older server, is refused with a `400`
+        /// naming `destination`.
         payment_method_type: PaymentMethodType,
         /// The payee's number, **in international form, starting with `+`**.
-        /// Sent as `destination[<payment_method_type>][msisdn]`.
+        /// Sent as `destination[<rail code or method type>][msisdn]`.
         msisdn: String,
     },
 }

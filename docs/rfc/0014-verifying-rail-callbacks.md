@@ -1,10 +1,41 @@
 # RFC-0014: Verifying rail callbacks
 
-- **Status:** Draft. **Nothing in this document is built.** Today no rail's
-  callback is verified: `parse_callback` receives the body and no headers
-  (`backends/crates/vpay-provider/src/lib.rs:1518`), and
-  `vpay_api::provider_callback` discards everything it returns except the
-  reference.
+- **Status:** **The port and Notch Pay's check are built (2026-10-23),
+  stub-proven, and since 2026-10-24 checked offline against four real Notch
+  Pay webhooks, all `Verified`; none has reached a running vpay.** _(This
+  said "stub-proven; never verified against a real Notch Pay delivery" until
+  2026-10-24.)_ The maintainer asked,
+  on 2026-10-23, "Webhook signature verification (RFC-0014) needs Notch Pay's
+  hash key held by vpay as a secret. Lift the earlier 'hash key is evidence
+  only, never vpay configuration' rule for this?", and answered "Yes, build
+  RFC-0014". Built: § 2's port (`CallbackRequest`, `CallbackVerdict`,
+  `verify_callback` defaulting to `NotChecked`, `CallbackCheck` and its
+  coherence rule, `Measured` forwarding), § 3's step 4 in the route, Notch
+  Pay's `Signature` check (§ 4), the secret as a rail credential (§ 5, in a
+  different place: [Built](#built-2026-10-23)), § 6's boot rule, § 7's
+  counter, and § 8's tests, each mutation-checked
+  ([verification](../status/verification/2026-10-23-webhook-signatures.md)).
+  **Not built:** Orange's `BodyToken` check (open question 2), Stripe's and
+  PayPal's checks (no adapter), RFC-0013's sealed store (§ 5 phase 2), and
+  per-account secrets (RFC-0009). The built proofs are against WireMock's
+  Notch Pay and a scheme transcribed from Notch Pay's guide. **On 2026-10-24
+  the scheme was measured**: an endpoint registered in Notch Pay's dashboard
+  received four signed payment webhooks, each `x-notch-signature` the hex
+  HMAC-SHA256 of the raw body under the Hash Key (a `JSON.stringify`
+  re-serialisation does not match), and the adapter's `verify_callback`
+  answered `Verified` for all four, run offline over the recorded requests
+  (RFC-0012 § 10 item 7, answered;
+  [verification](../status/verification/2026-10-24-notchpay-dashboard-webhooks.md)).
+  The same deliveries showed the event named under `event`, not `type`, which
+  `parse_callback` then refused; fixed that day. Retries and replay are
+  unmeasured, and no delivery has gone through vpay's route. An endpoint
+  created through `POST /webhooks` (2026-10-23) received nothing in 21
+  minutes, so the working route is the dashboard
+  ([adapter-notchpay.md](../flows/adapter-notchpay.md) § "The signature
+  check"). _(Until 2026-10-24 this said "**no webhook Notch Pay sent has ever
+  been delivered**", and that such an endpoint "is stored with `"url": null`":
+  the listing shows `null` for a dashboard endpoint that delivers too.)_ _(This said "Draft. **Nothing in
+  this document is built.**" until 2026-10-23.)_
 - **Author:** vpay maintainers
 - **Date:** 2026-10-20
 - **Decision this designs:** asked on 2026-10-20 whether vpay should verify
@@ -63,7 +94,7 @@ value passes (`rails.md`, "`parse_callback` fails closed").
 | `orange_money` | A `notif_token` in the body. Orange also returns one in the `webpayment` response, and `submit` stores it in the charge's `ref_extra` when present (`vpay-adapter-orange-money/src/mapping.rs:156`) | **None new**: the stored `notif_token` is per payment and already in the database  | `adapter-orange-money.md`, `rails.md` |
 | `stripe`       | `Stripe-Signature: t=…,v1=…`, HMAC-SHA256 over `"{t}.{body}"`, "byte-identical to vpay's own `Vpay-Signature`"                                                                                      | The endpoint's `whsec_…`                                                           | RFC-0010 § 6                          |
 | `paypal`       | RSA over `transmission_id\|timestamp\|webhook_id\|crc32(body)` with `PAYPAL-TRANSMISSION-ID`, `-TIME`, `-SIG`, `PAYPAL-CERT-URL`, `PAYPAL-AUTH-ALGO`; or a call to `verify-webhook-signature`       | The `webhook_id`, which "is not a secret" (RFC-0013 § 6), and PayPal's certificate | RFC-0011 § 6                          |
-| `notchpay`     | `x-notch-signature`, a hex HMAC-SHA256 keyed by the endpoint's Hash Key (`hsk_test_…` in the sandbox). The raw body or a re-serialisation (to confirm). No timestamp                                | The endpoint's Hash Key                                                            | RFC-0012 § 6, § 10 item 7             |
+| `notchpay`     | `x-notch-signature`, a hex HMAC-SHA256 keyed by the endpoint's Hash Key (`hsk_test_…` in the sandbox). The raw body (measured 2026-10-24; a re-serialisation does not match). No timestamp          | The endpoint's Hash Key                                                            | RFC-0012 § 6, § 10 item 7             |
 
 Stripe and PayPal have RFCs and no adapter. Notch Pay's adapter is in review
 (vaam-apps/vpay#295) and checks no signature. Orange ships, and its one
@@ -396,7 +427,10 @@ comparison this repository has listed as unbuilt since Step 8.
   deployment registers endpoints by hand today, and none could verify until
   the store exists. _(2026-10-22: Notch Pay's endpoint is registered by vpay
   since RFC-0013 landed for it, and the refusal still holds: Notch Pay
-  returns no secret to store.)_
+  returns no secret to store.)_ _(2026-10-23: not by default any more. Since
+  vaam-apps/vpay#353 an unset `register` is `off` on Notch Pay, so its
+  endpoint is registered by hand in the dashboard again, and the signing
+  secret is that endpoint's Hash Key, configured by hand too.)_
 - **Source-IP allowlists instead of signatures.** Refused. No shipping rail
   publishes a callback address range that this repository has confirmed:
   RFC-0013 § 11 records that no MTN page read supports an IP-allowlisted
@@ -423,6 +457,104 @@ comparison this repository has listed as unbuilt since Step 8.
 5. **Should a `Verified` callback be allowed to repair a lost `ref_extra`?**
    This RFC makes that possible and does not build it. It would be the first
    time callback content reaches the charge row. (Maintainer; a later RFC.)
+
+## Built (2026-10-23)
+
+Built on `master` `82a68f4e`. Where this RFC left a choice, or sketched
+something only as illustration, the safer option was taken and is recorded
+here.
+
+- **The first consumer is Notch Pay, not Orange.** The delivery table makes
+  Orange's `BodyToken` the port's first consumer (step 1) and Notch Pay's
+  check step 2. The maintainer's decision was to build Notch Pay's, and
+  ADR-0029 D2's rule (a port addition lands with its first consumer) is met
+  by it. Orange stays `CallbackCheck::None` and `NotChecked`: open question 2
+  is unanswered, and nobody has observed whether the notification's
+  `notif_token` equals the one `webpayment` returned.
+- **The secret is a rail credential, not `callbacks.signing_secrets`.**
+  § 5's YAML was marked illustrative. The secret is
+  `providers[].credentials.callback_signing_secret`, with an optional
+  `callback_signing_secret_previous` for a rotation: two names the **port**
+  fixes (`vpay_provider::CALLBACK_SIGNING_SECRET`), so boot can ask "does this
+  rail that signs hold a secret?" without learning any rail's vocabulary
+  (ADR-0002). The credentials map already carries what § 5 asked of a new
+  list: a `${VAR}` placeholder enforced in livemode, `Debug` redaction on the
+  way in, no new path through `vpay_config`. A list was one more secret path
+  with its own placeholder rule and its own redaction to get wrong. Rotation
+  is two keys rather than a list of any length.
+- **The acknowledgement is `callbacks.verify: on | off`**, in the block
+  RFC-0013 added, defaulting to `on`. It is an acknowledgement, not a switch:
+  a configured secret is checked whatever it says.
+- **Boot refuses four things** (§ 6 named one), each exit 78 and each
+  naming the rail and the setting, never a value:
+  `IncoherentCallbackCheck` (a check on a rail that never calls back);
+  `CallbackSigningSecretMissing` (livemode, `Signature`, no secret, no
+  `verify: off`); `CallbackSigningSettingUnread` (a signing secret, or
+  `verify: off`, on a rail whose adapter checks no signature: a setting that
+  does nothing is one somebody believes in); and
+  `CallbackVerifyOffWithSecret` (`off` beside a secret: an acknowledgement of
+  something that does not happen). A blank secret is no secret, in boot and
+  in the adapter alike, through one function
+  (`vpay_provider::callback::signing_secrets_in`). The security review the
+  same day added two more, in both modes: `CallbackSigningSecretWhitespace`
+  (a non-blank secret, current or previous, with surrounding whitespace,
+  which would key the HMAC on a newline) and
+  `CallbackSigningPreviousWithoutCurrent` (a previous secret with no current
+  one: a rotation whose new key is missing). _(This bullet said "Boot
+  refuses four things" until then, and a previous secret alone booted.)_
+- **`callbacks.verify` on a per-request rail stays refused.** RFC-0013's
+  `CallbacksOnPerRequestRail` refuses any `callbacks` block on such a rail,
+  and no per-request rail signs today. The first one that does needs that
+  rule narrowed to `register`.
+- **The warning runs in `vpay-server serve` only**, the process that answers
+  callbacks. The refusal is in `boot_seeds`, which every process runs.
+- **The counter is `vpay_provider_callbacks_total{provider,verdict}`.** § 7
+  wrote `{rail, verdict}`; every other per-rail series labels the rail
+  `provider`. It counts callbacks that reach step 4: an unparseable body and
+  an unknown reference are not counted.
+- **Two things the route cannot build are `Unavailable`**, not passed to the
+  adapter: a rail with no loaded configuration, and a charge row whose
+  currency or amount does not parse. Neither admits the pull-forward.
+- **What is signed is the raw body**, compared in constant time
+  (`Mac::verify_slice`), lower- or upper-case hex. Notch Pay's guide shows
+  both a raw-body (PHP, Python) and a `JSON.stringify(req.body)` (Node)
+  example, and the latter is the raw body only for a compactly serialised
+  body. RFC-0012 § 10 item 7 is the measurement that decides it. _(Decided
+  2026-10-24: on four real deliveries the raw body's HMAC matched and a
+  `JSON.stringify` of the parsed body did not, because Notch Pay escapes `/`
+  as `\/`
+  ([verification](../status/verification/2026-10-24-notchpay-dashboard-webhooks.md)).)_
+- **Replay is accepted** (open question 4's recommendation): Notch Pay signs
+  no timestamp, and `a_replayed_genuine_webhook_still_verifies` pins that as
+  a decision.
+- **A rotation ends visibly.** A match under the previous secret is
+  `CallbackVerdict::VerifiedPrevious`, counted as
+  `verdict="verified_previous"`, and `vpay-server serve` warns at every boot
+  while `callback_signing_secret_previous` is set. _(Added by the security
+  review: until then either key was `Verified`, the previous one was
+  accepted silently for as long as it stayed configured, and a rotation
+  after a leak had no end signal.)_
+- **A declared check that is not performed fails closed.** The route answers
+  `Unavailable`, with an `error`, when an adapter that declares a
+  `callback_check` other than `None` returns `NotChecked`, the port's
+  default. _(Added by the security review: until then such an adapter would
+  have had its secret demanded at boot and admitted every forgery.)_
+- **Security review, 2026-10-23.** An independent review of the branch found
+  no security defect in the comparison, the raw-body handling, rotation's
+  blank handling, the fail-closed configuration, the 202 or secret
+  redaction. Its should-fix findings are built (the two items above, the
+  whitespace refusal, a borrowed rather than cloned configuration on the
+  route, tests for both `Unavailable` branches, and a non-canonical body at
+  the route). Two are recorded and not changed: each forged callback logs one
+  `warn` and counts `verdict="invalid"`, so a caller who knows one live
+  reference can inflate both (the runbook's "is `verified` also non-zero?"
+  is the mitigation); and `the_comparison_is_the_constant_time_one` is a
+  source-text tripwire, not a proof. The
+  [verification page](../status/verification/2026-10-23-webhook-signatures.md)
+  lists every finding and what was done.
+- **HMAC lives once**, in `vpay_provider::callback`, with `hmac` and `hex`
+  rather than `hmac`, `sha2` and `subtle`: `verify_slice` is `subtle`'s
+  comparison underneath, and `hex` was already a workspace pin.
 
 ## Impact on existing invariants
 

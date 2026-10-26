@@ -294,10 +294,25 @@ Boot refusals, in `vpay_config::config::REQUIRED_RAIL_KEYS` per ADR-0012:
 - `currency` must be `XAF`. Notch Pay's XOF channels are other countries and
   another RFC.
 
-There is **no `webhook_hash`** in the configuration, although every Notch Pay
-webhook endpoint has one. Nothing could read it until the port passes headers
-to `parse_callback` (§ 6), and a secret that nothing reads is a secret held
-for no reason.
+**The endpoint's Hash Key is configuration** (since 2026-10-23), as
+`credentials.callback_signing_secret`: a rail credential like the two keys, a
+`${VAR}` placeholder in livemode, never printed, logged or committed.
+[RFC-0014](0014-verifying-rail-callbacks.md) gave the port the headers,
+through a new method rather than `parse_callback`, and Notch Pay's adapter
+checks `x-notch-signature` against it. Without it a sandbox warns, and
+livemode refuses to boot unless the rail's block says
+`callbacks: { verify: off }`
+([adapter-notchpay.md](../flows/adapter-notchpay.md) § Callbacks).
+
+_(Corrected 2026-10-23. This said: "There is **no `webhook_hash`** in the
+configuration, although every Notch Pay webhook endpoint has one. Nothing
+could read it until the port passes headers to `parse_callback` (§ 6), and a
+secret that nothing reads is a secret held for no reason." The maintainer
+lifted that refusal for this purpose on 2026-10-23: "Webhook signature
+verification (RFC-0014) needs Notch Pay's hash key held by vpay as a secret.
+Lift the earlier 'hash key is evidence only, never vpay configuration' rule
+for this?" — "Yes, build RFC-0014". The refusal's own condition is met:
+something reads it.)_
 
 Notch Pay's amount bounds are 100 and 10 000 000, from two example errors
 ([errors](https://developer.notchpay.co/api-reference/errors)): "Amount must
@@ -495,6 +510,15 @@ read by vpay's reference, which is a `404`, item 2.)
   "data": { "id": "pay_…", "reference": "<the charge's reference>", "…": "…" } }
 ```
 
+_(Measured 2026-10-24 [(verification)][dashboard-webhooks]: the sandbox's
+payment webhooks do not have this shape. They name the event under
+`"event"`, not `"type"`, carry a `whc_test.…` id and no top-level
+`created_at`, and their `data` is the payment answer's shape, with ours in
+`trxref` and Notch Pay's `trx.…` in `reference`. Only the dashboard's
+`verification.test` ping uses `"type"`. `parse_callback` read `type` alone
+and refused all four real deliveries until that day; it now reads `event`
+first, then `type`.)_
+
 → `CallbackRef { reference_id, ref_extra: {} }` — built with an **empty**
 `ref_extra`, where this said `{ notchpay_id, event_type }` until 2026-10-20:
 the route discards it anyway, and an adapter that hands nothing from an
@@ -502,8 +526,11 @@ unauthenticated request onward cannot be the one that leaks it — for
 the five payment events the setup page lists: `payment.created`,
 `payment.complete`, `payment.failed`, `payment.canceled` and
 `payment.expired` ([webhook setup](https://developer.notchpay.co/get-started/webhooks)).
-Any other `type`, a missing or non-UUID `data.reference`, or `{}` is
-`Malformed`. A search engine's copy of an older page also named
+Any other event name, a body whose `data.trxref` and `data.reference` are
+both missing or not a UUID, or `{}` is `Malformed`. _(This said "Any other
+`type`, a missing or non-UUID `data.reference`" until 2026-10-24. The name
+is read from `event`, then `type`, since 2026-10-24, and `data.trxref` is
+read before `data.reference` since 2026-10-21 (item 2).)_ A search engine's copy of an older page also named
 `payment.initialized` and `payment.refunded`; that page now answers `404`,
 no current page names either, and the adapter does not accept them on the
 strength of a cache. The handler then
@@ -534,18 +561,30 @@ Three things about this rail's callbacks, none of which changes the design:
   situation, and RFC-0010 § 8's change to the conformance suite's
   `callback_url_pattern` covers it; whichever adapter lands first carries
   that change.
-- **Notch Pay signs its webhooks, and vpay cannot check the signature
-  today.** (2026-10-20: [RFC-0014](0014-verifying-rail-callbacks.md) designs the check; it is not built.) `x-notch-signature` is a hex HMAC-SHA256, keyed by the endpoint's
-  "Hash Key" (`hsk_test_…` in the sandbox)
-  ([verify](https://developer.notchpay.co/get-started/webhooks/verify)).
-  `parse_callback` receives the body and no headers, which is the port
-  change RFC-0010's open question 4 names. Until it lands, an unverified
-  Notch Pay webhook is worth one authenticated read and no money.
-- **What is signed is not settled.** The verification page and the API
-  reference sign the raw body; the setup page's Node example signs
-  `JSON.stringify(req.body)`, a re-serialisation. The signature carries no
-  timestamp, so a captured webhook verifies forever. Both are reasons the
-  signature is a quality signal and not a gate, and "To confirm" item 7.
+- **Notch Pay signs its webhooks, and since 2026-10-23 vpay checks the
+  signature where its secret is configured.** `x-notch-signature` is a hex
+  HMAC-SHA256, keyed by the endpoint's "Hash Key" (`hsk_test_…` in the
+  sandbox) ([verify](https://developer.notchpay.co/get-started/webhooks/verify)).
+  [RFC-0014](0014-verifying-rail-callbacks.md) gave the port
+  `verify_callback`, which receives the headers and the raw body after
+  `parse_callback` has found the charge, and the adapter checks the header
+  over the raw body in constant time. A webhook that fails it moves no poll;
+  one that passes is still a hint. On 2026-10-24 it answered `Verified` for
+  four real deliveries, run offline over what a dashboard-registered capture
+  endpoint recorded; none has reached a running vpay (item 7 below,
+  answered). _(Until 2026-10-24 this said "Stub-proven; never verified
+  against a real Notch Pay delivery".)_ _(This said "vpay cannot check the signature
+  today", and that an unverified webhook "is worth one authenticated read and
+  no money", until 2026-10-23. The second half still holds on a deployment
+  that configures no secret.)_
+- **What is signed is the raw body** (settled 2026-10-24, item 7). The
+  verification page and the API reference sign the raw body; the setup
+  page's Node example signs `JSON.stringify(req.body)`, a re-serialisation,
+  and on four real deliveries only the raw body's HMAC matched, because
+  Notch Pay escapes `/` as `\/`. The signature carries no timestamp, so a
+  captured webhook verifies forever, which is why the signature is a quality
+  signal and not a gate. _(This said "What is signed is not settled" until
+  2026-10-24.)_
 
 ### 7. Refunds: the second `Origin` rail, built as a declared gap
 
@@ -663,6 +702,11 @@ require it."). Setting it admits the rail; it does not silence the warning.
 
 In writing (W) or in the sandbox (S):
 
+_(2026-10-23: asked whether vpay should draft a message putting this
+section's open items to Notch Pay, the maintainer answered "I already sent an
+email to NotchPay". What that email asked is not recorded here, and no answer
+is recorded yet; each item moves when one is.)_
+
 1. **(W)** Does `GET /payments/{reference}` accept `X-Grant`, and can an
    account make it required? Can the public key's payment operations be
    disabled? This is the gate.
@@ -699,7 +743,16 @@ In writing (W) or in the sandbox (S):
    always lower-case? _(Not measured 2026-10-21: no public URL to receive
    one. **Not measured [2026-10-23][two-step-channels] either**, with a
    public URL: no webhook arrived, because the endpoint stored no URL
-   (item 24).)_
+   (item 24).)_ _(2026-10-23: vpay's check is built on the raw-body reading,
+   and accepts either case of hex; a header name is case-insensitive in HTTP
+   anyway. This item now decides whether that check accepts the webhooks
+   Notch Pay really sends.)_ _(**Answered [2026-10-24][dashboard-webhooks]:
+   the raw body.** Four webhooks delivered to an endpoint registered in the
+   dashboard each carried `x-notch-signature` as 64 lower-case hex
+   characters, the HMAC-SHA256 of the raw body under the Hash Key; a
+   `JSON.stringify` of the parsed body did not match any of them, because
+   Notch Pay escapes `/` as `\/`. vpay's `verify_callback` answered
+   `Verified` for all four, offline.)_
 8. **(W)** What prefix does a live key carry? _(Its neighbour, the test
    key's shape, was measured on 2026-10-20: `test` followed by `.`, not the
    documented `test_`; § 2 carries the correction. The live prefix is still
@@ -733,7 +786,9 @@ In writing (W) or in the sandbox (S):
     the specification's `createWebhook` enum does not. _(Half answered
     [2026-10-21][sandbox-run] — `POST /webhooks` accepts it. Delivery not
     measured, again on [2026-10-23][two-step-channels]: nothing was
-    delivered at all (item 24).)_
+    delivered at all (item 24). Not measured on [2026-10-24][dashboard-webhooks]
+    either: the dashboard endpoint was registered for the five payment events
+    only, and none was seen.)_
 18. **(W)** Why does the sandbox's "insufficient funds" number read `complete`
     with `amounts.total` short of `amount`? On the live API, can a payment read
     `complete` having collected less, and is `amounts.total` the collected
@@ -757,7 +812,19 @@ In writing (W) or in the sandbox (S):
     the same `404` too, for an endpoint created a minute earlier and listed
     as `"status": "active"`: no route that takes an endpoint's id works.)_
 21. **(W)** Where is a webhook endpoint's signing secret, since `POST /webhooks`
-    does not return one? _(Added 2026-10-21.)_
+    does not return one? _(Added 2026-10-21.)_ _(2026-10-23: vpay reads it
+    as the endpoint's Hash Key, from `credentials.callback_signing_secret`
+    ([RFC-0014](0014-verifying-rail-callbacks.md)), and a livemode deployment
+    with a Notch Pay rail and no such secret refuses to boot unless it says
+    `callbacks.verify: off`. Asked to confirm that strict default, the
+    maintainer answered "Yes, very well". Until this item is answered, a
+    Hash Key that is not the signing secret makes every genuine webhook
+    `invalid`, which moves nothing and only costs callback latency.)_
+    _(**Answered for the sandbox [2026-10-24][dashboard-webhooks]:** the Hash
+    Key the dashboard shows is the signing secret. The maintainer confirmed
+    the endpoint's key was the one configured, and all four deliveries'
+    signatures matched under it. Whether a live endpoint behaves the same is
+    item 8's live side, unmeasured.)_
 22. **(S)** How long does a payment initialized and never processed stay
     `pending`, and can it still be processed late? ADR-0032 leaves one
     behind whenever vpay stops between `prepare` and `submit`. _(Added and
@@ -790,7 +857,13 @@ In writing (W) or in the sandbox (S):
     evidence it registers an endpoint that delivers nothing. The maintainer
     answered the same day "Default to `off` for Notch Pay": with `register`
     unset vpay no longer calls `POST /webhooks` on this rail (RFC-0013's
-    amendment) [(verification)][defaults-wrong-network].)_
+    amendment) [(verification)][defaults-wrong-network].)_ _(**Corrected
+    [2026-10-24][dashboard-webhooks]:** the listing shows `"url": null` for an
+    endpoint registered in the dashboard too, and that one delivers. So the
+    null is how the API lists every endpoint, and "stores no URL" is not
+    shown. What stands is that the endpoint the API created delivered nothing
+    in 21 minutes, for a reason still unknown, and that the dashboard route
+    delivers.)_
 25. **(S)** Why did every payment processed after that endpoint existed stay
     `processing`? _(Added [2026-10-23][two-step-channels] — four payments
     processed after the item-24 endpoint was created (at 19:07, 19:10, 19:13
@@ -801,6 +874,10 @@ In writing (W) or in the sandbox (S):
     The endpoint is the
     only change seen between the two groups. That it is the cause is not
     shown, and it cannot be removed through the API to test it (item 20).)_
+    _(**[2026-10-24][dashboard-webhooks]:** the maintainer deleted it in the
+    dashboard. The next two payments, with only a dashboard-registered
+    endpoint on the account, were final within about 5 s. That fits the
+    endpoint being the cause, on two payments; it is still a correlation.)_
 
 [sandbox-run]: ../status/verification/2026-10-21-notchpay-sandbox-run.md
 [step5]: ../status/verification/2026-10-21-notchpay-step5.md
@@ -808,6 +885,7 @@ In writing (W) or in the sandbox (S):
 [b3b]: ../status/verification/2026-10-22-notchpay-b3b.md
 [two-step-channels]: ../status/verification/2026-10-23-notchpay-sandbox-two-step-and-channels.md
 [defaults-wrong-network]: ../status/verification/2026-10-23-notchpay-defaults-and-wrong-network.md
+[dashboard-webhooks]: ../status/verification/2026-10-24-notchpay-dashboard-webhooks.md
 
 ## Delivery
 

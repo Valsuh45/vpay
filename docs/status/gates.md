@@ -1147,7 +1147,7 @@ must not match. **Measured 2026-10-09:** 307 columns, 26 elements, 10 surfaces,
 review fixes added seven. Evidence:
 [verification/2026-10-01-protected-diagnostics.md](verification/2026-10-01-protected-diagnostics.md).)_
 
-## 2026-10-26 — `verify-security-inventory`, the sixteenth gate (issue #150, ADR-0033)
+## 2026-10-26 — `verify-security-inventory`, the sixteenth gate (issue #150, ADR-0034)
 
 New 2026-10-26. It reads `schemas/security-inventory.yaml` and fails when the
 map disagrees with the tree. It is the security counterpart of
@@ -1170,7 +1170,7 @@ one direction only and never deserialized `implementation`, `evidence` or
 each was driven against a temporary tree.
 
 **Measured on this tree, 2026-10-26:** `cargo xtask verify-security-inventory`
-— 4 services, 4 state stores, 33 tables, 11 secret classes, 15 material
+— 5 services, 4 state stores, 33 tables, 10 secret classes, 15 material
 controls and 7 tracked gaps — and the live table set derived from
 `backends/migrations` contains the same 33 names, including the five
 `authkestra.oauth_*` tables. The gate is wired into `just verify` and CI's

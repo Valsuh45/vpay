@@ -114,7 +114,13 @@ run for this entry and no capability moved. The step is recorded in
 > `payer_timeout` and `payer_declined`
 > ([verification](status/verification/2026-10-22-notchpay-b3b.md)). (This
 > said "and Orange was not run through vpay on Notch Pay either" until
-> 2026-10-22.) No webhook has been received from Notch Pay; `notchpay::refund` is
+> 2026-10-22.) No webhook from Notch Pay has reached a running vpay. On
+> 2026-10-24 the sandbox delivered four to a capture endpoint registered by
+> hand in its dashboard, signed over the raw body as vpay checks it, and
+> vpay's check verified them offline
+> ([verification](status/verification/2026-10-24-notchpay-dashboard-webhooks.md)).
+> (This said "No webhook has been received from Notch Pay" until
+> 2026-10-24.) `notchpay::refund` is
 > a `NotImplemented` token, so it has refunded nothing; and the short
 > collection's escalation to `unresolved` was not observed. (This said
 > "which the code does at the 24 h horizon" until 2026-10-23. Since
@@ -216,7 +222,7 @@ no longer exists; the history is the paragraph you are reading.)_
 | `verify-versions`           | a release version reference that disagrees, a line release-please must rewrite with no `x-release-please-version` comment, or a bare-string `extra-files` entry (PR #201, #204) | 22 version references, all 0.3.1                                  |
 | `verify-privacy-inventory`  | a migrated column with no inventory classification, or an inventory row naming no live column (#144), or a `debug_protections` type that derives `Debug` or is stale (#147)     | 307 columns / 26 elements / 10 surfaces                           |
 | `verify-doc-counts`         | a documented number that no longer equals what the tree measures, a marker whose kind no measurer knows, and finding no marker at all (2026-09-20)                              | 13 counts in 11 of 262 markdown files                             |
-| `verify-security-inventory` | an unknown inventory key, a nonexistent path or cited test, a table missing in either direction, an invented config key, or a gap with no live tracker (2026-10-26)             | 5 services / 33 tables / 11 secret classes / 15 controls / 7 gaps |
+| `verify-security-inventory` | an unknown inventory key, a nonexistent path or cited test, a table missing in either direction, an invented config key, or a gap with no live tracker (2026-10-26)             | 5 services / 33 tables / 10 secret classes / 15 controls / 7 gaps |
 | `verify-docs`               | **nothing — it exits 0 whatever it finds**                                                                                                                                      | advisory report                                                   |
 
 _(**Two rows were re-run on 2026-09-20** with the fifteenth gate, because

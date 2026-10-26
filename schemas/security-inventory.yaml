@@ -1,4 +1,4 @@
-# vpay security asset, data-flow, and control-evidence inventory (issue #150, EPIC #155, ADR-0033)
+# vpay security asset, data-flow, and control-evidence inventory (issue #150, EPIC #155, ADR-0034)
 #
 # ISO/IEC 27001:2022 statement of boundary:
 # Certification applies to the organisation (VAAM) and its scoped ISMS, not to this repository alone.
@@ -11,7 +11,7 @@ metadata:
   standard: "ISO/IEC 27001:2022"
   issue: 150
   epic: 155
-  adr: "docs/adr/0033-security-asset-and-control-evidence-inventory.md"
+  adr: "docs/adr/0034-security-asset-and-control-evidence-inventory.md"
   reference: "docs/reference/security-asset-inventory.md"
   updated: "2026-10-26"
 
@@ -82,7 +82,7 @@ deployable_services:
       - name: "provider_callbacks"
         surface: "/provider/{code}/callback"
         protocol: "HTTP/1.1 or HTTP/2 behind an operator-terminated TLS ingress"
-        auth: "None by design: a callback is an untrusted hint that pulls a poll forward"
+        auth: "Rail-specific: Notch Pay verifies x-notch-signature (HMAC-SHA256); MTN and Orange callbacks are unauthenticated hints"
         purpose: "Inbound notification from a rail; no callback moves money"
       - name: "liveness"
         surface: "/healthz"
@@ -313,14 +313,6 @@ secrets_and_credentials:
     storage: "Kubernetes Secret or environment variable; no rotation runbook exists yet"
     adr: "docs/adr/0030-staff-sign-in-federates-to-an-oidc-provider.md"
 
-  - class: dashboard_client_secret
-    description: "Optional confidential client secret for the dashboard's OAuth2 client; the shipped client is public and secretless"
-    managed_in: "vpay-config"
-    config_keys:
-      - "dashboard_client.client_secret"
-    storage: "Kubernetes Secret or environment variable when configured"
-    adr: "docs/adr/0008-dashboard-scope.md"
-
   - class: oauth_signing_key
     description: "RSA private key that signs vpay-issued access tokens"
     managed_in: "vpay-server CLI"
@@ -353,8 +345,8 @@ external_integrations:
       - "proxy.momoapi.mtn.com (production)"
     security_controls:
       - "Outbound client is pinned to rustls roots and refuses redirects"
-      - "Callback route is unauthenticated by design and only advances a poll (RFC-0014 Draft)"
-      - "MTN does not sign callbacks; there is no rail-side signature to verify"
+      - "The callback is unauthenticated and only advances a poll; MTN does not sign callbacks"
+      - "Only the authenticated status read settles a charge"
     data_elements:
       ["payer_phone_number", "transaction_amount", "currency", "external_id"]
     privacy_inventory_ref: "docs/reference/personal-data-inventory.md"
@@ -369,8 +361,8 @@ external_integrations:
     outbound_destinations:
       - "api.orange.com"
     security_controls:
-      - "Callback route is unauthenticated by design and only advances a poll (RFC-0014 Draft)"
-      - "Orange does not sign callbacks; there is no rail-side signature to verify"
+      - "The callback is unauthenticated and only advances a poll; Orange's BodyToken check is not built"
+      - "Only the authenticated status read settles a charge"
     data_elements: ["payer_phone_number", "order_id", "transaction_amount"]
     privacy_inventory_ref: "docs/reference/personal-data-inventory.md"
 
@@ -385,7 +377,8 @@ external_integrations:
       - "api.notchpay.co"
     security_controls:
       - "Public/private key separation and X-Grant on every outbound call"
-      - "Callback verification is designed in RFC-0014 and built by PR #357; until it lands the callback is an unverified hint"
+      - "Callbacks are verified: x-notch-signature is the hex HMAC-SHA256 of the raw body under the endpoint's Hash Key (RFC-0014 § 4), and boot refuses a configured rail without the key"
+      - "A verified callback is still a hint; only the authenticated status read moves money"
     data_elements: ["payer_phone_number", "payment_reference", "amount"]
     threat_model: "docs/security/threat-models/notchpay.md"
     adr: "docs/adr/0031-a-status-read-authenticated-by-a-server-side-key.md"
@@ -728,7 +721,7 @@ known_security_gaps:
     related_control: "A.8.15"
 
   - id: "GAP-CALLBACK-VERIFICATION"
-    title: "Rail callback signatures are not verified"
+    title: "MTN and Orange callbacks are not verified; Notch Pay has no per-account secret"
     tracking_document: "docs/rfc/0014-verifying-rail-callbacks.md"
-    description: "RFC-0014 is Draft and no rail callback is verified. A callback is an untrusted hint that advances a poll; the authenticated status read is the only thing that moves money. Notch Pay's signature check is built by PR #357; MTN and Orange do not sign callbacks."
+    description: "Notch Pay's callback is verified: x-notch-signature is the hex HMAC-SHA256 of the raw body under the endpoint's Hash Key (RFC-0014, built by PR #357). MTN does not sign callbacks, Orange's BodyToken check is not built, and no per-account callback secret exists (RFC-0009). Callbacks remain hints for every rail: only the authenticated status read moves money."
     status: "open"

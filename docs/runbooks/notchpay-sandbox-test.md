@@ -25,9 +25,12 @@ _(This said "It is not evidence. Nothing has called Notch Pay until someone
 runs it and the outputs are recorded" until 2026-10-21;
 [the first attempt](../status/verification/2026-10-20-notchpay-sandbox.md) had
 made no request.)_ It is not a production test: every key here is a test key,
-and `deployment.livemode` stays `false`. It is not webhook signature
-verification, which is designed in
-[RFC-0014](../rfc/0014-verifying-rail-callbacks.md) and not built.
+and `deployment.livemode` stays `false`. It is not a test of vpay's webhook
+signature check through vpay's route, which [RFC-0014](../rfc/0014-verifying-rail-callbacks.md)
+built on 2026-10-23 and the `notchpay-sandbox` profile does not configure; A8's
+deliveries were checked by the probe and, offline, by the adapter
+(2026-10-24).
+_(This said the check was "designed … and not built" until 2026-10-23.)_
 
 Written 2026-10-20. Before either part had been run against Notch Pay, what
 was run, in a container that cannot reach Notch Pay, was this:
@@ -93,7 +96,7 @@ $EDITOR ~/.config/vpay/notchpay-sandbox.env
 ```text
 NOTCHPAY_TEST_PUBLIC_KEY=...      # dashboard: Settings > API keys, test mode
 NOTCHPAY_TEST_PRIVATE_KEY=...     # sent as X-Grant on every call
-NOTCHPAY_TEST_HASH_KEY=...        # Part A item 7 only; vpay never reads it
+NOTCHPAY_TEST_HASH_KEY=...        # Part A item 7 only; this profile gives vpay no signing secret
 NOTCHPAY_SANDBOX_MERCHANT_JWK_KID=...   # Part B, from gen-signing-key below
 NOTCHPAY_SANDBOX_MERCHANT_JWK_N=...     # Part B, from gen-signing-key below
 ```
@@ -238,7 +241,10 @@ http.server.HTTPServer(("127.0.0.1", 8099), H).serve_forever()
 What to paste back from A4:
 
 - the `verify-signature` output;
-- the event `type` of each delivery (`grep -ho '"type":"[^"]*"' ~/notchpay-webhooks/*.body | sort | uniq -c`);
+- the event name of each delivery (`grep -hoE '"(event|type)":"[^"]*"' ~/notchpay-webhooks/*.body | sort | uniq -c`).
+  The sandbox's payment webhooks name it under `event`, and the dashboard's
+  `verification.test` ping under `type` (2026-10-24). _(This grepped `type`
+  only until 2026-10-24.)_;
 - the contents of one `.headers.json` file, which holds header names only.
 
 Do not paste the bodies or the signatures.
@@ -303,7 +309,7 @@ $PROBE two-step --out "$REPORT.two-step"
 $PROBE channels --out "$REPORT.channels"
 
 # One endpoint at a URL you can read, one success, one failure, a wait, then
-# DELETE. Then, if the endpoint stored no URL, the documented PUT by id.
+# DELETE. Then, if the listing shows no URL, the documented PUT by id.
 NOTCHPAY_PROBE_DELIVERY_WAIT=900 $PROBE webhook-receive --out "$REPORT.webhook" --webhook-url "$INBOX_URL"
 $PROBE webhook-update --out "$REPORT.webhook-update" --reference ep_test.… --webhook-url "$INBOX_URL"
 ```
@@ -324,14 +330,50 @@ arrives, save its raw body to a file outside the repository and run
 
 **Two things that run did not expect, and what to do about them:**
 
-- **`POST /webhooks` stored `"url": null`** and nothing reached the inbox in
-  21 minutes. `GET`, `PUT` and `DELETE /webhooks/{id}` all answered `404`,
-  so the endpoint could not be read, repaired or deleted through the API.
-  **Delete it in the dashboard**, by the id the probe printed.
+- **The endpoint `POST /webhooks` created delivered nothing**: nothing
+  reached the inbox in 21 minutes. `GET`, `PUT` and `DELETE /webhooks/{id}`
+  all answered `404`, so the endpoint could not be read, repaired or deleted
+  through the API. **Delete it in the dashboard**, by the id the probe
+  printed. _(This said "`POST /webhooks` stored `"url": null`" until
+  2026-10-24: the listing shows `null` for a dashboard endpoint that
+  delivers too, A8.)_
 - **Every payment processed after that endpoint existed stayed
   `processing`**, while every one before it reached a final status within
   seconds. Delete the endpoint before you run `payments`, `channels` or
   `refunds`, and run `read` first to confirm the list is empty.
+
+### A8. Deliveries to an endpoint registered in the dashboard (2026-10-24)
+
+The route that delivers. The API-created endpoint of A7 delivered nothing;
+an endpoint you add by hand in the dashboard does
+([verification](../status/verification/2026-10-24-notchpay-dashboard-webhooks.md)).
+
+1. In the dashboard (test mode, Settings > Webhooks), add an endpoint at a
+   URL you can read (A7's capture inbox, or A4's tunnel) for the five payment
+   events. Notch Pay sends it an unsigned `verification.test` ping when you
+   save it. Delete any endpoint A7 left behind there too.
+2. Confirm in the chat whether its Hash Key is the one in
+   `NOTCHPAY_TEST_HASH_KEY`: "same" or "different", never the key itself. A
+   different key means updating the environment, which a new session picks
+   up.
+3. Run the phase. It creates and deletes **no** endpoint: it lists them,
+   makes MTN's success and other-failure payments on `cm.mobile`, waits
+   `NOTCHPAY_PROBE_DELIVERY_WAIT` seconds (default 120), and lists them
+   again.
+
+   ```bash
+   $PROBE read --out "$REPORT.read"
+   $PROBE dashboard-deliveries --out "$REPORT.deliveries"
+   ```
+
+4. Read the requests the endpoint received. For each one carrying
+   `x-notch-signature`, save its raw body to a file outside the repository
+   (the bytes as received, no reformatting) and run
+   `$PROBE verify-signature --body <file> --signature <header value>`.
+
+On 2026-10-24 this gave four signed deliveries for two payments, each
+matching over the raw body and not over a `JSON.stringify` re-serialisation.
+The listing showed the dashboard endpoint with `"url": null` too.
 
 ### What to paste back from Part A
 
@@ -528,10 +570,12 @@ it in the dashboard: Notch Pay's `DELETE` answered `404` on 2026-10-21.
 
 **Since 2026-10-23 no deployment does this unless told to**: `ensure` is no
 longer Notch Pay's default, which is `off` (RFC-0013's amendment). The
-probe's endpoint, created through the same `POST /webhooks` that day, was
-stored with `"url": null` and delivered nothing in 21 minutes, and four
-payments processed after it stayed `processing`
-([verification](../status/verification/2026-10-23-notchpay-sandbox-two-step-and-channels.md)).
+probe's endpoint, created through the same `POST /webhooks` that day,
+delivered nothing in 21 minutes, and four payments processed after it stayed
+`processing`. A dashboard-registered endpoint delivers (A8, 2026-10-24).
+_(This said the endpoint "was stored with `"url": null`" until 2026-10-24.)_
+See the
+[verification](../status/verification/2026-10-23-notchpay-sandbox-two-step-and-channels.md).
 Run B4 only to measure that again, on the maintainer's approval.
 
 1. Point the callback URL at an `https://` address. The profile's default is
@@ -598,7 +642,8 @@ cells say "proven; sandbox" with the date.
 
 **Does not prove**: anything about Notch Pay's production; a live key's
 prefix (§ 10 item 8, a written question); refunds (`notchpay::refund` stays
-a token); webhook signature verification in vpay (RFC-0014, not built).
+a token); vpay's webhook signature check (RFC-0014, built 2026-10-23, and
+not configured by this profile, so it answers `NoSecret` here).
 
 ## Related
 

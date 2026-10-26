@@ -1,8 +1,8 @@
-# `verify-security-inventory`, the sixteenth gate (issue #150, ADR-0033)
+# `verify-security-inventory`, the sixteenth gate (issue #150, ADR-0034)
 
 Measured on 2026-10-26 on the review branch for
 [PR #356](https://github.com/vaam-apps/vpay/pull/356), against the tree that
-addresses the review of 2026-10-24.
+addresses the reviews of 2026-10-24 and 2026-10-26.
 
 ## What changed
 
@@ -10,6 +10,11 @@ addresses the review of 2026-10-24.
   trust tiers, the worker's real job kinds, the five `authkestra` tables, the
   corrected `vpay-config` paths, the real callback routes, the two published
   packages, the shipped CI jobs, and honest `gap`/`partial` statuses.
+- Notch Pay's callback is recorded as verified (`x-notch-signature`, hex
+  HMAC-SHA256 of the raw body under the endpoint's Hash Key); the gap is scoped
+  to MTN, Orange's unbuilt `BodyToken` check and the missing per-account
+  secret. The `dashboard_client.client_secret` class was removed because
+  `vpay-config` refuses to boot with that key set.
 - `cargo xtask verify-security-inventory` now deserializes the whole inventory
   with `deny_unknown_fields`, checks both directions of the table set, checks
   every cited path and test name, validates secret `config_keys` against a
@@ -19,7 +24,7 @@ addresses the review of 2026-10-24.
   fifteen to sixteen.
 - `docs/security/trust-boundaries.md`, `docs/security/data-flows.md`,
   `docs/security/README.md`, `docs/reference/security-asset-inventory.md` and
-  ADR-0033 were corrected to describe what exists, not what the first draft
+  ADR-0034 were corrected to describe what exists, not what the first draft
   hoped existed.
 
 ## Gate output
@@ -27,7 +32,7 @@ addresses the review of 2026-10-24.
 ```text
 $ cargo xtask verify-security-inventory
 verify-security-inventory: ok — 5 service(s), 4 state store(s), 33 table(s),
-11 secret class(es), 15 material control(s) and 7 tracked gap(s) verified in
+10 secret class(es), 15 material control(s) and 7 tracked gap(s) verified in
 schemas/security-inventory.yaml
 ```
 
@@ -70,56 +75,48 @@ $ just verify
 verify-no-mocks: ok — no test double reachable from a shipping binary
 verify-status: ok — 2 unimplemented item(s), all declared in docs/status.md
 verify-errors: ok — 20 error type(s), all classified; anyhow confined to binaries
-verify-sdk-parity: ok — 792 proving test(s), 46 dated gap(s), 35 SDK method(s)
-verify-links: ok — 2858 repository link(s) in 501 tracked markdown file(s)
+verify-sdk-parity: ok — 794 proving test(s), 46 dated gap(s), 35 SDK method(s)
+verify-links: ok — 3223 repository link(s) in 512 tracked markdown file(s)
 verify-npm-scope: ok — 3 publishable package(s) under sdks/
 check-schema: ok — schemas/vpay.cstack type-checks under cratestack 0.12.0
-               (the local CLI is 0.12.0; this repository pins 0.15.0, and the
+               (the local CLI is 0.12.0; this repository pins 0.16.0, and the
                recipe says so before it runs)
-verify-serde: ok — 130 serialisable type(s), 17 exempted with a reason
-verify-repositories: ok — 4 concrete implementation(s), named by none of 99 files
+verify-serde: ok — 133 serialisable type(s), 17 exempted with a reason
+verify-repositories: ok — 4 concrete implementation(s), named by none of 100 files
 verify-toolchain: ok — rust-toolchain.toml pins 1.98.0
-verify-migrations: ok — 53 migration file(s) match MANIFEST.sha256
-verify-versions: ok — 26 version references all say 0.11.0
-verify-privacy-inventory: ok — 323 columns, 26 elements, 36 debug_protections
+verify-migrations: ok — 54 migration file(s) match MANIFEST.sha256
+verify-versions: ok — 26 version references all say 0.14.2
+verify-privacy-inventory: ok — 325 columns, 26 elements, 37 debug_protections
 verify-doc-counts: ok — 13 documented count(s) in 11 of 300 markdown files
 verify-security-inventory: ok — 5 services, 4 state store(s), 33 tables,
-                            11 secret classes, 15 controls, 7 tracked gaps
+                            10 secret classes, 15 controls, 7 tracked gaps
 verify: ok — the sixteen gates above passed; the verify-docs report is advisory
 ```
 
 ## `just ci`
 
-`just ci` is not green on this head, and neither failure is caused by this
-change. The steps were run individually so each outcome is attributable:
+Re-measured after merging `master` (`0fc1183c` plus the cratestack 0.16.0 merge
+`ff0c67be`) into the review branch:
 
 ```text
 $ just fmt-check                      clean
 $ cargo clippy --workspace --all-targets -- -D warnings   clean
 $ just verify                         16 gates green (above)
 $ just test-doc                       5 passed, 0 failed
-$ just verify-ignored                 0 ignored (expected 0), 54 binaries, 2447 total
-$ just lint-web                       clean
+$ just verify-ignored                 0 ignored (expected 0), 54 binaries, 2501 total
 $ just audit-web                      no moderate, high or critical advisory
-$ just deny                           FAILED: RUSTSEC-2026-0387 (crypto-bigint 0.5.5)
-                                      and RUSTSEC-2026-0386 (tokio 1.53.1)
-$ just test-web                       FAILED: 3 timeouts in
-                                      payments-filters.test.tsx
-$ cargo nextest run --workspace       stopped at 2061/2446 with 0 failures
-                                      (container-backed suite, >35 min on this host)
+$ just deny                           advisories ok, bans ok, licenses ok, sources ok
 ```
 
-The `deny` findings are dependency advisories on the branch's base
-(`14fc6241`), not on any crate this change touches; `cargo deny` reaches them
-through `testcontainers`/`tokio` and `rsa`/`crypto-bigint`. `test-web`'s three
-timeouts are the dashboard's `payments-filters.test.tsx` under the
-workspace-wide parallel run; the same file passes alone (**12 of 12**) and the
-failure is a 5-second test timeout, not an assertion. Neither file is changed
-by this PR.
+`cargo nextest run --workspace` was not run to completion on this host; the
+container-backed suite is slow here. On the pre-merge head it reached
+2061/2446 with 0 failures before the session ended. The gate this change adds
+is exercised by `cargo test -p xtask test_security_inventory` above and by
+`just verify`.
 
-`cargo nextest` was not run to completion, so this page does not claim it.
-Every test it had reached passed, and the gate this change adds is exercised by
-`cargo test -p xtask test_security_inventory` above.
+An earlier parallel `just test-web` run timed out three
+`payments-filters.test.tsx` cases; the file passes 12/12 alone and the failure
+is a 5-second timeout, not an assertion. It was not re-run on the merged tree.
 
 ## What the gate does not check
 

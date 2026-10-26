@@ -89,7 +89,7 @@
 //!   checked in both directions, `deny_unknown_fields` refuses a misspelt key,
 //!   config keys are a closed set, cited test names must exist, and a gap
 //!   issue number must be cited by a document under `docs/`. New 2026-10-26
-//!   (issue #150, ADR-0033).
+//!   (issue #150, ADR-0034).
 //!
 //! An **eighteenth** gate needs the network, so it is opt-in
 //! (`just docs-check-citations`) and is **not** part of `just ci`.
@@ -7854,7 +7854,7 @@ pub struct CustomerRow {
     }
 }
 
-/// The security asset, data-flow, and control-evidence inventory (issue #150, EPIC #155, ADR-0033).
+/// The security asset, data-flow, and control-evidence inventory (issue #150, EPIC #155, ADR-0034).
 const SECURITY_INVENTORY: &str = "schemas/security-inventory.yaml";
 
 #[derive(Debug, serde::Deserialize)]
@@ -8075,7 +8075,7 @@ struct SecurityGap {
 /// `StaffAuth`, `DashboardClient`). A rail or a deployment secret added there
 /// must be added here in the same change; a misspelled key the inventory
 /// invents is refused rather than silently believed.
-const SECURITY_CONFIG_KEYS: [&str; 14] = [
+const SECURITY_CONFIG_KEYS: [&str; 13] = [
     "providers.mtn_momo.credentials.subscription_key",
     "providers.mtn_momo.credentials.api_key",
     "providers.mtn_momo.credentials.disbursement_subscription_key",
@@ -8089,7 +8089,6 @@ const SECURITY_CONFIG_KEYS: [&str; 14] = [
     "staff_auth.password_pepper",
     "staff_auth.totp_encryption_key",
     "staff_auth.sso.client_secret",
-    "dashboard_client.client_secret",
 ];
 
 const SECURITY_THEMES: [&str; 4] = ["Organizational", "People", "Physical", "Technological"];
@@ -8802,7 +8801,7 @@ metadata:
   standard: "ISO/IEC 27001:2022"
   issue: 150
   epic: 155
-  adr: "docs/adr/0033.md"
+  adr: "docs/adr/0034.md"
   reference: "docs/reference/security.md"
   updated: "2026-10-26"
 trust_boundaries:
@@ -8906,7 +8905,7 @@ known_security_gaps:
         )
         .unwrap();
         for path in [
-            "docs/adr/0033.md",
+            "docs/adr/0034.md",
             "docs/adr/0007.md",
             "docs/reference/security.md",
             "docs/runbooks/rotate-rail-credentials.md",

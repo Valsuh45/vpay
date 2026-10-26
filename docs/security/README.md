@@ -18,10 +18,12 @@ anonymous caller can get out of the callback route. Those are not threat
 models and are not listed here. The rails that predate this directory,
 `mtn_momo` and `orange_money`, have none.
 
-**No rail callback is signature-verified today.** RFC-0014 is Draft; a callback
-is an untrusted hint that advances a poll, and only the authenticated status
-read moves money. Notch Pay's signature check is built by PR #357; MTN and
-Orange do not sign callbacks.
+**Notch Pay callbacks are signature-verified; MTN and Orange are not.** Notch
+Pay's `x-notch-signature` is checked as the HMAC-SHA256 of the raw body under
+the endpoint's Hash Key ([RFC-0014](../rfc/0014-verifying-rail-callbacks.md),
+PR #357). MTN does not sign callbacks, and Orange's `BodyToken` check is not
+built. A callback is still a hint that advances a poll; only the authenticated
+status read moves money.
 
 Personal data has its own inventory, which a gate checks:
 [reference/personal-data-inventory.md](../reference/personal-data-inventory.md).

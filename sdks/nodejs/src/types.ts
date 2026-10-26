@@ -77,6 +77,24 @@ export interface LastPaymentError {
   message: string;
 }
 
+/**
+ * What a {@link PaymentIntent}'s one charge was made with (vpay since
+ * 2026-10-24): the payment-method type the payer used and the rail vpay
+ * charged it on. The outcome of routing; why that rail won is not on the API.
+ */
+export interface PaymentMethodDetails {
+  /**
+   * The charge's payment-method type (`"mtn_wallet"`, `"orange_wallet"`), or
+   * `null` where the charge records none: one confirmed by the code of a rail
+   * serving several types (`notchpay`), or made before vpay recorded types.
+   * A `string` rather than a closed union, so a type this SDK predates still
+   * type-checks.
+   */
+  type: string | null;
+  /** The code of the rail the charge was made on (`"mtn_momo"`, `"notchpay"`, …). */
+  rail: string;
+}
+
 export interface PaymentIntent {
   id: string;
   object: "payment_intent";
@@ -86,6 +104,14 @@ export interface PaymentIntent {
   currency: string;
   status: PaymentIntentStatus;
   payment_method_types: string[];
+  /**
+   * What the intent's one charge was made with, or `null` while it has none.
+   *
+   * `?` because a vpay predating 2026-10-24 omits the key entirely, for
+   * {@link PaymentIntent.customer}'s reason: `undefined` and `null` both mean
+   * "no charge to describe".
+   */
+  payment_method_details?: PaymentMethodDetails | null;
   next_action: NextAction | null;
   last_payment_error: LastPaymentError | null;
   metadata: Record<string, string>;
@@ -1351,9 +1377,12 @@ export type ListCheckoutSessionsParams = {
  *
  * # The rail's code is the outer key, and that is the whole point
  *
- * On the wire this is `destination[<payment_method_type>][…]` — a
- * rail-agnostic container with a rail-specific interior, exactly as
+ * On the wire this is `destination[<rail code>][…]` — a rail-agnostic
+ * container with a rail-specific interior, much as
  * `payment_method_data[<payment_method_type>][…]` is on the confirm path. The
+ * outer key is the code of the **rail** the charge was made on or, since the
+ * server's 2026-10-24 change, the payment-method type the charge records
+ * (`destination[mtn_wallet]` for a charge routed by `mtn_wallet`). The
  * server strips the outer key and hands the interior to that rail's own
  * adapter, which is the only thing that knows what a payee looks like there.
  * An SDK that flattened this, or that wrote one rail's code into the body
@@ -1406,11 +1435,21 @@ export type RefundDestination = {
    * widening this one.
    */
   kind: "mobile_money";
-  /** The rail the charge was made on — its code becomes the outer key. */
+  /**
+   * The rail the charge was made on — its code becomes the outer key.
+   *
+   * A **rail code** (`"mtn_momo"`, `"orange_money"`, `"notchpay"`), or the
+   * payment-method type the charge records (`"mtn_wallet"`, `"orange_wallet"`):
+   * a server since 2026-10-24 accepts the type for a charge routed by it, which
+   * is how to refund one without knowing the rail it went to. (Since v0.14.0
+   * the intent names that rail too, as `payment_method_details.rail`, so the
+   * rail code is also at hand.) Another type, or a type on an older server, is
+   * refused with a `400` naming `destination`.
+   */
   payment_method_type: PaymentMethodType;
   /**
    * The payee's number, **in international form, starting with `+`**. Sent as
-   * `destination[<payment_method_type>][msisdn]`.
+   * `destination[<rail code or method type>][msisdn]`.
    */
   msisdn: string;
 };

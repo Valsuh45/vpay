@@ -48,7 +48,7 @@
 #   * every security asset, trust tier, live table, secret class, control
 #     evidence path and tracked gap in schemas/security-inventory.yaml still
 #     matches the tree, in both directions for the table set
-#     (`verify-security-inventory`, 2026-10-26 — issue #150, ADR-0033)
+#     (`verify-security-inventory`, 2026-10-26 — issue #150, ADR-0034)
 #
 # This block said "Eleven" and listed eleven until 2026-09-11: the
 # `verify-migrations` bullet had been pasted into the MIDDLE of the sentence
@@ -71,7 +71,7 @@
 # would have failed the build if one had been missed.
 #
 # `verify-security-inventory` makes it **sixteen** on 2026-10-26 (issue #150,
-# ADR-0033). It reads schemas/security-inventory.yaml, checks paths and tables
+# ADR-0034). It reads schemas/security-inventory.yaml, checks paths and tables
 # against the tree in both directions, and ties every control gap to a tracker.
 # It is appended after `verify-doc-counts` and before `verify-docs`; both
 # annotated tallies moved to sixteen in the same change.
@@ -152,10 +152,34 @@ build-web:
 # time, and a skipped test is not a passing test. It still skips (it is the
 # regression net for anyone who HAS built locally), and the assertion that
 # actually runs in CI is here, against the artefact this recipe just
-# produced. It matters most for the dashboard, whose `.storybook/main.ts`
+# produced. _(Since 2026-10-23 this recipe also RUNS that case, after the
+# count, with `VPAY_STORYBOOK_BUILT=1` so it cannot skip: the case had been
+# asserting a hex `--color-base-100` the 0.5.0 theme no longer writes, and
+# failed locally for two days while CI skipped it. It now resolves one
+# `var()` to a colour.)_ It matters most for the dashboard, whose `.storybook/main.ts`
 # deliberately carries no `@vaam-apps/ui/styles/theme.css` resolve alias —
 # measured unnecessary on today's dependency tree, and this is what would
 # catch a dependency bump making it necessary again.
+#
+# AND THE RECIPE NOW RUNS THAT CASE ITSELF — 2026-10-23. "It still skips
+# (it is the regression net for anyone who HAS built locally)" above was the
+# whole problem. `@vaam-apps/ui` 0.5.0 (vaam-apps/vpay#318) made the token
+# `--color-base-100:var(--md-sys-color-surface)`. The case still demanded a
+# hex, so it failed after every correct build, on every machine that built,
+# and CI never saw it, because CI only ever reached the skip. Both apps'
+# case now follows the `var()` chain to the colour the package's own
+# `theme.css` resolves to, in both themes, and this recipe runs each app's
+# `a11y-gate.test.ts` against the artefact it has just built. The grep stays:
+# it is the cheap first check, and its counts are the diagnostic. But it
+# cannot follow a `var()`. A sheet with the mapping and without the roles
+# behind it prints "defined 3x" and passes the grep; the case fails it
+# (measured, both apps).
+#
+# The JSON report is read because Vitest exits 0 on a skipped case
+# (measured: `numPendingTests: 1`, exit 0). The grep has just proved the
+# stylesheet exists, so the case should not skip here. If it ever does, say
+# because the directory it reads moves, this check fails the recipe instead
+# of reporting a skip as a pass.
 build-storybook:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -184,6 +208,20 @@ build-storybook:
         echo "  so every colour-contrast verdict test-storybook returns is about a ground no user ever sees (PR #135)." >&2
         exit 1
       fi
+      report=$(mktemp)
+      # `VPAY_STORYBOOK_BUILT=1` makes the case itself fail, with its own
+      # message, if it finds no artefact; the JSON report below catches any
+      # other skip. #355 ran this file a second time after the loop with only
+      # the variable; merged into this one run on 2026-10-24.
+      VPAY_STORYBOOK_BUILT=1 pnpm --filter "@vpay/$app" exec vitest run src/a11y-gate.test.ts \
+        --reporter=default --reporter=json --outputFile.json="$report"
+      node -e '
+        const r = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+        if (r.numTotalTests === 0 || r.numPassedTests !== r.numTotalTests) {
+          console.error(`build-storybook: ${process.argv[2]} a11y-gate.test.ts passed ${r.numPassedTests} of ${r.numTotalTests} cases against the artefact just built; a skipped case measured nothing`);
+          process.exit(1);
+        }' "$report" "$app"
+      rm -f "$report"
     done
 
 # Every checkout AND dashboard story, rendered in a real Chromium, with axe
@@ -1811,7 +1849,7 @@ verify-npm-scope:
 # jobs there already use to read the compiler channel out of
 # `rust-toolchain.toml`. Bump it here and CI follows; there is no second copy
 # to forget.
-cratestack_version := "0.15.0"
+cratestack_version := "0.16.0"
 
 # The floor for `check-schema`'s "is there anything here?" assertion: the
 # number of top-level `model`/`enum` declarations schemas/vpay.cstack must
@@ -2520,7 +2558,7 @@ verify-privacy-inventory:
     cargo xtask verify-privacy-inventory
 
 # Code-grounded security assets, trust boundaries and ISO/IEC 27001 control
-# evidence map (issue #150, EPIC #155, ADR-0033).
+# evidence map (issue #150, EPIC #155, ADR-0034).
 verify-security-inventory:
     cargo xtask verify-security-inventory
 

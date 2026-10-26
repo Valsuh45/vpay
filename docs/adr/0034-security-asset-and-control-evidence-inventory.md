@@ -1,4 +1,4 @@
-# ADR-0033: Security assets, trust boundaries and ISO 27001 control evidence share one inventory architecture
+# ADR-0034: Security assets, trust boundaries and ISO 27001 control evidence share one inventory architecture
 
 - **Status:** Proposed
 - **Date:** 2026-10-23

@@ -22,7 +22,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.11.0" # x-release-please-version
+version = "0.14.2" # x-release-please-version
 edition = "2024"
 # Floor of the whole resolved dependency graph's own declared `rust-version`
 # fields (`cargo metadata` → max over every package's `rust_version`, incl.
@@ -238,15 +238,21 @@ rust_decimal = "1"
 # otherwise (`cratestack-pg-0.12.0/src/lib.rs`, unchanged in shape at 0.15.0), so the crate has to be
 # nameable under that word or nothing the macro expands to resolves.
 #
-# `=0.15.0`, exactly, and for a stronger reason than the authkestra pins'
+# `=0.16.0`, exactly, and for a stronger reason than the authkestra pins'
 # "pre-1.0 and fast-moving": this version is *already* written down in three
 # other places that a floating pin would silently outrun — `justfile`'s
 # `cratestack_version` (which `just check-schema` and CI's `self-checks` job
 # install), the `cratestack migrate baseline` measurement in
 # `postgres_smoke.rs`, and `rust-toolchain.toml`'s 1.98.0 pin, which exists
-# *because* every 0.15.0 crate declares `rust-version = "1.98.0"`. The CLI
+# *because* every 0.16.0 crate declares `rust-version = "1.98.0"`. The CLI
 # that checks `schemas/vpay.cstack` and the library that compiles it must be
 # the same grammar; a caret pin would let them diverge with nothing failing.
+#
+# **`=0.15.0` -> `=0.16.0` on 2026-10-26**, and `envelope` + `cose` switched on
+# (see "WHY THIS FEATURE SET" below). A version bump that stays
+# behaviour-neutral: nothing mounts an `EnvelopeLayer` yet, so the two features
+# only compile `cratestack-axum`'s and `cratestack-client-rust`'s signed-transport
+# modules in. See `docs/status/cratestack.md`, "CrateStack 0.15.0 -> 0.16.0".
 #
 # **`=0.12.0` -> `=0.15.0` on 2026-09-29** (a version bump, not a feature:
 # COSE signed transport and every auth path are untouched; the one behaviour
@@ -283,6 +289,13 @@ rust_decimal = "1"
 #     `aws-lc-rs` outright (ADR-0005/ADR-0007), and the feature is a
 #     `compile_error!` at 0.12.0 rather than a working mode anyway
 #     (`cratestack-pg-0.12.0/src/lib.rs:215`).
+#   * `envelope` and `cose` are taken (0.16.0, 2026-10-26) for the signed
+#     transport (`docs/status/cratestack.md`, "CrateStack 0.15.0 -> 0.16.0"):
+#     `envelope` is `cratestack-axum/envelope` (the `EnvelopeLayer` a router
+#     is wrapped in), and `cose` implies it and adds `cratestack-axum/cose`
+#     and `cratestack-client-rust/cose` (the COSE_Sign1 seal and verifier).
+#     Taken ahead of the layer so the compile cost and the lockfile move land
+#     on their own; no router mounts the layer yet.
 #   * `pgvector`, `postgis`, `rate_limit`, `decimal-bigdecimal`: not taken,
 #     nothing here uses them.
 #
@@ -292,7 +305,7 @@ rust_decimal = "1"
 # of `cratestack-pg` with no feature gating them, and both depend on
 # `minicbor` unconditionally. There is no feature combination that yields a
 # data layer without them — see `docs/reference/vpay-db.md` § CrateStack.
-cratestack = { package = "cratestack-pg", version = "=0.15.0", default-features = false, features = ["postgres"] }
+cratestack = { package = "cratestack-pg", version = "=0.16.0", default-features = false, features = ["postgres", "envelope", "cose"] }
 # Not part of vpay's own `time`-crate convention (docs above/ADR none yet) —
 # pulled in because `authkestra-op`'s own API is chrono-typed: every
 # `DateTime<Utc>` in `code.rs`, `refresh.rs`, `device.rs` and, the one that
@@ -381,9 +394,15 @@ clap = { version = "4", features = ["derive", "env", "wrap_help"] }
 # (`JwtValidator`), and by the merchant SDK's conformance tests (sdks/rust,
 # dev-only). Pinned exactly per Authkestra's own convention (pre-1.0,
 # fast-moving; see vsms's Cargo.toml, which hit the same rustls-provider
-# collision first) — the whole family must move in lockstep, and every bump
-# must re-diff `SqlxOpStore::migrate()` against backends/migrations/0006 +
-# 0013 (see those files' headers; 0.5.4 -> 0.7.1 needed 0013).
+# collision first) — the whole family must move in lockstep. Bumps used to
+# have to re-diff `SqlxOpStore::migrate()` against backends/migrations/0006 +
+# 0013 (0.5.4 -> 0.7.1 needed 0013). That rule lapsed: vpay has constructed no
+# `SqlxOpStore` since 2026-09-05 (`vpay-api/src/op/refusing_stores.rs`), the
+# type left authkestra-op for `authkestra-store-sqlx` in 0.8, and nothing in
+# vpay reads the `authkestra.*` tables, which `postgres_smoke.rs` pins as the
+# migrations wrote them. 0.7.1 -> 0.13.1 (2026-10-26) changed the store traits
+# (`&mut self`, `authkestra_engine::store::StoreError`) and nothing in the
+# schema vpay owns; see docs/status/verification/2026-10-26-authkestra-0-13.md.
 #
 # The collision: vpay pins rustls to the `ring` CryptoProvider (below), but
 # every authkestra-* crate defaults to `reqwest`'s `rustls-tls` behaviour via
@@ -412,14 +431,14 @@ clap = { version = "4", features = ["derive", "env", "wrap_help"] }
 # module; this is a hard prerequisite for the implementation step, not an
 # optional hardening. (sdks/rust sidesteps it entirely by handing reqwest a
 # pre-built ring `ClientConfig` — see the reqwest pin's comment above.)
-authkestra-op = { version = "=0.7.1", default-features = false, features = ["rustls-no-provider"] }
-authkestra-engine = { version = "=0.7.1", default-features = false, features = ["rustls-no-provider", "token", "session"] }
+authkestra-op = { version = "=0.13.1", default-features = false, features = ["rustls-no-provider"] }
+authkestra-engine = { version = "=0.13.1", default-features = false, features = ["rustls-no-provider"] }
 # `op` pulls in authkestra-op + implies `session`/`token`; this is how OP
 # routes get mounted onto an axum Router (crates/authkestra-axum's own
 # feature graph: op = ["dep:authkestra-op", "session", "token"]).
-authkestra-axum = { version = "=0.7.1", default-features = false, features = ["rustls-no-provider", "op"] }
+authkestra-axum = { version = "=0.13.1", default-features = false, features = ["rustls-no-provider", "op"] }
 # JWKS-backed token validation for /dash/v1 request guards.
-authkestra-resource = { version = "=0.7.1", default-features = false, features = ["rustls-no-provider"] }
+authkestra-resource = { version = "=0.13.1", default-features = false, features = ["rustls-no-provider"] }
 
 # --- crypto ---
 sha2 = "0.10"
@@ -457,24 +476,24 @@ rstest = "0.23"
 # `version` alongside `path` is required: cargo-deny's `[bans] wildcards =
 # "deny"` policy (deny.toml) flags any workspace dep with only a path and no
 # version as a wildcard dependency.
-vpay-config = { path = "backends/crates/vpay-config", version = "0.11.0" } # x-release-please-version
-vpay-core = { path = "backends/crates/vpay-core", version = "0.11.0" } # x-release-please-version
-vpay-db = { path = "backends/crates/vpay-db", version = "0.11.0" } # x-release-please-version
-vpay-ledger = { path = "backends/crates/vpay-ledger", version = "0.11.0" } # x-release-please-version
-vpay-provider = { path = "backends/crates/vpay-provider", version = "0.11.0" } # x-release-please-version
-vpay-notchpay = { path = "backends/crates/vpay-notchpay", version = "0.11.0" } # x-release-please-version
-vpay-adapter-mtn-momo = { path = "backends/crates/vpay-adapter-mtn-momo", version = "0.11.0" } # x-release-please-version
-vpay-adapter-orange-money = { path = "backends/crates/vpay-adapter-orange-money", version = "0.11.0" } # x-release-please-version
-vpay-adapter-notchpay = { path = "backends/crates/vpay-adapter-notchpay", version = "0.11.0" } # x-release-please-version
-vpay-api = { path = "backends/crates/vpay-api", version = "0.11.0" } # x-release-please-version
-vpay-worker = { path = "backends/crates/vpay-worker", version = "0.11.0" } # x-release-please-version
-vpay-testkit = { path = "backends/crates/vpay-testkit", version = "0.11.0" } # x-release-please-version
+vpay-config = { path = "backends/crates/vpay-config", version = "0.14.2" } # x-release-please-version
+vpay-core = { path = "backends/crates/vpay-core", version = "0.14.2" } # x-release-please-version
+vpay-db = { path = "backends/crates/vpay-db", version = "0.14.2" } # x-release-please-version
+vpay-ledger = { path = "backends/crates/vpay-ledger", version = "0.14.2" } # x-release-please-version
+vpay-provider = { path = "backends/crates/vpay-provider", version = "0.14.2" } # x-release-please-version
+vpay-notchpay = { path = "backends/crates/vpay-notchpay", version = "0.14.2" } # x-release-please-version
+vpay-adapter-mtn-momo = { path = "backends/crates/vpay-adapter-mtn-momo", version = "0.14.2" } # x-release-please-version
+vpay-adapter-orange-money = { path = "backends/crates/vpay-adapter-orange-money", version = "0.14.2" } # x-release-please-version
+vpay-adapter-notchpay = { path = "backends/crates/vpay-adapter-notchpay", version = "0.14.2" } # x-release-please-version
+vpay-api = { path = "backends/crates/vpay-api", version = "0.14.2" } # x-release-please-version
+vpay-worker = { path = "backends/crates/vpay-worker", version = "0.14.2" } # x-release-please-version
+vpay-testkit = { path = "backends/crates/vpay-testkit", version = "0.14.2" } # x-release-please-version
 # The merchant SDK is a workspace member like the rest, but it is not a vpay
 # *component*: it is what a merchant depends on. Only `examples/merchant-demo`
 # takes it, and only so the demo drives the shipping artefact rather than a
 # second copy of the handshake. No `backends/` crate may depend on it — the
 # arrow points outward.
-vpay-sdk = { path = "sdks/rust", version = "0.11.0" } # x-release-please-version
+vpay-sdk = { path = "sdks/rust", version = "0.14.2" } # x-release-please-version
 
 [profile.release]
 opt-level = 3

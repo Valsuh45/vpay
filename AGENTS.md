@@ -78,7 +78,7 @@ claim any gate reads. **Write the opening delimiter out in a `*.md` file and
 the gate will try to measure your example**: it scans raw text and has no
 notion of a code span, which is why this paragraph names the marker without
 it. And `verify-security-inventory` makes it **sixteen** on 2026-10-26
-(issue #150, [ADR-0033](docs/adr/0033-security-asset-and-control-evidence-inventory.md)):
+(issue #150, [ADR-0034](docs/adr/0034-security-asset-and-control-evidence-inventory.md)):
 it reads `schemas/security-inventory.yaml`, refuses an unknown key, checks
 every path and every cited test name, derives the live table set from the
 migrations and checks it in **both** directions, validates each secret
@@ -235,6 +235,8 @@ means a new PaymentIntent.
 
 **Callbacks are hints.** `parse_callback` returns identifiers only, never a
 status. The authenticated status query is the only thing that moves money.
+A verified signature changes nothing about that: `verify_callback`
+(RFC-0014) decides only whether the charge's poll is pulled forward.
 
 ---
 
