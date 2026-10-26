@@ -95,15 +95,15 @@ verify: ok — the sixteen gates above passed; the verify-docs report is advisor
 
 ## `just ci`
 
-Re-measured after merging `master` (`0fc1183c` plus the cratestack 0.16.0 merge
-`ff0c67be`) into the review branch:
+Re-measured after merging `master` (`0fc1183c`, cratestack 0.16.0 at
+`ff0c67be`, and #379 at `a28aea10`) into the review branch:
 
 ```text
 just fmt-check                      clean
 cargo clippy --workspace --all-targets -- -D warnings   clean
 just verify                         16 gates green (above)
-just test-doc                       5 passed, 0 failed
-just verify-ignored                 0 ignored (expected 0), 54 binaries, 2501 total
+just test-doc                       143 passed, 0 failed, 1 ignored
+just verify-ignored                 0 ignored (expected 0), 55 binaries, 2528 total
 just audit-web                      no moderate, high or critical advisory
 just deny                           advisories ok, bans ok, licenses ok, sources ok
 ```
