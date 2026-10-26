@@ -99,13 +99,13 @@ Re-measured after merging `master` (`0fc1183c` plus the cratestack 0.16.0 merge
 `ff0c67be`) into the review branch:
 
 ```text
-$ just fmt-check                      clean
-$ cargo clippy --workspace --all-targets -- -D warnings   clean
-$ just verify                         16 gates green (above)
-$ just test-doc                       5 passed, 0 failed
-$ just verify-ignored                 0 ignored (expected 0), 54 binaries, 2501 total
-$ just audit-web                      no moderate, high or critical advisory
-$ just deny                           advisories ok, bans ok, licenses ok, sources ok
+just fmt-check                      clean
+cargo clippy --workspace --all-targets -- -D warnings   clean
+just verify                         16 gates green (above)
+just test-doc                       5 passed, 0 failed
+just verify-ignored                 0 ignored (expected 0), 54 binaries, 2501 total
+just audit-web                      no moderate, high or critical advisory
+just deny                           advisories ok, bans ok, licenses ok, sources ok
 ```
 
 `cargo nextest run --workspace` was not run to completion on this host; the
