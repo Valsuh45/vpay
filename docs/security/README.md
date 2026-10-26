@@ -18,12 +18,22 @@ anonymous caller can get out of the callback route. Those are not threat
 models and are not listed here. The rails that predate this directory,
 `mtn_momo` and `orange_money`, have none.
 
+**No rail callback is signature-verified today.** RFC-0014 is Draft; a callback
+is an untrusted hint that advances a poll, and only the authenticated status
+read moves money. Notch Pay's signature check is built by PR #357; MTN and
+Orange do not sign callbacks.
+
 Personal data has its own inventory, which a gate checks:
 [reference/personal-data-inventory.md](../reference/personal-data-inventory.md).
 
-Security assets, trust boundaries and ISO 27001 control evidence are documented in:
-- [trust-boundaries.md](trust-boundaries.md) — Trust tiers and ingress/egress boundaries
-- [data-flows.md](data-flows.md) — Core payment, webhook, and SSO data flow maps
-- [reference/security-asset-inventory.md](../reference/security-asset-inventory.md) — Human-facing asset and control inventory
-- [../../schemas/security-inventory.yaml](../../schemas/security-inventory.yaml) — Machine-readable inventory checked by `cargo xtask verify-security-inventory`
+Security assets, trust boundaries and ISO 27001 control evidence are documented
+in:
 
+- [trust-boundaries.md](trust-boundaries.md) — five trust tiers and their
+  crossing controls
+- [data-flows.md](data-flows.md) — payment, webhook and SSO data-flow maps
+- [reference/security-asset-inventory.md](../reference/security-asset-inventory.md)
+  — human-facing asset and control inventory
+- [../../schemas/security-inventory.yaml](../../schemas/security-inventory.yaml)
+  — machine-readable inventory checked by
+  `cargo xtask verify-security-inventory`

@@ -7,144 +7,193 @@ the parent epic is [EPIC #155](https://github.com/vaam-apps/vpay/issues/155)._
 
 ## What this is
 
-A code-grounded inventory of every technical asset, trust boundary, credential
-class, and material security control in vpay:
-- deployable services and background daemons;
-- relational databases, persistent job queues, and state stores;
-- secrets, signing keys, and external credentials (classified by role and location,
-  never recording secret values);
+A code-grounded inventory of the technical assets, trust boundaries, credential
+classes, and material security controls in vpay:
+
+- deployable services and the worker mode of the same binary;
+- the relational database, its outbox job queue, the idempotency store and the
+  client-assertion replay cache;
+- secret classes, classified by configuration path or CLI flag, never by value;
 - inbound and outbound third-party integrations;
 - authentication and authorization boundaries;
-- CI/CD workflows, artifact registries, and release paths;
-- material engineering controls mapped to ISO/IEC 27001:2022 Annex A themes with
+- CI/CD workflows, container images and published packages;
+- material engineering controls mapped to ISO/IEC 27001:2022 Annex A, with
   repeatable code and test evidence sources.
 
 ## What this is not
 
-It is **not** an Information Security Management System (ISMS), nor does its
-existence certify vpay under ISO/IEC 27001:2022. ISO/IEC 27001 certification
-applies to the organisation (VAAM) and its management system, not to an isolated
-code repository.
+It is **not** an Information Security Management System (ISMS), and its
+existence does not certify vpay under ISO/IEC 27001:2022. Certification applies
+to the organisation (VAAM) and its management system, not to an isolated code
+repository.
 
-This inventory provides durable engineering facts and repeatable evidence that
-an external ISMS maps to its risk register, risk-treatment plans, and Statement of
-Applicability (SoA). Policies, risk ownership, HR vetting, business continuity
-objectives, and external vendor governance remain with the organisation.
+The inventory provides durable engineering facts and repeatable evidence that
+the organisation maps to its risk register, risk-treatment plans and Statement
+of Applicability (SoA). Policies, risk ownership, HR vetting, business
+continuity objectives and external vendor governance remain with the
+organisation.
 
 ## How it is checked
 
-`cargo xtask verify-security-inventory` verifies the integrity of
-[`schemas/security-inventory.yaml`](../../schemas/security-inventory.yaml) against
-the real tree:
-- every deployable service and crate exists in the workspace;
-- every registered database table exists in the migrations set;
-- every cited configuration secret maps to a declared field in `vpay-config`;
-- every cited test, runbook, workflow, or fixture exists on disk;
-- every declared gap links to a live GitHub issue rather than masking unbuilt work.
+`cargo xtask verify-security-inventory` (gate 16 of `just verify`) checks the
+inventory against the tree:
+
+- `metadata.adr` and `metadata.reference` exist;
+- every declared trust tier is unique, and every service names one;
+- every service path exists and, when a `crate` is named, that crate's
+  `Cargo.toml` declares the package;
+- every table named by a state store is created by a migration, **and** every
+  table a migration creates is named by a state store;
+- every implementation, runbook, ADR, threat-model and privacy-inventory path
+  exists;
+- every secret `config_keys` entry is one of the closed set of `vpay-config`
+  paths the gate knows, so an invented path such as `rails.mtn_momo.api_key` is
+  refused;
+- every workflow file exists under `.github/workflows/`, every Dockerfile stage
+  it names is declared, and every published package's manifest exists, names
+  the package, and is not `private: true`;
+- every control's implementation paths exist, every evidence path exists, and
+  every cited test name is declared by a Rust source under `backends/`;
+- every control's status is `implemented`, `partial` or `gap`; a `gap` names a
+  `related_gap`;
+- every gap names exactly one tracker, its status is known, and a tracked issue
+  number is cited by at least one document under `docs/` (an offline liveness
+  proxy; there is no GitHub API call in this gate).
+
+It deliberately does **not** verify a GitHub issue's live state, a control's
+semantic adequacy, or whether a cited test currently passes. Those are review
+questions. `cargo xtask verify-citations` checks issue and pull-request
+existence when the network is available.
 
 ---
 
 ## 1. Deployable Services and Interfaces
 
-| Service | Path / Crate | Kind | Interfaces / Ports | Auth Mechanism |
-| :--- | :--- | :--- | :--- | :--- |
-| **`vpay-server`** | `backends/apps/vpay-server` | HTTP API service | `/v1` (Merchant)<br>`/dash/v1` (Staff)<br>`/provider/*` (Callbacks)<br>`/healthz`, `/metrics` | `private_key_jwt` / Bearer<br>Staff session cookie<br>HMAC / Callback verification<br>Cluster-internal |
-| **`vpay-worker`** | `backends/apps/vpay-server` | Daemon (`vpay-server worker`) | None (Internal outbox consumer) | Database connection auth |
-| **`dashboard`** | `frontends/apps/dashboard` | Next.js 15 web app | Client-facing HTTP port 3000 | Staff credentials + TOTP / OIDC SSO |
-| **`checkout`** | `frontends/apps/checkout` | Next.js 15 web app | Payer-facing HTTP port 3001 | Ephemeral `client_secret` token |
+| Service           | Path / Crate                | Kind                          | Interfaces                                                                             | Trust tier |
+| :---------------- | :-------------------------- | :---------------------------- | :------------------------------------------------------------------------------------- | :--------- |
+| **`vpay-server`** | `backends/apps/vpay-server` | HTTP API                      | `/v1`, `/v1/oauth`, `/v1/browser`, `/dash/v1`, `/provider/{code}/callback`, `/healthz` | Tier 2     |
+| **`vpay-worker`** | `backends/apps/vpay-server` | Same image, `worker` argument | Outbox consumer; `/livez` and `/metrics` on the observability port                     | Tier 2     |
+| **`dashboard`**   | `frontends/apps/dashboard`  | Next.js 15 web app            | Port 3000; upstream `/dash/v1`                                                         | Tier 3     |
+| **`checkout`**    | `frontends/apps/checkout`   | Next.js 15 web app            | Port 3000; upstream `/v1/browser`                                                      | Tier 3     |
 
-See [docs/security/trust-boundaries.md](../security/trust-boundaries.md) for network
-topology and boundary tier definitions.
+`/healthz` is on the public server port by design. `/livez` and `/metrics` are
+on a separate observability port. See
+[docs/security/trust-boundaries.md](../security/trust-boundaries.md) for the
+five boundary tiers.
 
 ---
 
 ## 2. State Stores and Queues
 
-| State Store | Backing Technology | Authority / Schema | Security & Invariants |
-| :--- | :--- | :--- | :--- |
-| **Primary Database** | PostgreSQL 16+ | `backends/migrations/` | Volume encryption at rest; TLS in transit; sqlx compile-time query verification; strict tenant isolation. |
-| **Transactional Job Queue** | Table `jobs` | `vpay-db::jobs` | Transactional outbox pattern; `SELECT FOR UPDATE SKIP LOCKED`; worker schedule bound to DB clock ([ADR-0026](../adr/0026-the-database-clock-schedules-jobs.md)). |
-| **Idempotency Store** | Table `idempotency_keys` | `vpay-db::idempotency` | Prevents duplicate charge submission or intent mutation on retries. |
-| **Replay Cache** | Table `oauth_client_assertion_jtis` | `vpay-db::client_assertion` | Records spent client assertion `jti` identifiers past validator leeway ([ADR-0028](../adr/0028-a-spent-jti-outlives-the-validators-leeway.md)). |
+| State Store                 | Backing Technology                  | Authority / Schema          | Security and Invariants                                                                                                                                                                  |
+| :-------------------------- | :---------------------------------- | :-------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Primary Database**        | PostgreSQL 16+                      | `backends/migrations/`      | sqlx runtime queries with bind parameters; `AssertSqlSafe` audited in `vpay-db/src/sql_audit.rs`. Transport TLS and volume encryption are operator-owned assumptions, not enforced here. |
+| **Transactional Job Queue** | Table `jobs`                        | `vpay-db::jobs`             | Transactional outbox; `SELECT FOR UPDATE SKIP LOCKED`; worker schedule bound to the database clock ([ADR-0026](../adr/0026-the-database-clock-schedules-jobs.md)).                       |
+| **Idempotency Store**       | Table `idempotency_keys`            | `vpay-db::idempotency`      | Prevents duplicate intent creation or mutation on retries.                                                                                                                               |
+| **Replay Cache**            | Table `oauth_client_assertion_jtis` | `vpay-db::client_assertion` | Records spent client-assertion `jti` values past validator leeway ([ADR-0028](../adr/0028-a-spent-jti-outlives-the-validators-leeway.md)).                                               |
 
-Database backup procedures and restore requirements are documented in
-[docs/runbooks/restore-from-backup.md](../runbooks/restore-from-backup.md) and
-[docs/adr/0013-database-backups-and-retention.md](../adr/0013-database-backups-and-retention.md).
+Backups and restore drills are **not implemented**. The runbook and
+[ADR-0013](../adr/0013-database-backups-and-retention.md) are proposed only;
+issue [#153](https://github.com/vaam-apps/vpay/issues/153) tracks the gap.
 
 ---
 
 ## 3. Secret and Credential Inventory
 
-No secret values are stored in source code. Credentials are fed via configuration
-management ([ADR-0003](../adr/0003-yaml-configuration.md)) or environment variables.
+No secret value is stored in source code. Credentials are `${VAR}` placeholders
+in configuration ([ADR-0003](../adr/0003-yaml-configuration.md)), a CLI flag, or
+an environment variable.
 
-| Credential Class | Configuration Property | Storage & Scope | Rotation Runbook |
-| :--- | :--- | :--- | :--- |
-| **MTN MoMo Credentials** | `rails.mtn_momo.*` | Environment / secret volume | [docs/runbooks/rotate-rail-credentials.md](../runbooks/rotate-rail-credentials.md) |
-| **Orange Money Credentials** | `rails.orange_money.*` | Environment / secret volume | [docs/runbooks/rotate-rail-credentials.md](../runbooks/rotate-rail-credentials.md) |
-| **Notch Pay Keys** | `rails.notchpay.*` | Environment / secret volume | [docs/runbooks/rotate-rail-credentials.md](../runbooks/rotate-rail-credentials.md) |
-| **Webhook Signing Key** | `webhooks.signing_secret` | HMAC-SHA256 secret per deployment | [docs/runbooks/rotate-signing-key.md](../runbooks/rotate-signing-key.md) |
-| **Staff Password Pepper** | `staff.password_pepper` | Server-side secret pepper for Argon2id | Environment / deployment secret |
-| **Staff TOTP Key** | `staff.totp_encryption_key` | AES-256-GCM symmetric key | Environment / deployment secret |
-| **Staff SSO Client Secret** | `staff_sso.client_secret` | OIDC client credential for IdP | [ADR-0030](../adr/0030-staff-sign-in-federates-to-an-oidc-provider.md) |
-| **Database Credentials** | `database.url` | Connection URI | Secret volume |
+| Credential Class              | Configuration Path / Source                                                            | Rotation                                                                                              |
+| :---------------------------- | :------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------- |
+| **MTN MoMo Collections**      | `providers.mtn_momo.credentials.{subscription_key, api_key}`                           | [rotate-rail-credentials.md](../runbooks/rotate-rail-credentials.md)                                  |
+| **MTN MoMo Disbursements**    | `providers.mtn_momo.credentials.{disbursement_subscription_key, disbursement_api_key}` | [rotate-rail-credentials.md](../runbooks/rotate-rail-credentials.md) (no deployment holds a real set) |
+| **Orange Money**              | `providers.orange_money.credentials.{client_id, client_secret, merchant_key}`          | [rotate-rail-credentials.md](../runbooks/rotate-rail-credentials.md)                                  |
+| **Notch Pay**                 | `providers.notchpay.credentials.{public_key, private_key}`                             | [rotate-rail-credentials.md](../runbooks/rotate-rail-credentials.md)                                  |
+| **Merchant webhook secrets**  | `merchant_clients[].webhooks[].secrets` (one per endpoint; a list allows rotation)     | No runbook yet                                                                                        |
+| **Staff password pepper**     | `staff_auth.password_pepper`                                                           | No runbook yet                                                                                        |
+| **Staff TOTP encryption key** | `staff_auth.totp_encryption_key`                                                       | No runbook yet                                                                                        |
+| **Staff SSO client secret**   | `staff_auth.sso.client_secret`                                                         | No runbook yet                                                                                        |
+| **Dashboard client secret**   | `dashboard_client.client_secret` (optional; the shipped client is public)              | No runbook yet                                                                                        |
+| **OAuth signing key**         | `--oauth-signing-key-file` / `VPAY_OAUTH_SIGNING_KEY_FILE`                             | [rotate-signing-key.md](../runbooks/rotate-signing-key.md)                                            |
+| **Database credentials**      | `--database-url` / `DATABASE_URL`                                                      | Operator-owned                                                                                        |
+
+`rotate-signing-key.md` covers the OAuth signing key only. It is not a webhook
+secret rotation procedure.
 
 ---
 
 ## 4. Inbound and Outbound Integrations
 
-| Integration | Direction | Protocol | Security Controls | Threat Model / Flow Reference |
-| :--- | :--- | :--- | :--- | :--- |
-| **MTN MoMo Gateway** | Bidirectional | HTTPS (rustls) | Inbound IP/callback verification; outbound token refresh | [docs/security/data-flows.md](../security/data-flows.md) |
-| **Orange Money Gateway** | Bidirectional | HTTPS (rustls) | Inbound transaction notification verification | [docs/security/data-flows.md](../security/data-flows.md) |
-| **Notch Pay Gateway** | Bidirectional | HTTPS (rustls) | Public/Private key separation; callback confirmation poll | [docs/security/threat-models/notchpay.md](../security/threat-models/notchpay.md) |
-| **OIDC IdP (Keycloak)** | Outbound | HTTPS (rustls) | PKCE authorization code exchange; JWKS validation | [ADR-0030](../adr/0030-staff-sign-in-federates-to-an-oidc-provider.md) |
-| **Merchant Webhooks** | Outbound | HTTPS (rustls) | `vpay-signature` header with HMAC-SHA256 and timestamp | [docs/security/data-flows.md](../security/data-flows.md) |
+| Integration                | Direction     | Transport                                 | Security Controls and Residual Risk                                                                                                                                                                                                        |
+| :------------------------- | :------------ | :---------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **MTN MoMo**               | Bidirectional | HTTPS (rustls, redirects refused)         | The callback route is unauthenticated by design and only advances a poll. MTN does not sign callbacks.                                                                                                                                     |
+| **Orange Money**           | Bidirectional | HTTPS (rustls, redirects refused)         | The callback route is unauthenticated by design and only advances a poll. Orange does not sign callbacks.                                                                                                                                  |
+| **Notch Pay**              | Bidirectional | HTTPS (rustls, redirects refused)         | Public/private key separation and `X-Grant` on outbound calls. Callback signature verification is designed in [RFC-0014](../rfc/0014-verifying-rail-callbacks.md) and built by PR #357; until it lands the callback is an unverified hint. |
+| **OIDC identity provider** | Outbound      | HTTPS (rustls)                            | Authorization-code flow with state, nonce and PKCE generated by vpay; ID-token signature and claim checks.                                                                                                                                 |
+| **Merchant webhooks**      | Outbound      | HTTPS; private targets refused by default | `vpay-signature` over timestamp and body; redirects refused; resolved addresses pass the SSRF guard in `vpay-worker/src/ssrf.rs`.                                                                                                          |
+
+A rail callback never moves money. The authenticated status read is the only
+thing that does, and every rail callback is treated as a hint that pulls a poll
+job's `run_at` forward ([docs/flows/crash-safety.md](../flows/crash-safety.md)).
 
 ---
 
 ## 5. CI/CD, Container Images, and Release Channels
 
 - **Workflows:**
-  - `.github/workflows/ci.yml` — Runs compilation, unit tests, integration suites, and `cargo xtask verify-all`.
-  - `.github/workflows/quality.yml` — Runs dependency review, license compliance, and `cargo-deny` security audit.
-  - `.github/workflows/release-please.yml` — Automated semantic versioning and release notes.
-- **Container Hardening:**
-  - `backends/Dockerfile` produces a static musl binary on an unprivileged alpine image (`USER 10001:10001`, `runAsNonRoot: true`), with no shell in production.
-  - `frontends/Dockerfile` builds standalone Next.js images for dashboard (`runner` stage) and checkout (`checkout` stage) declaring numeric unprivileged `USER 1000:1000` directives.
-- **SDK Packaging:**
-  - `@vaam-apps/vpay-sdk` (Node.js)
-  - `@vaam-apps/vpay-stripe-js` (Browser)
-  - `@vaam-apps/vpay-tauri-checkout` (Tauri v2 desktop plugin)
+  - `.github/workflows/ci.yml` — `verify` (individual gates), `rust` (`fmt`,
+    `clippy -D warnings`, `nextest`, doctests), `supply chain`
+    (`cargo deny check`), `web` (prettier, typecheck, lint, vitest,
+    `pnpm audit --audit-level=moderate`) and `e2e` (compose and Cypress).
+  - `.github/workflows/quality.yml` — CodeQL, Super-linter and Trivy.
+  - `.github/workflows/release-please.yml` — release pull requests and tags.
+  - `.github/workflows/release.yml` — buildx image index with
+    `provenance: mode=max` and `sbom: true`, cosign keyless signatures for the
+    images and the Helm chart, and npm publishing for the two SDKs.
+- **Container hardening:**
+  - `backends/Dockerfile` produces a static musl binary in a `FROM scratch`
+    image with no shell, running as `USER 65532:65532`.
+  - `frontends/Dockerfile` builds standalone Next.js images for the dashboard
+    (`runner`) and checkout (`checkout`) stages, each with numeric
+    `USER 1000:1000` and `EXPOSE 3000`.
+- **Published packages:**
+  - `@vaam-apps/vpay-sdk` (`sdks/nodejs`)
+  - `@vaam-apps/vpay-stripe-js` (`sdks/stripe-js`)
+
+The Tauri plugin under `sdks/tauri` is **not published**, and neither is the
+Rust SDK or the Flutter plugin.
 
 ---
 
 ## 6. ISO/IEC 27001:2022 Control Evidence Map
 
-| ISO 27001:2022 Control | Theme | Implemented In | Repeatable Evidence Source | Status |
-| :--- | :--- | :--- | :--- | :--- |
-| **A.5.15 Access Control** | Organizational | `vpay-api::v1` | OAuth2 `private_key_jwt` token checks; repository tenant scoping | **Implemented** |
-| **A.8.2 Privileged Access Rights** | Technological | `vpay-api::staff` | TOTP MFA; OIDC PKCE federated sign-in; ADR-0030 | **Implemented** |
-| **A.8.7 Protection Against Malware** | Technological | `Cargo.lock`, `pnpm-lock.yaml` | `cargo deny check`; pnpm isolated nodeLinker | **Implemented** |
-| **A.8.9 Configuration Management** | Technological | `vpay-config` | Boot-time schema validation; rejection of test keys in livemode | **Implemented** |
-| **A.8.11 Data Masking** | Technological | `vpay-core::privacy` | `cargo xtask verify-privacy-inventory` (36 redacting `Debug` types) | **Implemented** |
-| **A.8.12 Data Leakage Prevention** | Technological | `vpay-provider` | Conformance suite: redirects refused and never followed | **Implemented** |
-| **A.8.13 Information Backup** | Technological | `backends/migrations` | Migration checksum gate; `docs/runbooks/restore-from-backup.md` | **Implemented** |
-| **A.8.20 Network Security** | Technological | `backends/crates/vpay-api` | `docs/adr/0005-rustls-only.md` (rustls with vendored webpki roots) | **Implemented** |
-| **A.8.24 Use of Cryptography** | Technological | `vpay-core` | Argon2id for passwords; AES-GCM for tokens; HMAC-SHA256 for webhooks | **Implemented** |
-| **A.8.25 Secure SDLC** | Technological | `justfile` | 15 automated pre-commit gates in `just verify` | **Implemented** |
-| **A.8.28 Secure Coding** | Technological | `clippy.toml`, `Cargo.toml` | Clippy indexing deny; sqlx compile-time query verification | **Implemented** |
-| **A.8.31 Env Separation** | Technological | `vpay-config` | Strict separation of testmode and livemode configurations | **Implemented** |
+| Annex A Control                              | Theme          | Implementation                                                  | Repeatable Evidence                                                                 | Status                                  |
+| :------------------------------------------- | :------------- | :-------------------------------------------------------------- | :---------------------------------------------------------------------------------- | :-------------------------------------- |
+| **A.5.15 Access Control**                    | Organizational | `vpay-api` surface and scope checks; tenant-scoped repositories | OAuth2 `private_key_jwt` ([ADR-0010](../adr/0010-merchant-auth-private-key-jwt.md)) | Implemented                             |
+| **A.8.2 Privileged Access Rights**           | Technological  | Staff TOTP and OIDC sign-in; server-side sessions               | ID-token claim checks and replay guard                                              | Implemented                             |
+| **A.8.7 Supply Chain Protection**            | Technological  | Lockfiles, `cargo-deny`, `pnpm audit`                           | `deny.toml`; one JS advisory risk-accepted (GAP-103)                                | Implemented                             |
+| **A.8.8 Technical Vulnerability Management** | Technological  | Dependency auditing in CI and locally                           | `cargo deny check`; `pnpm audit --audit-level=moderate`                             | Implemented; SLA is GAP-151             |
+| **A.8.9 Configuration Management**           | Technological  | Boot-time validation in `vpay-config`                           | Literal livemode secrets and unknown keys refused                                   | Implemented                             |
+| **A.8.11 Data Masking**                      | Technological  | Redacting `Debug` types; privacy inventory                      | `cargo xtask verify-privacy-inventory`, both directions                             | Implemented                             |
+| **A.8.12 Data Leakage Prevention**           | Technological  | Redirect refusal; webhook SSRF guard                            | Conformance test `redirects_are_refused_and_never_followed`                         | Implemented                             |
+| **A.8.13 Information Backup**                | Technological  | Runbook and ADR only                                            | No backup or restore has ever run                                                   | **Gap #153**                            |
+| **A.8.15 Logging**                           | Technological  | Application logging only                                        | No centralized security-event log or SIEM schema                                    | **Gap #154**                            |
+| **A.8.16 Monitoring**                        | Technological  | `prometheusrule.yaml`, `servicemonitor.yaml`                    | Alert rules unit-tested against synthetic series                                    | Implemented (never fired in production) |
+| **A.8.20 Network Security**                  | Technological  | rustls outbound; ingress terminates TLS                         | NetworkPolicy is opt-in, default off, never applied                                 | Partial                                 |
+| **A.8.24 Use of Cryptography**               | Technological  | Argon2id, AES-256-GCM, HMAC-SHA256, RSA signing                 | `staff_auth` and `signing` unit tests                                               | Partial; key lifecycle is GAP-152       |
+| **A.8.25 Secure Development Life Cycle**     | Technological  | `just verify` and CI gates                                      | Documented gates, no written CVE SLA                                                | **Gap #151**                            |
+| **A.8.28 Secure Coding**                     | Technological  | Clippy and rustfmt; bind parameters; `AssertSqlSafe` audit      | `clippy.toml`, `Cargo.toml`, `sql_audit.rs`                                         | Implemented                             |
+| **A.8.31 Environment Separation**            | Technological  | Profile-selected config; livemode refusals                      | Test/live key mismatch refused at boot                                              | Implemented                             |
 
 ---
 
 ## 7. Known Gaps and Residual Risks
 
-These items represent planned security engineering improvements tracked in open issues:
-
-1. **GAP-103: Web dependency audit ceiling** ([#103](https://github.com/vaam-apps/vpay/issues/103)) — Resolving or formally risk-accepting transitive fast-glob/brace-expansion advisory in web workspace.
-2. **GAP-56: Account-holder lookup audit and rate limiting** ([#56](https://github.com/vaam-apps/vpay/issues/56)) — Adding dedicated scope and durable audit log for account-holder lookups.
-3. **GAP-151: Secure SDLC and vulnerability management evidence** ([#151](https://github.com/vaam-apps/vpay/issues/151)) — Formalising documented vulnerability response SLAs and dependency update policies.
-4. **GAP-152: Production secrets and key lifecycle hardening** ([#152](https://github.com/vaam-apps/vpay/issues/152)) — Automated rotation and dual-control procedures for production rail credentials.
-5. **GAP-153: Backup, restore, and disaster recovery drills** ([#153](https://github.com/vaam-apps/vpay/issues/153)) — Establishing repeatable automated recovery test drills against defined RTO/RPO objectives.
-6. **GAP-154: Centralized security logging and incident evidence** ([#154](https://github.com/vaam-apps/vpay/issues/154)) — Standardizing audit event schemas for SIEM ingestion.
+1. **GAP-103: Web dependency audit allowlist** ([#103](https://github.com/vaam-apps/vpay/issues/103)) — `pnpm audit` runs at `--audit-level=moderate`; GHSA-vfj7-8cjw-p6xm is ignored by id under the maintainer decision of 2026-10-09, and the dated allowlist-with-reason escape hatch is not built.
+2. **GAP-56: Account-holder lookup audit and rate limiting** ([#56](https://github.com/vaam-apps/vpay/issues/56)) — A dedicated scope and durable per-key audit log are not built.
+3. **GAP-151: Secure SDLC and vulnerability management evidence** ([#151](https://github.com/vaam-apps/vpay/issues/151)) — No written CVE intake and fix-release SLA.
+4. **GAP-152: Production key lifecycle hardening** ([#152](https://github.com/vaam-apps/vpay/issues/152)) — Automated rotation and dual control for rail and signing keys are not built.
+5. **GAP-153: Backup and disaster-recovery drills** ([#153](https://github.com/vaam-apps/vpay/issues/153)) — No backup exists and no restore drill has run.
+6. **GAP-154: Centralized security logging** ([#154](https://github.com/vaam-apps/vpay/issues/154)) — No standardized audit event schema for SIEM ingestion.
+7. **GAP-CALLBACK-VERIFICATION: Rail callback signatures are not verified** — [RFC-0014](../rfc/0014-verifying-rail-callbacks.md) is Draft. A callback is an untrusted hint that advances a poll; the authenticated status read is the only thing that moves money. Notch Pay's signature check is built by PR #357; MTN and Orange do not sign callbacks.

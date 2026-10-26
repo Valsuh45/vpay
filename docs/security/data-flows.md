@@ -1,4 +1,4 @@
-# Security: Payment & Identity Data Flows
+# Security: Payment and Identity Data Flows
 
 _Issue [#150](https://github.com/vaam-apps/vpay/issues/150), [EPIC #155](https://github.com/vaam-apps/vpay/issues/155). The machine-readable inventory is [`schemas/security-inventory.yaml`](../../schemas/security-inventory.yaml); the architecture decision is [ADR-0033](../adr/0033-security-asset-and-control-evidence-inventory.md)._
 
@@ -6,63 +6,70 @@ _Issue [#150](https://github.com/vaam-apps/vpay/issues/150), [EPIC #155](https:/
 
 ### 1. Payment Intent Confirmation (Push USSD Flow)
 
-Used for mobile money rails (MTN MoMo, Notch Pay USSD):
+Used for mobile money rails (MTN MoMo, Notch Pay USSD). The **confirm request
+submits to the rail synchronously**. The worker polls and, when the submit
+outcome is unknown, resubmits; it does not initiate the charge.
 
 ```text
 Merchant              vpay-server             Postgres               Payment Rail          Payer Handset
    │                       │                      │                       │                      │
-   │  POST /v1/intents/confirm (OAuth JWT)        │                       │                      │
+   │ POST /v1/payment_intents/{id}/confirm         │                       │                      │
    ├──────────────────────▶│                      │                       │                      │
-   │                       │ Insert charge,       │                       │                      │
-   │                       │ intent, job (outbox) │                       │                      │
+   │                       │ Commit charge,       │                       │                      │
+   │                       │ intent, request row  │                       │                      │
    │                       ├─────────────────────▶│                       │                      │
    │                       │ Commit tx            │                       │                      │
    │                       │◀─────────────────────┤                       │                      │
-   │  200 OK (processing)  │                      │                       │                      │
-   │◀──────────────────────┤                      │                       │                      │
-   │                       │                      │                       │                      │
-   │                  vpay-worker                 │                       │                      │
-   │                       │                      │                       │                      │
-   │                       │ Claim pending charge │                       │                      │
-   │                       │ (SKIP LOCKED)        │                       │                      │
-   │                       ├─────────────────────▶│                       │                      │
-   │                       │                      │                       │                      │
-   │                       │ Initiate push payment request (TLS)          │                      │
+   │                       │ Submit the charge (TLS)                      │                      │
    │                       ├─────────────────────────────────────────────▶│                      │
    │                       │                                              │ Send USSD prompt     │
    │                       │                                              ├─────────────────────▶│
    │                       │                                              │                      │ Payer enters
    │                       │                                              │                      │ PIN on phone
    │                       │                                              │◀─────────────────────┤
-   │                       │ Poll status / receive callback (TLS)         │                      │
-   │                       │◀─────────────────────────────────────────────┤                      │
+   │  200 OK               │                                              │                      │
+   │◀──────────────────────┤                                              │                      │
    │                       │                      │                       │                      │
-   │                       │ Write payment.succeeded,                     │                      │
-   │                       │ insert webhook job, ledger entry             │                      │
+   │                  vpay-worker                 │                       │                      │
+   │                       │ Claim poll_charge job│                       │                      │
+   │                       │ (SKIP LOCKED)        │                       │                      │
+   │                       ├─────────────────────▶│                       │                      │
+   │                       │ Authenticated status read (TLS)              │                      │
+   │                       ├─────────────────────────────────────────────▶│                      │
+   │                       │◀─────────────────────────────────────────────┤                      │
+   │                       │ Write terminal status,                       │                      │
+   │                       │ insert webhook job, ledger entry              │                      │
    │                       ├─────────────────────▶│                       │                      │
 ```
 
+A rail callback does not replace the status read. `/provider/{code}/callback`
+parses identifiers and moves a poll job's `run_at` forward; the authenticated
+status read is what settles the charge.
+
 ### 2. Merchant Webhook Delivery Flow
 
-Guarantees at-least-once signed delivery of lifecycle events:
+Guarantees at-least-once signed delivery of lifecycle events such as
+`payment_intent.succeeded`:
 
 ```text
-    Postgres (jobs table)         vpay-worker                      Merchant Webhook Endpoint
-              │                        │                                       │
-              │  Claim webhook job     │                                       │
-              │◀───────────────────────┤                                       │
-              │                        │                                       │
-              │                        │ Format JSON payload                   │
-              │                        │ Calculate HMAC-SHA256 signature       │
-              │                        │ POST payload (vpay-signature header)  │
-              │                        ├──────────────────────────────────────▶│
-              │                        │                                       │ 200 OK
-              │                        │◀──────────────────────────────────────┤
-              │  Mark job completed    │                                       │
-              │◀───────────────────────┤                                       │
+    Postgres (jobs + webhook_deliveries)   vpay-worker                Merchant Webhook Endpoint
+              │                              │                                  │
+              │  Claim deliver_webhook job   │                                  │
+              │◀─────────────────────────────┤                                  │
+              │                              │                                  │
+              │  SSRF guard on the resolved address; redirects refused           │
+              │  Format JSON payload and HMAC-SHA256 signature                   │
+              │  POST payload (vpay-signature header)                            │
+              │                              ├─────────────────────────────────▶│
+              │                              │                                  │ 2xx
+              │                              │◀─────────────────────────────────┤
+              │  Mark webhook_deliveries row completed                              │
+              │◀─────────────────────────────┤                                  │
 ```
 
-If the merchant endpoint is unreachable or returns a non-2xx status, the worker records the failure attempt in `provider_requests` / `jobs` and reschedules with exponential backoff up to 24 hours.
+A failed attempt is recorded on the `webhook_deliveries` row and rescheduled
+with exponential backoff. `provider_requests` is the rail-call journal, not the
+webhook-delivery journal.
 
 ### 3. Staff Single Sign-On (OIDC Federation)
 
@@ -71,34 +78,50 @@ Staff Browser           Next.js Dashboard               vpay-server             
       │                         │                            │                                    │
       │ 1. Click "Sign in SSO"  │                            │                                    │
       ├────────────────────────▶│                            │                                    │
-      │                         │ 2. Generate PKCE & state   │                                    │
-      │                         │    Store staff_sso_attempt │                                    │
+      │                         │ 2. POST /dash/v1/staff/sso/start                                 │
       │                         ├───────────────────────────▶│                                    │
-      │ 3. Redirect to IdP      │                            │                                    │
+      │                         │                            │ 3. Generate state, nonce and PKCE  │
+      │                         │                            │    Store staff_sso_attempts row    │
+      │ 4. Redirect to IdP      │                            │                                    │
       │◀────────────────────────┤                            │                                    │
       │                                                                                           │
-      │ 4. Authenticate at IdP (Username + Password + Org MFA)                                   │
+      │ 5. Authenticate at IdP (username + password + org MFA)                                   │
       ├──────────────────────────────────────────────────────────────────────────────────────────▶│
       │                                                                                           │
-      │ 5. Redirect to Dashboard with code & state                                                │
+      │ 6. Redirect to the dashboard callback with code and state                               │
       │◀──────────────────────────────────────────────────────────────────────────────────────────┤
       │                                                                                           │
-      │ 6. Exchange code via BFF                                                                 │
-      ├────────────────────────▶│                                                                 │
-      │                         │ 7. POST /dash/v1/sso/callback                                   │
+      │ 7. Exchange code via BFF                                                                 │
+      ├────────────────────────▶│ 8. POST /dash/v1/staff/sso/callback                            │
       │                         ├───────────────────────────▶│                                    │
-      │                         │                            │ 8. Exchange code for ID token (TLS)│
+      │                         │                            │ 9. Exchange code for ID token (TLS)│
       │                         │                            ├───────────────────────────────────▶│
       │                         │                            │◀───────────────────────────────────┤
-      │                         │                            │ 9. Verify JWT claims, aud, jti     │
-      │                         │ 10. Issue session cookie   │                                    │
-      │                         │◀───────────────────────────┤                                    │
-      │ 11. Authenticated session│                           │                                    │
-      │◀────────────────────────┤                            │                                    │
+      │                         │                            │ 10. Verify signature, iss, aud,    │
+      │                         │                            │     azp, exp, iat, nonce, group,   │
+      │                         │                            │     and second factor              │
+      │                         │ 11. Mint an opaque token    │                                    │
+      │                         │     in an httpOnly cookie   │                                    │
+      │◀────────────────────────┤◀───────────────────────────┤                                    │
+      │ 12. Authenticated session                                                            │
+      │◀────────────────────────┤                                                                 │
 ```
+
+There is no `jti` check in the ID-token flow. Replay defence in the dashboard
+surface is the single-use authorization code and the server-side session row;
+the `jti` replay cache belongs to merchant client assertions and lives in
+`oauth_client_assertion_jtis`.
 
 ## Security Controls Embedded in Flows
 
-1. **Replay Defense:** Client assertions use `jti` replay tracking in PostgreSQL (`spent_jtis`).
-2. **Crash Safety:** In-flight operations persist external reference IDs prior to prompt dispatch ([ADR-0032](../adr/0032-a-rail-issued-reference-is-committed-before-the-prompt.md)).
-3. **Data Redaction:** PII (payer MSISDN) is protected across all operational logs and error structures using the `vpay-core::privacy` positive projection wrappers ([ADR-0020](../adr/0020-privacy-controls-and-evidence.md)).
+1. **Replay defence:** Merchant client assertions record their `jti` in
+   `oauth_client_assertion_jtis` past the validator leeway.
+2. **Crash safety:** A rail-issued reference is persisted before the prompt
+   ([ADR-0032](../adr/0032-a-rail-issued-reference-is-committed-before-the-prompt.md)).
+3. **Data redaction:** Payer MSISDN and other personal data are protected in
+   logs and error structures by `vpay-core::privacy` and the privacy inventory
+   ([ADR-0020](../adr/0020-privacy-controls-and-evidence.md)).
+4. **Rate limiting:** Staff sign-in and the current-password check spend from a
+   shared `rate_limit_windows` budget.
+5. **Egress control:** Merchant webhook delivery refuses redirects, private
+   targets by default, and vets the resolved address before connecting.
